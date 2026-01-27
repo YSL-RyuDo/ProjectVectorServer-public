@@ -1,7 +1,8 @@
-// Server.h
 #pragma once
+#include "Common.h"
 #include "IocpCore.h"
 #include "Listener.h"
+#include "WorkerThread.h"
 
 class Server
 {
@@ -11,4 +12,5 @@ public:
 private:
     IocpCore iocp_;
     Listener listener_;
+    std::vector<WorkerThread*> workers_;
 };

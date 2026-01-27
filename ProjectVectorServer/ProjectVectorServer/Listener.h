@@ -1,6 +1,7 @@
-// Listener.h
 #pragma once
-#include "IocpCore.h"
+#include "Common.h"
+
+class IocpCore;
 
 class Listener
 {

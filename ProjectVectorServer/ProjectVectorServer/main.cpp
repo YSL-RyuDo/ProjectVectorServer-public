@@ -1,30 +1,21 @@
-// Main.cpp
-#include <winsock2.h>
-#include <iostream>
-#include "Core/Server.h"
-
-#pragma comment(lib, "ws2_32.lib")
+#include "Common.h"
+#include "Server.h"
+#include "MapCollision.h"
+#include "GroundHeightMap.h"
+#include "HeightVolumeManager.h"
 
 int main()
 {
     WSADATA wsa;
-    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
-    {
-        std::cout << "WSAStartup failed\n";
-        return -1;
-    }
+    WSAStartup(MAKEWORD(2, 2), &wsa);
+
+    GroundHeightMap::Load("ServerGround.csv");
+    HeightVolumeManager::Load("HeightVolumes.csv");
+    InitTestMapCollision();
+
 
     Server server;
-    if (!server.Start())
-    {
-        std::cout << "Server start failed\n";
-        WSACleanup();
-        return -1;
-    }
-
-    // Server::Start()는 내부에서 Dispatch 루프를 돈다
-    // main은 여기서 블로킹되지 않아도 됨
-    std::cout << "Server stopped\n";
+    server.Start();
 
     WSACleanup();
     return 0;

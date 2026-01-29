@@ -1,11 +1,19 @@
+// Packet.h
 #pragma once
-#include "Common.h"
+#include <cstdint>
 
 #pragma pack(push, 1)
+
 struct PacketHeader
 {
     uint16_t size;
     uint16_t type;
+};
+
+struct SC_Hello
+{
+    PacketHeader header;
+    uint32_t myPlayerId;
 };
 
 struct SC_SpawnPlayer
@@ -15,17 +23,25 @@ struct SC_SpawnPlayer
     float x;
     float y;
     float z;
+    int hp;
 };
 
-struct CS_Move
+struct SC_DespawnPlayer
 {
     PacketHeader header;
-    float inputX;
-    float inputZ;
+    uint32_t playerId;
+};
+
+struct CS_MoveState
+{
+    PacketHeader header;
+    float x;
+    float y;
+    float z;
     float yaw;
 };
 
-struct SC_Move
+struct SC_MoveState
 {
     PacketHeader header;
     uint32_t playerId;
@@ -35,17 +51,24 @@ struct SC_Move
     float yaw;
 };
 
-struct CS_Rotate
+struct CS_Hit
 {
     PacketHeader header;
-    float yaw;
+    uint32_t targetId;
+    int damage;
 };
 
-struct SC_Rotate
+struct SC_HPUpdate
 {
     PacketHeader header;
     uint32_t playerId;
-    float yaw;
+    int hp;
+};
+
+struct SC_Die
+{
+    PacketHeader header;
+    uint32_t playerId;
 };
 
 #pragma pack(pop)

@@ -11,13 +11,26 @@ SessionManager& SessionManager::Instance()
 void SessionManager::Add(Session* session)
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    sessions_[session->GetSocket()] = session;
+    sessions_[session->GetPlayerId()] = session;
+
+    std::cout << "[SESSION ADD] playerId="
+        << session->GetPlayerId()
+        << std::endl;
 }
 
-void SessionManager::Remove(Session* session)
+void SessionManager::Remove(uint32_t playerId)
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    sessions_.erase(session->GetSocket());
+    sessions_.erase(playerId);
+}
+
+Session* SessionManager::Find(uint32_t playerId)
+{
+    auto it = sessions_.find(playerId);
+    if (it == sessions_.end())
+        return nullptr;
+
+    return it->second;
 }
 
 std::vector<Session*> SessionManager::GetAll()

@@ -31,9 +31,6 @@
     <Filter Include="소스 파일\Packet">
       <UniqueIdentifier>{f81f7fbd-e40d-442c-ae5b-7b6873b9dba3}</UniqueIdentifier>
     </Filter>
-    <Filter Include="헤더 파일\World">
-      <UniqueIdentifier>{8651a576-2243-4c7c-a0f5-c40cc0fbbde0}</UniqueIdentifier>
-    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Server.h">
@@ -62,15 +59,6 @@
     </ClInclude>
     <ClInclude Include="WorkerThread.h">
       <Filter>헤더 파일\Core</Filter>
-    </ClInclude>
-    <ClInclude Include="GroundHeightMap.h">
-      <Filter>헤더 파일\World</Filter>
-    </ClInclude>
-    <ClInclude Include="MapCollision.h">
-      <Filter>헤더 파일\World</Filter>
-    </ClInclude>
-    <ClInclude Include="HeightVolumeManager.h">
-      <Filter>헤더 파일\World</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
@@ -103,15 +91,6 @@
     </ClCompile>
     <ClCompile Include="WorkerThread.cpp">
       <Filter>소스 파일\Core</Filter>
-    </ClCompile>
-    <ClCompile Include="MapCollision.cpp">
-      <Filter>소스 파일</Filter>
-    </ClCompile>
-    <ClCompile Include="GroundHeightMap.cpp">
-      <Filter>소스 파일</Filter>
-    </ClCompile>
-    <ClCompile Include="HeightVolumeManager.cpp">
-      <Filter>소스 파일</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

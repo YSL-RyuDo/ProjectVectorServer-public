@@ -1,12 +1,10 @@
 #include "Session.h"
 #include "PacketDispatcher.h"
 #include "PacketType.h"
-#include "MapCollision.h"
-#include "GroundHeightMap.h"
-#include "HeightVolumeManager.h"
+#include "Packet.h"
 
 Session::Session(SOCKET socket)
-    : socket_(socket), recvSize_(0)
+    : socket_(socket)
 {
 }
 
@@ -26,7 +24,6 @@ void Session::OnRecv(int bytes, OverlappedEx* ov)
 {
     memcpy(recvBuffer_ + recvSize_, ov->buffer, bytes);
     recvSize_ += bytes;
-
     ProcessPackets();
 }
 
@@ -35,9 +32,7 @@ void Session::Send(void* packet)
     PacketHeader* header =
         reinterpret_cast<PacketHeader*>(packet);
 
-    int size = header->size;
-
-    send(socket_, reinterpret_cast<char*>(packet), size, 0);
+    send(socket_, reinterpret_cast<char*>(packet), header->size, 0);
 }
 
 void Session::ProcessPackets()
@@ -56,6 +51,7 @@ void Session::ProcessPackets()
             break;
 
         PacketDispatcher::Dispatch(this, header);
+
         offset += header->size;
     }
 
@@ -68,18 +64,23 @@ void Session::ProcessPackets()
     }
 }
 
-void Session::Spawn(float spawnX, float spawnZ, float yaw)
+void Session::Spawn(float x, float y, float z, float yaw)
 {
-    constexpr float HALF_HEIGHT = 1.5f; // Unity 기준
-
-    float groundY = GroundHeightMap::Sample(spawnX, spawnZ);
-
-    position_.x = spawnX;
-    position_.z = spawnZ;
-    position_.y = groundY + HALF_HEIGHT;
+    position_.x = x;
+    position_.y = y;
+    position_.z = z;
     rotationYaw_ = yaw;
 }
 
+void Session::SendHello(uint32_t myId)
+{
+    SC_Hello pkt{};
+    pkt.header.size = sizeof(SC_Hello);
+    pkt.header.type = (uint16_t)PacketType::PKT_SC_HELLO;
+    pkt.myPlayerId = myId;
+
+    send(socket_, (char*)&pkt, sizeof(pkt), 0);
+}
 
 void Session::SendSpawn(uint32_t playerId, float x, float y, float z)
 {
@@ -90,99 +91,31 @@ void Session::SendSpawn(uint32_t playerId, float x, float y, float z)
     pkt.x = x;
     pkt.y = y;
     pkt.z = z;
+    pkt.hp = hp_;
 
     send(socket_, (char*)&pkt, sizeof(pkt), 0);
 }
 
-static float GetGroundY(float x, float z, float footY)
+void Session::Damage(int amount)
 {
-    float y;
+    if (hp_ <= 0)
+        return; // 이미 죽었으면 무시
 
-    // 1. 다리 / 플랫폼 (HeightVolume)
-    if (HeightVolumeManager::TryGetGroundY(x, z, footY, y))
-        return y;
+    hp_ -= amount;
 
-    // 2. 기본 지형
-    return GroundHeightMap::Sample(x, z);
+    if (hp_ < 0)
+        hp_ = 0;
 }
 
-void Session::OnMove(float inputX, float inputZ, float yaw)
+
+void Session::Respawn()
 {
-    constexpr float SPEED = 5.0f;
-    constexpr float DT = 0.016f;
+    hp_ = 100;
+    isDead_ = false;
 
-    constexpr float HALF_HEIGHT = 1.0f;
-    constexpr float STEP_HEIGHT = 0.8f;
-
-    constexpr float Y_LERP_SPEED = 12.0f;
-    constexpr float Y_DEADZONE = 0.02f;
-
-    float rad = yaw * 3.141592f / 180.f;
-
-    float forwardX = sinf(rad);
-    float forwardZ = cosf(rad);
-    float rightX = cosf(rad);
-    float rightZ = -sinf(rad);
-
-    float dx = (rightX * inputX + forwardX * inputZ) * SPEED * DT;
-    float dz = (rightZ * inputX + forwardZ * inputZ) * SPEED * DT;
-
-    float curX = position_.x;
-    float curZ = position_.z;
-    float curY = position_.y;
-
-    float curFootY = curY - HALF_HEIGHT;
-
-    float nextX = curX;
-    float nextZ = curZ;
-    float targetFootY = curFootY;
-
-    {
-        float testX = curX + dx;
-        float groundY = GetGroundY(testX, curZ, curFootY);
-
-        float predictedFootY = groundY;
-        float predictedHeadY = predictedFootY + HALF_HEIGHT * 2.0f;
-
-        if (!HeightVolumeManager::IsCeilingBlocked(testX, curZ, predictedFootY, predictedHeadY))
-        {
-            if (groundY - curFootY <= STEP_HEIGHT)
-            {
-                nextX = testX;
-                targetFootY = groundY;
-            }
-        }
-    }
-
-    {
-        float testZ = curZ + dz;
-        float groundY = GetGroundY(nextX, testZ, targetFootY);
-
-        float predictedFootY = groundY;
-        float predictedHeadY = predictedFootY + HALF_HEIGHT * 2.0f;
-
-        if (!HeightVolumeManager::IsCeilingBlocked(nextX, testZ, predictedFootY, predictedHeadY))
-        {
-            if (groundY - targetFootY <= STEP_HEIGHT)
-            {
-                nextZ = testZ;
-                targetFootY = groundY;
-            }
-        }
-    }
-
-    float targetY = targetFootY + HALF_HEIGHT;
-    float diffY = targetY - curY;
-
-    if (fabs(diffY) > Y_DEADZONE)
-    {
-        float t = Y_LERP_SPEED * DT;
-        if (t > 1.0f) t = 1.0f;
-
-        position_.y = curY + diffY * t;
-    }
-
-    position_.x = nextX;
-    position_.z = nextZ;
-    rotationYaw_ = yaw;
+    // 임시 스폰 위치 (간소화)
+    position_.x = 0.f;
+    position_.y = 1.f;
+    position_.z = 0.f;
+    rotationYaw_ = 0.f;
 }

@@ -20,11 +20,8 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Common.h" />
-    <ClInclude Include="GroundHeightMap.h" />
-    <ClInclude Include="HeightVolumeManager.h" />
     <ClInclude Include="IocpCore.h" />
     <ClInclude Include="Listener.h" />
-    <ClInclude Include="MapCollision.h" />
     <ClInclude Include="OverlappedEx.h" />
     <ClInclude Include="PacketDispatcher.h" />
     <ClInclude Include="Server.h" />
@@ -33,12 +30,9 @@
     <ClInclude Include="WorkerThread.h" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="GroundHeightMap.cpp" />
-    <ClCompile Include="HeightVolumeManager.cpp" />
     <ClCompile Include="IocpCore.cpp" />
     <ClCompile Include="Listener.cpp" />
     <ClCompile Include="main.cpp" />
-    <ClCompile Include="MapCollision.cpp" />
     <ClCompile Include="PacketDispatcher.cpp" />
     <ClCompile Include="Packet.h" />
     <ClCompile Include="PacketType.h" />

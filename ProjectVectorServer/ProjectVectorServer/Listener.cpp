@@ -2,7 +2,7 @@
 #include "IocpCore.h"
 #include "Session.h"
 #include "SessionManager.h"
-#include <Ws2tcpip.h>  
+#include <Ws2tcpip.h>
 
 bool Listener::Start(short port, IocpCore& iocp)
 {
@@ -26,47 +26,57 @@ bool Listener::Start(short port, IocpCore& iocp)
         uint32_t myId = g_playerId++;
         session->SetPlayerId(myId);
 
-        float spawnX = 6.0f;
-        float spawnZ = 1.0f;
-        float spawnYaw = -5.0f;
+        // 1. HELLO
+        session->SendHello(myId);
 
-        session->Spawn(spawnX, spawnZ, spawnYaw);
+        // 2. 스폰 위치 설정 (좌표 그대로)
+        session->Spawn(6.0f, 1.0f, 6.0f, 0.0f);
 
+        // 3. 세션 등록
         SessionManager::Instance().Add(session);
 
-        session->SendSpawn(
-            myId,
-            session->GetX(),
-            session->GetY(),
-            session->GetZ()
-        );
+        // 4. 자기 자신 스폰 전송
+        {
+            Vector3 pos = session->GetPosition();
+            session->SendSpawn(
+                myId,
+                pos.x,
+                pos.y,
+                pos.z
+            );
+        }
 
+        // 5. 기존 유저들에게 "새 유저" 스폰 전송
         for (Session* other : SessionManager::Instance().GetAll())
         {
             if (other == session)
                 continue;
 
+            Vector3 myPos = session->GetPosition();
             other->SendSpawn(
                 myId,
-                session->GetX(),
-                session->GetY(),
-                session->GetZ()
+                myPos.x,
+                myPos.y,
+                myPos.z
             );
         }
 
+        // 6. 새 유저에게 "기존 유저들" 스폰 전송
         for (Session* other : SessionManager::Instance().GetAll())
         {
             if (other == session)
                 continue;
 
+            Vector3 otherPos = other->GetPosition();
             session->SendSpawn(
                 other->GetPlayerId(),
-                other->GetX(),
-                other->GetY(),
-                other->GetZ()
+                otherPos.x,
+                otherPos.y,
+                otherPos.z
             );
         }
 
+        // 7. IOCP 등록
         iocp.RegisterHandle((HANDLE)client, (ULONG_PTR)session);
         session->PostRecv();
     }

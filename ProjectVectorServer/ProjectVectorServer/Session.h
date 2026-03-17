@@ -18,6 +18,9 @@ public:
     SOCKET GetSocket() const { return socket_; }
     void Send(void* packet);
 
+    void SetAuthenticated(bool val) { isAuthenticated_ = val; }
+    bool IsAuthenticated() const { return isAuthenticated_; }
+
     void SetPlayerId(uint32_t id) { playerId_ = id; }
     uint32_t GetPlayerId() const { return playerId_; }
 
@@ -52,6 +55,7 @@ private:
     SOCKET socket_;
     char recvBuffer_[4096];
     int recvSize_ = 0;
+    bool isAuthenticated_ = false;
 
     uint32_t playerId_ = 0;
     Vector3 position_{ 0.f, 1.f, 0.f };

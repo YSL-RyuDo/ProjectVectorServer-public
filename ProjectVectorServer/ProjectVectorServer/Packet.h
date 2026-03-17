@@ -3,11 +3,38 @@
 #include <cstdint>
 
 #pragma pack(push, 1)
-
 struct PacketHeader
 {
     uint16_t size;
     uint16_t type;
+};
+
+struct CS_Register
+{
+    PacketHeader header;
+    char id[20];
+    char nickname[20];
+    char password[64];
+    char confirmPassword[64];
+};
+
+struct SC_RegisterResult
+{
+    PacketHeader header;
+    uint8_t result;
+};
+
+struct CS_Login
+{
+    PacketHeader header;
+    char id[20];
+    char password[64];
+};
+
+struct SC_LoginResult
+{
+    PacketHeader header;
+    uint8_t result;
 };
 
 struct SC_Hello

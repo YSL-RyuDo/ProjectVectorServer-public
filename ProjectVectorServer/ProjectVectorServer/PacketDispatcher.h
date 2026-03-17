@@ -1,7 +1,6 @@
 #pragma once
 #include "Packet.h"
 #include "PacketType.h"
-
 class Session;
 struct PacketHeader;
 

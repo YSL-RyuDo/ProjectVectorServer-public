@@ -1,4 +1,5 @@
 #include "Server.h"
+#include "UserManager.h"
 #include <Ws2tcpip.h>  
 
 bool Server::Start()
@@ -16,7 +17,7 @@ bool Server::Start()
         {
             listener_.Start(9000, iocp_);
         });
-
+    UserManager::Instance().Load();
     listenerThread.join();
     return true;
 }

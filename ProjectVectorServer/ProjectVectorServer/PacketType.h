@@ -12,6 +12,9 @@ enum class PacketType : uint16_t
     PKT_CS_LOGIN = 2,
     PKT_SC_LOGIN_RESULT = 3,
 
+    PKT_CS_LOBBY_CHAT = 4,
+    PKT_SC_LOBBY_CHAT = 5,
+
     PKT_SC_HELLO = 100,
     PKT_SC_SPAWN_PLAYER = 101,
     PKT_SC_DESPAWN_PLAYER = 102,

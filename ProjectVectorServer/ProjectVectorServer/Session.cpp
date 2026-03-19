@@ -1,4 +1,6 @@
 #include "Session.h"
+#include "SessionManager.h"
+#include "UserManager.h"
 #include "PacketDispatcher.h"
 #include "PacketType.h"
 #include "Packet.h"
@@ -33,6 +35,15 @@ void Session::Send(void* packet)
         reinterpret_cast<PacketHeader*>(packet);
 
     send(socket_, reinterpret_cast<char*>(packet), header->size, 0);
+}
+
+void Session::Disconnect()
+{
+    std::cout << "[DISCONNECT] playerId=" << GetPlayerId() << std::endl;
+
+    UserManager::Instance().OnLogout(this);
+    SessionManager::Instance().Remove(GetPlayerId());
+    closesocket(socket_);
 }
 
 void Session::ProcessPackets()

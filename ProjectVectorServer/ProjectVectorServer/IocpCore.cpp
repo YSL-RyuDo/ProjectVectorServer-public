@@ -29,6 +29,7 @@ void IocpCore::Dispatch()
 
     if (!ok || bytes == 0)
     {
+        session->Disconnect();
         delete session;
         delete ov;
         return;

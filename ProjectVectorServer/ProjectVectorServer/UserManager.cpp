@@ -1,5 +1,6 @@
 #include "UserManager.h"
 #include "Common.h"
+#include "Session.h"
 #include <fstream>
 #include <sstream>
 
@@ -42,7 +43,6 @@ bool VerifyPassword(const std::string& id, const std::string& hash, const std::s
 {
     return HashPassword(id, password) == hash;
 }
-
 
 void UserManager::Load()
 {
@@ -113,4 +113,36 @@ int UserManager::Login(const std::string& id, const std::string& pw)
         return (int)LoginResult::WRONG_PASSWORD;
 
     return (int)LoginResult::SUCCESS;
+}
+
+void UserManager::OnLogin(const std::string& id, Session* session)
+{
+    if (loggedInUsers_.count(id))
+    {
+        Session* oldSession = loggedInUsers_[id];
+
+        if (oldSession && oldSession != session)
+        {
+            std::cout << "[DUP LOGIN] 기존 세션 종료 id=" << id << std::endl;
+
+            oldSession->Disconnect();
+        }
+    }
+
+    loggedInUsers_[id] = session;
+    session->SetUserId(id);
+}
+
+void UserManager::OnLogout(Session* session)
+{
+    std::string id = session->GetUserId();
+
+    if (id.empty())
+        return;
+
+    if (loggedInUsers_.count(id))
+    {
+        if (loggedInUsers_[id] == session)
+            loggedInUsers_.erase(id);
+    }
 }

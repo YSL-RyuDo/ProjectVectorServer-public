@@ -18,6 +18,11 @@ public:
     SOCKET GetSocket() const { return socket_; }
     void Send(void* packet);
 
+    void SetUserId(const std::string& id) { userId_ = id; }
+    std::string GetUserId() const { return userId_; }
+
+    void Disconnect();
+
     void SetAuthenticated(bool val) { isAuthenticated_ = val; }
     bool IsAuthenticated() const { return isAuthenticated_; }
 
@@ -56,6 +61,7 @@ private:
     char recvBuffer_[4096];
     int recvSize_ = 0;
     bool isAuthenticated_ = false;
+    std::string userId_;
 
     uint32_t playerId_ = 0;
     Vector3 position_{ 0.f, 1.f, 0.f };

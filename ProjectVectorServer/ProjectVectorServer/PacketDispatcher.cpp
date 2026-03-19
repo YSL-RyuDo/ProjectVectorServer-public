@@ -65,45 +65,13 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
             session->Send(&out);
 
-            // 로그인 성공 처리 (핵심)
             if (result == (uint8_t)LoginResult::SUCCESS)
             {
                 session->SetAuthenticated(true);
 
-                std::cout << "[AUTH SUCCESS] playerId="
-                    << session->GetPlayerId() << std::endl;
+                UserManager::Instance().OnLogin(pkt->id, session);
 
-                // 게임 입장 처리
-                uint32_t myId = session->GetPlayerId();
-
-                // HELLO
-                session->SendHello(myId);
-
-                // 기존 플레이어들 정보 보내기
-                for (Session* other : SessionManager::Instance().GetAll())
-                {
-                    if (other == session)
-                        continue;
-
-                    session->SendSpawn(
-                        other->GetPlayerId(),
-                        other->GetPosition().x,
-                        other->GetPosition().y,
-                        other->GetPosition().z
-                    );
-                }
-
-                // 나를 다른 사람들에게 스폰
-                SC_SpawnPlayer spawn{};
-                spawn.header.size = sizeof(spawn);
-                spawn.header.type = (uint16_t)PacketType::PKT_SC_SPAWN_PLAYER;
-                spawn.playerId = myId;
-                spawn.x = session->GetPosition().x;
-                spawn.y = session->GetPosition().y;
-                spawn.z = session->GetPosition().z;
-                spawn.hp = session->GetHP();
-
-                SessionManager::Instance().Broadcast(&spawn);
+                std::cout << "[LOGIN SUCCESS] id=" << pkt->id << std::endl;
             }
 
             break;

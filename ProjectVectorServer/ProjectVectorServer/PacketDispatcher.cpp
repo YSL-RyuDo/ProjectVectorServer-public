@@ -14,7 +14,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
     {
         case PacketType::PKT_CS_REGISTER:
         case PacketType::PKT_CS_LOGIN:
-            break; // Çã¿ë
+            break;
 
         default:
         {
@@ -33,6 +33,8 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         case PacketType::PKT_CS_REGISTER:
         {
             auto* pkt = reinterpret_cast<CS_Register*>(header);
+            std::cout << "[REGISTER PACKET] id=" << pkt->id
+                << " nick=" << pkt->nickname << std::endl;
 
             uint8_t result = (uint8_t)UserManager::Instance().Register(
                 pkt->id,
@@ -40,6 +42,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
                 pkt->password,
                 pkt->confirmPassword
             );
+            std::cout << "[REGISTER RESULT] " << (int)result << std::endl;
 
             SC_RegisterResult out{};
             out.header.size = sizeof(out);
@@ -53,22 +56,31 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         {
             auto* pkt = reinterpret_cast<CS_Login*>(header);
 
-            uint8_t result = (uint8_t)UserManager::Instance().Login(
-                pkt->id,
-                pkt->password
-            );
+            if (session->IsAuthenticated())
+            {
+				SC_LoginResult out{};
+				out.header.size = sizeof(out);
+				out.header.type = (uint16_t)PacketType::PKT_SC_LOGIN_RESULT;
+				out.result = (uint8_t)LoginResult::SUCCESS;
+				session->Send(&out);
+                break;
+            }
 
-            SC_LoginResult out{};
-            out.header.size = sizeof(out);
-            out.header.type = (uint16_t)PacketType::PKT_SC_LOGIN_RESULT;
-            out.result = result;
+			uint8_t result = (uint8_t)UserManager::Instance().Login(
+				pkt->id,
+				pkt->password
+			);
 
-            session->Send(&out);
+			SC_LoginResult out{};
+			out.header.size = sizeof(out);
+			out.header.type = (uint16_t)PacketType::PKT_SC_LOGIN_RESULT;
+			out.result = result;
+            
+			session->Send(&out);
 
             if (result == (uint8_t)LoginResult::SUCCESS)
             {
                 session->SetAuthenticated(true);
-
                 UserManager::Instance().OnLogin(pkt->id, session);
 
                 std::cout << "[LOGIN SUCCESS] id=" << pkt->id << std::endl;

@@ -12,6 +12,7 @@
 #include <mutex>
 
 #pragma comment(lib, "ws2_32.lib")
+#pragma comment(lib, "bcrypt.lib")
 
 enum class RegisterResult : uint8_t
 {

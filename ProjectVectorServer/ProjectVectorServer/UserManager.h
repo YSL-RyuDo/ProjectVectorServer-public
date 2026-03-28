@@ -1,6 +1,7 @@
 #pragma once
 #include <string>
 #include <unordered_map>
+#include <mutex>
 
 class Session;
 
@@ -8,6 +9,7 @@ struct User
 {
     std::string id;
     std::string nickname;
+	std::string salt;
     std::string passwordHash;
 };
 
@@ -26,10 +28,14 @@ public:
     void OnLogout(Session* session);
 
 private:
+
+    void SaveUnlocked();
     std::unordered_map<std::string, User> users_;
     std::unordered_map<std::string, std::string> nicknameIndex_;
     std::unordered_map<std::string, Session*> loggedInUsers_;
+	std::mutex userManagerMutex_;
 };
 
-std::string HashPassword(const std::string& id, const std::string& password);
-bool VerifyPassword(const std::string& id, const std::string& hash, const std::string& password);
+std::string GenerateSalt(size_t byteSize = 16);
+std::string HashPassword(const std::string& salt, const std::string& password);
+bool VerifyPassword(const std::string& salt, const std::string& hash, const std::string& password);

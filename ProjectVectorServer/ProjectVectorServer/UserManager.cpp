@@ -1,8 +1,81 @@
 #include "UserManager.h"
 #include "Common.h"
 #include "Session.h"
+
 #include <fstream>
 #include <sstream>
+#include <regex>
+#include <vector>
+#include <iomanip>
+#include <bcrypt.h>
+
+#pragma comment(lib, "bcrypt.lib")
+
+namespace
+{
+    constexpr ULONG PBKDF2_ITERATION = 100000;
+	constexpr ULONG DERIVED_KEY_LENGTH = 32;
+
+	std::string BytesToHex(const std::vector<uint8_t>& bytes)
+	{
+        std::ostringstream oss;
+		oss << std::hex << std::setfill('0');
+
+		for (uint8_t b : bytes)
+		{
+			oss << std::setw(2) << static_cast<int>(b);
+		}
+
+		return oss.str();
+	}
+
+	std::vector<uint8_t> HexToBytes(const std::string& hex)
+	{
+		std::vector<uint8_t> out;
+
+		if (hex.size() % 2 != 0)
+			return out;
+
+		for (size_t i = 0; i < hex.size(); i += 2)
+		{
+			std::string byteStr = hex.substr(i, 2);
+            uint8_t value = static_cast<uint8_t>(strtoul(byteStr.c_str(), nullptr, 16));
+			out.push_back(value);
+		}
+
+		return out;
+	}
+
+    bool IsValidId(const std::string& id)
+    {
+		static const std::regex pattern("^[a-zA-Z0-9_]{4,20}$");
+		return std::regex_match(id, pattern);
+    }
+
+    bool IsValidNickname(const std::string& nick)
+    {
+		return !nick.empty() && nick.size() >= 2 && nick.size() <= 16;
+    }
+
+    bool IsValidPassword(const std::string& pw)
+    {
+		if (pw.size() < 8 || pw.size() > 64)
+			return false;
+
+        bool hasAlpha = false;
+		bool hasDigit = false;
+
+        for (char c : pw)
+        {
+            if(std::isalpha(static_cast<unsigned char>(c)))
+				hasAlpha = true;
+			if (std::isdigit(static_cast<unsigned char>(c)))
+				hasDigit = true;
+        }
+
+		return hasAlpha && hasDigit;
+    }
+}
 
 UserManager& UserManager::Instance()
 {
@@ -10,55 +83,126 @@ UserManager& UserManager::Instance()
     return inst;
 }
 
-uint64_t SimpleHash(const std::string& input)
+std::string GenerateSalt(size_t byteSize)
 {
-    uint64_t hash = 1469598103934665603ULL;
+	std::vector<uint8_t> salt(byteSize);
 
-    for (char c : input)
-    {
-        hash ^= (uint64_t)c;
-        hash *= 1099511628211ULL;
-    }
+	NTSTATUS status = BCryptGenRandom(nullptr, salt.data(), static_cast<ULONG>(salt.size()), BCRYPT_USE_SYSTEM_PREFERRED_RNG);
 
-    return hash;
+    if (status < 0)
+        return "";
+
+	return BytesToHex(salt);
 }
 
-std::string HashPassword(const std::string& id, const std::string& password)
+std::string HashPassword(const std::string& salt, const std::string& password)
 {
-    std::string salt = id; // deterministic salt
+	BCRYPT_ALG_HANDLE hAlg = nullptr;
+	std::vector<uint8_t> derived(DERIVED_KEY_LENGTH);
 
-    std::string combined = password + salt;
+    std::vector<uint8_t> saltBytes = HexToBytes(salt);
+	if (saltBytes.empty())
+		return "";
 
-    uint64_t hash = 0;
+	NTSTATUS status = BCryptOpenAlgorithmProvider(
+        &hAlg,
+        BCRYPT_SHA256_ALGORITHM,
+        nullptr,
+        BCRYPT_ALG_HANDLE_HMAC_FLAG);
 
-    for (int i = 0; i < 10000; i++)
-    {
-        combined = std::to_string(SimpleHash(combined));
-    }
+	if (status < 0)
+		return "";
 
-    return combined;
+    status = BCryptDeriveKeyPBKDF2(
+        hAlg,
+        reinterpret_cast<PUCHAR>(const_cast<char*>(password.data())),
+        static_cast<ULONG>(password.size()),
+        saltBytes.data(),
+        static_cast<ULONG>(saltBytes.size()),
+        PBKDF2_ITERATION,
+        derived.data(),
+        static_cast<ULONG>(derived.size()),
+        0);
+
+	BCryptCloseAlgorithmProvider(hAlg, 0);
+
+	if (status < 0)
+		return "";
+
+	return BytesToHex(derived);
 }
 
-bool VerifyPassword(const std::string& id, const std::string& hash, const std::string& password)
+bool VerifyPassword(const std::string& salt, const std::string& hash, const std::string& password)
 {
-    return HashPassword(id, password) == hash;
+	std::string newHash = HashPassword(salt, password);
+
+	if (newHash.empty() || hash.empty() || newHash.size() != hash.size())
+		return false;
+
+    unsigned char diff = 0;
+    for (size_t i = 0; i < hash.size(); ++i)
+        diff |= static_cast<unsigned char>(newHash[i] ^ hash[i]);
+
+	return diff == 0;
 }
 
 void UserManager::Load()
 {
+    std::lock_guard<std::mutex> lock(userManagerMutex_);
+    users_.clear();
+    nicknameIndex_.clear();
+
     std::ifstream file("users.csv");
+    if (!file.is_open())
+        return;
 
     std::string line;
+
+    if (std::getline(file, line))
+    {
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
+
+        if (line == "id,nickname,salt,passwordHash")
+        {
+            // 헤더 라인, 무시
+        }
+        else
+        {
+            std::stringstream ss(line);
+            std::string id, nick, salt, hash;
+
+            std::getline(ss, id, ',');
+            std::getline(ss, nick, ',');
+            std::getline(ss, salt, ',');
+            std::getline(ss, hash, ',');
+
+            if (!id.empty() && !nick.empty() && !salt.empty() && !hash.empty())
+            {
+                User user{ id, nick, salt, hash };
+                users_[id] = user;
+                nicknameIndex_[nick] = id;
+            }
+        }
+    }
+
     while (std::getline(file, line))
     {
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
+
         std::stringstream ss(line);
-        std::string id, nick, hash;
+        std::string id, nick, salt, hash;
 
         std::getline(ss, id, ',');
         std::getline(ss, nick, ',');
+        std::getline(ss, salt, ',');
         std::getline(ss, hash, ',');
 
-        User user{ id, nick, hash };
+        if (id.empty() || nick.empty() || salt.empty() || hash.empty())
+            continue;
+
+        User user{ id, nick, salt, hash };
         users_[id] = user;
         nicknameIndex_[nick] = id;
     }
@@ -66,19 +210,35 @@ void UserManager::Load()
 
 void UserManager::Save()
 {
+    std::lock_guard<std::mutex> lock(userManagerMutex_);
+    SaveUnlocked();
+}
+
+void UserManager::SaveUnlocked()
+{
     std::ofstream file("users.csv", std::ios::trunc);
+    if (!file.is_open())
+    {
+        std::cout << "[SAVE FAIL] users.csv open failed" << std::endl;
+        return;
+    }
+
+    file << "id,nickname,salt,passwordHash\n";
 
     for (auto& pair : users_)
     {
         file << pair.second.id << ","
             << pair.second.nickname << ","
+            << pair.second.salt << ","
             << pair.second.passwordHash << "\n";
     }
 }
 
 int UserManager::Register(const std::string& id,const std::string& nick,const std::string& pw,const std::string& confirmPw)
 {
-    if (id.empty() || nick.empty() || pw.empty())
+	std::lock_guard<std::mutex> lock(userManagerMutex_);
+
+    if (!IsValidId(id) || !IsValidNickname(nick) || !IsValidPassword(pw))
         return (int)RegisterResult::INVALID_INPUT;
 
     if (users_.count(id))
@@ -90,33 +250,47 @@ int UserManager::Register(const std::string& id,const std::string& nick,const st
     if (pw != confirmPw)
         return (int)RegisterResult::PASSWORD_MISMATCH;
 
-    std::string hash = HashPassword(id, pw);
+    std::string salt = GenerateSalt();
+    if(salt.empty())
+		return (int)RegisterResult::INVALID_INPUT;
 
-    User user{ id, nick, hash };
+    std::string hash = HashPassword(salt, pw);
+    if (hash.empty())
+        return (int)RegisterResult::INVALID_INPUT;
+
+    User user{ id, nick, salt, hash };
     users_[id] = user;
     nicknameIndex_[nick] = id;
 
-    Save();
+    SaveUnlocked();
 
     return (int)RegisterResult::SUCCESS;
 }
 
 int UserManager::Login(const std::string& id, const std::string& pw)
 {
-    if (id.empty() || pw.empty())
+    std::lock_guard<std::mutex> lock(userManagerMutex_);
+
+    if (!IsValidId(id) || pw.empty())
         return (int)LoginResult::INVALID_INPUT;
 
-    if (!users_.count(id))
+    auto it = users_.find(id);
+    if (it == users_.end())
         return (int)LoginResult::NO_ID;
 
-    if (!VerifyPassword(id, users_[id].passwordHash, pw))
+    const User& user = it->second;
+
+    if (!VerifyPassword(user.salt, user.passwordHash, pw))
         return (int)LoginResult::WRONG_PASSWORD;
 
     return (int)LoginResult::SUCCESS;
 }
 
+
 void UserManager::OnLogin(const std::string& id, Session* session)
 {
+	std::lock_guard<std::mutex> lock(userManagerMutex_);
+
     if (loggedInUsers_.count(id))
     {
         Session* oldSession = loggedInUsers_[id];
@@ -124,7 +298,6 @@ void UserManager::OnLogin(const std::string& id, Session* session)
         if (oldSession && oldSession != session)
         {
             std::cout << "[DUP LOGIN] 기존 세션 종료 id=" << id << std::endl;
-
             oldSession->Disconnect();
         }
     }
@@ -135,14 +308,17 @@ void UserManager::OnLogin(const std::string& id, Session* session)
 
 void UserManager::OnLogout(Session* session)
 {
+	std::lock_guard<std::mutex> lock(userManagerMutex_);
+
     std::string id = session->GetUserId();
 
     if (id.empty())
         return;
 
-    if (loggedInUsers_.count(id))
-    {
-        if (loggedInUsers_[id] == session)
-            loggedInUsers_.erase(id);
-    }
+	auto it = loggedInUsers_.find(id);
+	if (it != loggedInUsers_.end() && it->second == session)
+	{
+		loggedInUsers_.erase(it);
+		std::cout << "[LOGOUT] 세션 종료 id=" << id << std::endl;
+	}
 }

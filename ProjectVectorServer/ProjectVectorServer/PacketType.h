@@ -11,9 +11,18 @@ enum class PacketType : uint16_t
     // 로그인
     PKT_CS_LOGIN = 2,
     PKT_SC_LOGIN_RESULT = 3,
-
-    PKT_CS_LOBBY_CHAT = 4,
-    PKT_SC_LOBBY_CHAT = 5,
+    
+    //로비
+    PKT_CS_LOBBY_ENTER = 4,
+    PKT_SC_LOBBY_ENTER = 5,
+    PKT_CS_LOBBY_CHAT = 6,
+    PKT_SC_LOBBY_CHAT = 7,
+    PKT_CS_LOBBY_CHARACTER_SELECT = 8,
+    PKT_SC_LOBBY_CHARACTER_SELECT_RESULT = 9,
+    
+    //룸 리스트
+    PKT_CS_ROOM_LIST = 10,
+    PKT_SC_ROOM_LIST = 11,
 
     PKT_SC_HELLO = 100,
     PKT_SC_SPAWN_PLAYER = 101,

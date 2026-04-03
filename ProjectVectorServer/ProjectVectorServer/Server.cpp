@@ -18,6 +18,8 @@ bool Server::Start()
             listener_.Start(9000, iocp_);
         });
     UserManager::Instance().Load();
+    UserManager::Instance().LoadPlayerData();
+
     listenerThread.join();
     return true;
 }

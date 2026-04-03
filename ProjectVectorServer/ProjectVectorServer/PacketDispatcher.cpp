@@ -4,6 +4,8 @@
 #include "Session.h"
 #include "SessionManager.h"
 #include "UserManager.h"
+#include "RoomManager.h"
+#include <cstring>
 
 void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 {
@@ -88,6 +90,96 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
             break;
         }
+        case PacketType::PKT_CS_LOBBY_ENTER:
+        {
+            PlayerData data{};
+            bool ok = UserManager::Instance().GetPlayerData(session->GetUserId(), data);
+            if (!ok)
+                break;
+
+            SC_LobbyEnter out{};
+            out.header.size = sizeof(out);
+            out.header.type = (uint16_t)PacketType::PKT_SC_LOBBY_ENTER;
+
+            strncpy_s(out.nickname, data.nickname.c_str(), _TRUNCATE);
+            out.level = data.level;
+            out.lobbyCharacterModelId = data.lobbyCharacterModelId;
+
+            session->Send(&out);
+            break;
+        }
+        case PacketType::PKT_CS_LOBBY_CHARACTER_SELECT:
+        {
+            auto* pkt = reinterpret_cast<CS_LobbyCharacterSelect*>(header);
+
+            bool ok = UserManager::Instance().SetLobbyCharacterModel(
+                session->GetUserId(),
+                pkt->lobbyCharacterModelId
+            );
+
+            SC_LobbyCharacterSelectResult out{};
+            out.header.size = sizeof(out);
+            out.header.type = (uint16_t)PacketType::PKT_SC_LOBBY_CHARACTER_SELECT_RESULT;
+            out.result = ok ? 1 : 0;
+            out.lobbyCharacterModelId = pkt->lobbyCharacterModelId;
+
+            session->Send(&out);
+            break;
+        }
+        case PacketType::PKT_CS_LOBBY_CHAT:
+        {
+            auto* pkt = reinterpret_cast<CS_LobbyChat*>(header);
+
+            PlayerData data{};
+            bool ok = UserManager::Instance().GetPlayerData(session->GetUserId(), data);
+            if (!ok)
+                break;
+
+            SC_LobbyChat out{};
+            out.header.size = sizeof(out);
+            out.header.type = (uint16_t)PacketType::PKT_SC_LOBBY_CHAT;
+            out.playerId = session->GetPlayerId();
+
+            strncpy_s(out.nickname, data.nickname.c_str(), _TRUNCATE);
+            strncpy_s(out.message, pkt->message, _TRUNCATE);
+
+            SessionManager::Instance().Broadcast(&out);
+            break;
+        }
+        case PacketType::PKT_CS_ROOM_LIST:
+        {
+            SC_RoomList out{};
+            out.header.size = sizeof(out);
+            out.header.type = (uint16_t)PacketType::PKT_SC_ROOM_LIST;
+
+            std::vector<Room> roomList = RoomManager::Instance().GetRoomList();
+
+            uint16_t count = static_cast<uint16_t>(roomList.size());
+            if (count > MAX_ROOM_LIST_COUNT)
+                count = MAX_ROOM_LIST_COUNT;
+
+            out.roomCount = count;
+
+            for (uint16_t i = 0; i < count; ++i)
+            {
+                const Room& room = roomList[i];
+                RoomInfo& info = out.rooms[i];
+
+                info.roomId = room.roomId;
+
+                strncpy_s(info.roomName, ROOM_NAME_LEN, room.roomName.c_str(), _TRUNCATE);
+                strncpy_s(info.mapName, MAP_NAME_LEN, room.mapName.c_str(), _TRUNCATE);
+                strncpy_s(info.hostName, HOST_NAME_LEN, room.hostName.c_str(), _TRUNCATE);
+
+                info.currentPlayerCount = room.currentPlayerCount;
+                info.maxPlayerCount = room.maxPlayerCount;
+                info.state = (uint8_t)room.state;
+            }
+
+            session->Send(&out);
+            break;
+        }
+
         case PacketType::PKT_CS_MOVE_STATE:
         {
             auto* pkt = reinterpret_cast<CS_MoveState*>(header);

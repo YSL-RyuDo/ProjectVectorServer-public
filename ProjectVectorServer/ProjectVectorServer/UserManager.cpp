@@ -262,7 +262,14 @@ int UserManager::Register(const std::string& id,const std::string& nick,const st
     users_[id] = user;
     nicknameIndex_[nick] = id;
 
+    PlayerData data;
+    data.id = id;
+    data.nickname = nick;
+    data.level = 1;
+    data.lobbyCharacterModelId = 0;
+
     SaveUnlocked();
+    SavePlayerDataUnlocked();
 
     return (int)RegisterResult::SUCCESS;
 }
@@ -321,4 +328,107 @@ void UserManager::OnLogout(Session* session)
 		loggedInUsers_.erase(it);
 		std::cout << "[LOGOUT] 세션 종료 id=" << id << std::endl;
 	}
+}
+
+void UserManager::LoadPlayerData()
+{
+    std::lock_guard<std::mutex> lock(userManagerMutex_);
+    playerData_.clear();
+
+    std::ifstream file("player_data.csv");
+    if (!file.is_open())
+        return;
+
+    std::string line;
+    
+    if (std::getline(file, line))
+    {
+        if (line != "id,nickname,level,lobbyCharacterModelId")
+        {
+            std::stringstream ss(line);
+            std::string id, nick, levelStr, modelStr;
+
+            std::getline(ss, id, ',');
+            std::getline(ss, nick, ',');
+            std::getline(ss, levelStr, ',');
+            std::getline(ss, modelStr, ',');
+
+            PlayerData data;
+            data.id = id;
+            data.nickname = nick;
+            data.level = std::stoi(levelStr);
+            data.lobbyCharacterModelId = std::stoi(modelStr);
+
+            playerData_[id] = data;
+        }
+    }
+
+    while (std::getline(file, line))
+    {
+        std::stringstream ss(line);
+        std::string id, nick, levelStr, modelStr;
+
+        std::getline(ss, id, ',');
+        std::getline(ss, nick, ',');
+        std::getline(ss, levelStr, ',');
+        std::getline(ss, modelStr, ',');
+
+        if (id.empty()) continue;
+
+        PlayerData data;
+        data.id = id;
+        data.nickname = nick;
+        data.level = std::stoi(levelStr);
+        data.lobbyCharacterModelId = std::stoi(modelStr);
+
+        playerData_[id] = data;
+    }
+}
+
+void UserManager::SavePlayerDataUnlocked()
+{
+    std::ofstream file("player_data.csv", std::ios::trunc);
+    if (!file.is_open())
+        return;
+
+    file << "id,nickname,level,lobbyCharacterModelId\n";
+
+    for (auto& pair : playerData_)
+    {
+        file << pair.second.id << ","
+            << pair.second.nickname << ","
+            << pair.second.level << ","
+            << pair.second.lobbyCharacterModelId << "\n";
+    }
+}
+
+void UserManager::SavePlayerData()
+{
+    std::lock_guard<std::mutex> lock(userManagerMutex_);
+    SavePlayerDataUnlocked();
+}
+
+bool UserManager::GetPlayerData(const std::string& id, PlayerData& outData)
+{
+    std::lock_guard<std::mutex> lock(userManagerMutex_);
+
+    auto it = playerData_.find(id);
+    if (it == playerData_.end())
+        return false;
+
+    outData = it->second;
+    return true;
+}
+
+bool UserManager::SetLobbyCharacterModel(const std::string& id, int modelId)
+{
+    std::lock_guard<std::mutex> lock(userManagerMutex_);
+
+    auto it = playerData_.find(id);
+    if (it == playerData_.end())
+        return false;
+
+    it->second.lobbyCharacterModelId = modelId;
+    SavePlayerDataUnlocked();
+    return true;
 }

@@ -13,6 +13,14 @@ struct User
     std::string passwordHash;
 };
 
+struct PlayerData
+{
+    std::string id;
+    std::string nickname;
+    int level;
+    int lobbyCharacterModelId;
+};
+
 class UserManager
 {
 public:
@@ -27,13 +35,24 @@ public:
     void OnLogin(const std::string& id, Session* session);
     void OnLogout(Session* session);
 
+    void LoadPlayerData();
+    void SavePlayerData();
+
+    bool GetPlayerData(const std::string& id, PlayerData& outData);
+    bool SetLobbyCharacterModel(const std::string& id, int modelId);
+
 private:
 
     void SaveUnlocked();
+    void SavePlayerDataUnlocked();
+
     std::unordered_map<std::string, User> users_;
     std::unordered_map<std::string, std::string> nicknameIndex_;
     std::unordered_map<std::string, Session*> loggedInUsers_;
 	std::mutex userManagerMutex_;
+
+    std::unordered_map<std::string, PlayerData> playerData_;
+
 };
 
 std::string GenerateSalt(size_t byteSize = 16);

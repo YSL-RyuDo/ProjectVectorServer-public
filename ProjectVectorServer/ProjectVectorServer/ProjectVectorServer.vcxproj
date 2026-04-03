@@ -24,6 +24,8 @@
     <ClInclude Include="Listener.h" />
     <ClInclude Include="OverlappedEx.h" />
     <ClInclude Include="PacketDispatcher.h" />
+    <ClInclude Include="Room.h" />
+    <ClInclude Include="RoomManager.h" />
     <ClInclude Include="Server.h" />
     <ClInclude Include="Session.h" />
     <ClInclude Include="SessionManager.h" />
@@ -37,6 +39,7 @@
     <ClCompile Include="PacketDispatcher.cpp" />
     <ClCompile Include="Packet.h" />
     <ClCompile Include="PacketType.h" />
+    <ClCompile Include="RoomManager.cpp" />
     <ClCompile Include="Server.cpp" />
     <ClCompile Include="Session.cpp" />
     <ClCompile Include="SessionManager.cpp" />

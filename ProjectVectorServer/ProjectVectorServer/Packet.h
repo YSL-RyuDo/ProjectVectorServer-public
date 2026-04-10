@@ -6,6 +6,7 @@ constexpr int ROOM_NAME_LEN = 32;
 constexpr int MAP_NAME_LEN = 32;
 constexpr int HOST_NAME_LEN = 20;
 constexpr int MAX_ROOM_LIST_COUNT = 32;
+constexpr int MAX_LOBBY_CHARACTER_COUNT = 4;
 
 #pragma pack(push, 1)
 struct PacketHeader
@@ -101,8 +102,27 @@ struct SC_LobbyBackgroundSelectResult
     int lobbyBackgroundId;
 };
 
-// 룸 리스트
+// 로비 캐릭터 리스트
+struct CS_LobbyCharacterList
+{
+	PacketHeader header;
+};
 
+struct LobbyCharacterSlot
+{
+    int characterId;
+	uint8_t owned;
+};
+
+struct SC_LobbyCharacterList
+{
+    PacketHeader header;
+    uint16_t count;
+	int currentCharacterModelId;
+	LobbyCharacterSlot characters[MAX_LOBBY_CHARACTER_COUNT];
+};
+
+// 룸 리스트
 struct CS_RoomList
 {
     PacketHeader header;

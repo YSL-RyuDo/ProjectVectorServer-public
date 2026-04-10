@@ -271,8 +271,27 @@ int UserManager::Register(const std::string& id,const std::string& nick,const st
     data.lobbyBackgroundId = 0;
 	playerData_[id] = data;
 
+    CharacterOwnedData ownedData;
+    ownedData.id = id;
+    ownedData.c0 = 1; // 기본 지급 캐릭터
+    ownedData.c1 = 1;
+    ownedData.c2 = 1;
+    ownedData.c3 = 1;
+
+    characterOwnedData_[id] = ownedData;
+
+    CharacterAffinityData affinityData;
+    affinityData.id = id;
+    affinityData.c0 = 0;
+    affinityData.c1 = 0;
+    affinityData.c2 = 0;
+    affinityData.c3 = 0;
+
+    characterAffinityData_[id] = affinityData;
     SaveUnlocked();
     SavePlayerDataUnlocked();
+    SaveCharacterOwnedDataUnlocked();
+    SaveCharacterAffinityDataUnlocked();
 
     return (int)RegisterResult::SUCCESS;
 }
@@ -467,4 +486,186 @@ bool UserManager::SetLobbyBackground(const std::string& id, int backgroundId)
     it->second.lobbyBackgroundId = backgroundId;
     SavePlayerDataUnlocked();
     return true;
+}
+
+void UserManager::LoadCharacterOwnedData()
+{
+    std::lock_guard<std::mutex> lock(userManagerMutex_);
+    characterOwnedData_.clear();
+
+    std::ifstream file("character_owned.csv");
+    if (!file.is_open())
+        return;
+
+    std::string line;
+
+    if (std::getline(file, line))
+    {
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
+    }
+
+    while (std::getline(file, line))
+    {
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
+
+        std::stringstream ss(line);
+        std::string id, c0Str, c1Str, c2Str, c3Str;
+
+        std::getline(ss, id, ',');
+        std::getline(ss, c0Str, ',');
+        std::getline(ss, c1Str, ',');
+        std::getline(ss, c2Str, ',');
+        std::getline(ss, c3Str, ',');
+
+        if (id.empty())
+            continue;
+
+        CharacterOwnedData data;
+        data.id = id;
+        data.c0 = std::stoi(c0Str);
+        data.c1 = std::stoi(c1Str);
+        data.c2 = std::stoi(c2Str);
+        data.c3 = std::stoi(c3Str);
+
+        characterOwnedData_[id] = data;
+    }
+}
+
+void UserManager::SaveCharacterOwnedData()
+{
+    std::lock_guard<std::mutex> lock(userManagerMutex_);
+    SaveCharacterOwnedDataUnlocked();
+}
+
+void UserManager::SaveCharacterOwnedDataUnlocked()
+{
+    std::ofstream file("character_owned.csv", std::ios::trunc);
+    if (!file.is_open())
+        return;
+
+    file << "id,c0,c1,c2,c3\n";
+
+    for (auto& pair : characterOwnedData_)
+    {
+        file << pair.second.id << ","
+            << pair.second.c0 << ","
+            << pair.second.c1 << ","
+            << pair.second.c2 << ","
+            << pair.second.c3 << "\n";
+    }
+}
+
+void UserManager::LoadCharacterAffinityData()
+{
+    std::lock_guard<std::mutex> lock(userManagerMutex_);
+    characterAffinityData_.clear();
+
+    std::ifstream file("character_affinity.csv");
+    if (!file.is_open())
+        return;
+
+    std::string line;
+
+    if (std::getline(file, line))
+    {
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
+    }
+
+    while (std::getline(file, line))
+    {
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
+
+        std::stringstream ss(line);
+        std::string id, c0Str, c1Str, c2Str, c3Str;
+
+        std::getline(ss, id, ',');
+        std::getline(ss, c0Str, ',');
+        std::getline(ss, c1Str, ',');
+        std::getline(ss, c2Str, ',');
+        std::getline(ss, c3Str, ',');
+
+        if (id.empty())
+            continue;
+
+        CharacterAffinityData data;
+        data.id = id;
+        data.c0 = std::stoi(c0Str);
+        data.c1 = std::stoi(c1Str);
+        data.c2 = std::stoi(c2Str);
+        data.c3 = std::stoi(c3Str);
+
+        characterAffinityData_[id] = data;
+    }
+}
+
+void UserManager::SaveCharacterAffinityData()
+{
+    std::lock_guard<std::mutex> lock(userManagerMutex_);
+    SaveCharacterAffinityDataUnlocked();
+}
+
+void UserManager::SaveCharacterAffinityDataUnlocked()
+{
+    std::ofstream file("character_affinity.csv", std::ios::trunc);
+    if (!file.is_open())
+        return;
+
+    file << "id,c0,c1,c2,c3\n";
+
+    for (auto& pair : characterAffinityData_)
+    {
+        file << pair.second.id << ","
+            << pair.second.c0 << ","
+            << pair.second.c1 << ","
+            << pair.second.c2 << ","
+            << pair.second.c3 << "\n";
+    }
+}
+
+bool UserManager::GetCharacterOwnedData(const std::string& id, CharacterOwnedData& outData)
+{
+    std::lock_guard<std::mutex> lock(userManagerMutex_);
+
+    auto it = characterOwnedData_.find(id);
+    if (it == characterOwnedData_.end())
+        return false;
+
+    outData = it->second;
+    return true;
+}
+
+bool UserManager::GetCharacterAffinityData(const std::string& id, CharacterAffinityData& outData)
+{
+    std::lock_guard<std::mutex> lock(userManagerMutex_);
+
+    auto it = characterAffinityData_.find(id);
+    if (it == characterAffinityData_.end())
+        return false;
+
+    outData = it->second;
+    return true;
+}
+
+bool UserManager::IsCharacterOwned(const std::string& id, int characterId)
+{
+	std::lock_guard<std::mutex> lock(userManagerMutex_);
+
+	auto it = characterOwnedData_.find(id);
+	if (it == characterOwnedData_.end())
+		return false;
+
+	const CharacterOwnedData& data = it->second;
+	switch (characterId)
+	{
+	case 0: return data.c0 != 0;
+	case 1: return data.c1 != 0;
+	case 2: return data.c2 != 0;
+	case 3: return data.c3 != 0;
+	default:
+		return false;
+	}
 }

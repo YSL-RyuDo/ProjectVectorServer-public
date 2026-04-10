@@ -19,6 +19,8 @@ bool Server::Start()
         });
     UserManager::Instance().Load();
     UserManager::Instance().LoadPlayerData();
+    UserManager::Instance().LoadCharacterOwnedData();
+    UserManager::Instance().LoadCharacterAffinityData();
 
     listenerThread.join();
     return true;

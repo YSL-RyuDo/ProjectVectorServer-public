@@ -7,6 +7,15 @@ struct Vector3
     float x, y, z;
 };
 
+enum class SessionState
+{
+    CONNECTED,
+    AUTHENTICATED,
+    IN_LOBBY,
+    IN_ROOM,
+    IN_GAME
+};
+
 class Session
 {
 public:

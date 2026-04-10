@@ -23,6 +23,24 @@ struct PlayerData
     int lobbyBackgroundId;
 };
 
+struct CharacterOwnedData
+{
+    std::string id;
+    int c0;
+    int c1;
+    int c2;
+    int c3;
+};
+
+struct CharacterAffinityData
+{
+    std::string id;
+    int c0;
+    int c1;
+    int c2;
+    int c3;
+};
+
 class UserManager
 {
 public:
@@ -44,10 +62,22 @@ public:
     bool SetLobbyCharacterModel(const std::string& id, int modelId);
     bool SetLobbyBackground(const std::string& id, int backgroundId);
 
+    void LoadCharacterOwnedData();
+    void SaveCharacterOwnedData();
+
+    void LoadCharacterAffinityData();
+    void SaveCharacterAffinityData();
+
+    bool GetCharacterOwnedData(const std::string& id, CharacterOwnedData& outData);
+    bool GetCharacterAffinityData(const std::string& id, CharacterAffinityData& outData);
+
+	bool IsCharacterOwned(const std::string& id, int characterId);
 private:
 
     void SaveUnlocked();
     void SavePlayerDataUnlocked();
+    void SaveCharacterOwnedDataUnlocked();
+    void SaveCharacterAffinityDataUnlocked();
 
     std::unordered_map<std::string, User> users_;
     std::unordered_map<std::string, std::string> nicknameIndex_;
@@ -55,6 +85,8 @@ private:
 	std::mutex userManagerMutex_;
 
     std::unordered_map<std::string, PlayerData> playerData_;
+    std::unordered_map<std::string, CharacterOwnedData> characterOwnedData_;
+    std::unordered_map<std::string, CharacterAffinityData> characterAffinityData_;
 
 };
 

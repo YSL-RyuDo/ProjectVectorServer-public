@@ -114,11 +114,21 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         {
             auto* pkt = reinterpret_cast<CS_LobbyCharacterSelect*>(header);
 
-            bool ok = UserManager::Instance().SetLobbyCharacterModel(
+			bool owned = UserManager::Instance().IsCharacterOwned(
                 session->GetUserId(),
                 pkt->lobbyCharacterModelId
             );
 
+			bool ok = false;
+
+            if (owned)
+            {
+                ok = UserManager::Instance().SetLobbyCharacterModel(
+                    session->GetUserId(),
+                    pkt->lobbyCharacterModelId
+                );
+            }
+				
             SC_LobbyCharacterSelectResult out{};
             out.header.size = sizeof(out);
             out.header.type = (uint16_t)PacketType::PKT_SC_LOBBY_CHARACTER_SELECT_RESULT;
@@ -166,6 +176,38 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             SessionManager::Instance().Broadcast(&out);
             break;
         }
+        case PacketType::PKT_CS_LOBBY_CHARACTER_LIST:
+        {
+			CharacterOwnedData ownedData{};
+            PlayerData playerData{};
+
+			bool okOwned = UserManager::Instance().GetCharacterOwnedData(session->GetUserId(), ownedData);
+			bool okPlayer = UserManager::Instance().GetPlayerData(session->GetUserId(), playerData);
+			if (!okOwned || !okPlayer)
+				break;
+
+			SC_LobbyCharacterList out{};
+			out.header.size = sizeof(out);
+			out.header.type = (uint16_t)PacketType::PKT_SC_LOBBY_CHARACTER_LIST;
+			out.count = MAX_LOBBY_CHARACTER_COUNT;
+			out.currentCharacterModelId = playerData.lobbyCharacterModelId;
+
+			out.characters[0].characterId = 0;
+			out.characters[0].owned = (uint8_t)(ownedData.c0 ? 1 : 0);
+
+			out.characters[1].characterId = 1;
+			out.characters[1].owned = (uint8_t)(ownedData.c1 ? 1 : 0);
+
+			out.characters[2].characterId = 2;
+			out.characters[2].owned = (uint8_t)(ownedData.c2 ? 1 : 0);
+
+			out.characters[3].characterId = 3;
+			out.characters[3].owned = (uint8_t)(ownedData.c3 ? 1 : 0);
+
+			session->Send(&out);
+			break;
+        }
+
         case PacketType::PKT_CS_ROOM_LIST:
         {
             SC_RoomList out{};

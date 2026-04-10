@@ -266,8 +266,9 @@ int UserManager::Register(const std::string& id,const std::string& nick,const st
     data.id = id;
     data.nickname = nick;
     data.level = 1;
+    data.playerIconId = 0;
     data.lobbyCharacterModelId = 0;
-	data.playerIconId = 0;
+    data.lobbyBackgroundId = 0;
 	playerData_[id] = data;
 
     SaveUnlocked();
@@ -348,20 +349,22 @@ void UserManager::LoadPlayerData()
         if (line != "id,nickname,level,lobbyCharacterModelId")
         {
             std::stringstream ss(line);
-            std::string id, nick, levelStr, modelStr, iconStr;
+            std::string id, nick, levelStr, iconStr, modelStr,backgroundStr ;
 
             std::getline(ss, id, ',');
             std::getline(ss, nick, ',');
             std::getline(ss, levelStr, ',');
-            std::getline(ss, modelStr, ',');
-			std::getline(ss, iconStr, ',');
+            std::getline(ss, iconStr, ',');
+			std::getline(ss, modelStr, ',');
+            std::getline(ss, backgroundStr, ',');
 
             PlayerData data;
             data.id = id;
             data.nickname = nick;
             data.level = std::stoi(levelStr);
-            data.lobbyCharacterModelId = std::stoi(modelStr);
 			data.playerIconId = std::stoi(iconStr);
+            data.lobbyCharacterModelId = std::stoi(modelStr);
+            data.lobbyBackgroundId = std::stoi(backgroundStr);
 
             playerData_[id] = data;
         }
@@ -395,14 +398,16 @@ void UserManager::SavePlayerDataUnlocked()
     if (!file.is_open())
         return;
 
-    file << "id,nickname,level,lobbyCharacterModelId,playerIconId\n";
+    file << "id,nickname,level,playerIconId,lobbyCharacterModelId,lobbyBackgroundId\n";
 
     for (auto& pair : playerData_)
     {
         file << pair.second.id << ","
             << pair.second.nickname << ","
             << pair.second.level << ","
-            << pair.second.lobbyCharacterModelId << "\n";
+            << pair.second.playerIconId << ","
+            << pair.second.lobbyCharacterModelId << ","
+            << pair.second.lobbyBackgroundId << "\n";
     }
 }
 

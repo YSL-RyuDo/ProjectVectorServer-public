@@ -53,8 +53,9 @@ struct SC_LobbyEnter
     PacketHeader header;
     char nickname[20];
     int level;
+    int playerIconId;
     int lobbyCharacterModelId;
-	int playerIconId;
+    int lobbyBackgroundId;
 };
 
 // 로비 채팅

@@ -103,8 +103,9 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
             strncpy_s(out.nickname, data.nickname.c_str(), _TRUNCATE);
             out.level = data.level;
+            out.playerIconId = data.playerIconId;
             out.lobbyCharacterModelId = data.lobbyCharacterModelId;
-			out.playerIconId = data.playerIconId;
+            out.lobbyBackgroundId = data.lobbyBackgroundId;
 
             session->Send(&out);
             break;

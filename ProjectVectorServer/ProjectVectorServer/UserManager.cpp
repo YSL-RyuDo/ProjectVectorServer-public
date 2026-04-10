@@ -267,6 +267,8 @@ int UserManager::Register(const std::string& id,const std::string& nick,const st
     data.nickname = nick;
     data.level = 1;
     data.lobbyCharacterModelId = 0;
+	data.playerIconId = 0;
+	playerData_[id] = data;
 
     SaveUnlocked();
     SavePlayerDataUnlocked();
@@ -346,18 +348,20 @@ void UserManager::LoadPlayerData()
         if (line != "id,nickname,level,lobbyCharacterModelId")
         {
             std::stringstream ss(line);
-            std::string id, nick, levelStr, modelStr;
+            std::string id, nick, levelStr, modelStr, iconStr;
 
             std::getline(ss, id, ',');
             std::getline(ss, nick, ',');
             std::getline(ss, levelStr, ',');
             std::getline(ss, modelStr, ',');
+			std::getline(ss, iconStr, ',');
 
             PlayerData data;
             data.id = id;
             data.nickname = nick;
             data.level = std::stoi(levelStr);
             data.lobbyCharacterModelId = std::stoi(modelStr);
+			data.playerIconId = std::stoi(iconStr);
 
             playerData_[id] = data;
         }
@@ -391,7 +395,7 @@ void UserManager::SavePlayerDataUnlocked()
     if (!file.is_open())
         return;
 
-    file << "id,nickname,level,lobbyCharacterModelId\n";
+    file << "id,nickname,level,lobbyCharacterModelId,playerIconId\n";
 
     for (auto& pair : playerData_)
     {

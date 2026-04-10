@@ -54,6 +54,7 @@ struct SC_LobbyEnter
     char nickname[20];
     int level;
     int lobbyCharacterModelId;
+	int playerIconId;
 };
 
 // 로비 채팅

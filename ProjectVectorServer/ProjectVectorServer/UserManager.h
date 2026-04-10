@@ -19,6 +19,7 @@ struct PlayerData
     std::string nickname;
     int level;
     int lobbyCharacterModelId;
+    int playerIconId;
 };
 
 class UserManager

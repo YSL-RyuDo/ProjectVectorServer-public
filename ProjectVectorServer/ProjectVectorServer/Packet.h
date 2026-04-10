@@ -87,6 +87,20 @@ struct SC_LobbyCharacterSelectResult
     int lobbyCharacterModelId;
 };
 
+// 로비 배경 선택
+struct CS_LobbyBackgroundSelect
+{
+    PacketHeader header;
+    int lobbyBackgroundId;
+};
+
+struct SC_LobbyBackgroundSelectResult
+{
+    PacketHeader header;
+    uint8_t result;
+    int lobbyBackgroundId;
+};
+
 // 룸 리스트
 
 struct CS_RoomList

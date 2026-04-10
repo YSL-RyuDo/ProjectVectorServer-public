@@ -343,50 +343,64 @@ void UserManager::LoadPlayerData()
         return;
 
     std::string line;
-    
+
     if (std::getline(file, line))
     {
-        if (line != "id,nickname,level,lobbyCharacterModelId")
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
+
+        if (line != "id,nickname,level,playerIconId,lobbyCharacterModelId,lobbyBackgroundId")
         {
             std::stringstream ss(line);
-            std::string id, nick, levelStr, iconStr, modelStr,backgroundStr ;
+            std::string id, nick, levelStr, iconStr, modelStr, backgroundStr;
 
             std::getline(ss, id, ',');
             std::getline(ss, nick, ',');
             std::getline(ss, levelStr, ',');
             std::getline(ss, iconStr, ',');
-			std::getline(ss, modelStr, ',');
+            std::getline(ss, modelStr, ',');
             std::getline(ss, backgroundStr, ',');
 
-            PlayerData data;
-            data.id = id;
-            data.nickname = nick;
-            data.level = std::stoi(levelStr);
-			data.playerIconId = std::stoi(iconStr);
-            data.lobbyCharacterModelId = std::stoi(modelStr);
-            data.lobbyBackgroundId = std::stoi(backgroundStr);
+            if (!id.empty())
+            {
+                PlayerData data;
+                data.id = id;
+                data.nickname = nick;
+                data.level = std::stoi(levelStr);
+                data.playerIconId = std::stoi(iconStr);
+                data.lobbyCharacterModelId = std::stoi(modelStr);
+                data.lobbyBackgroundId = std::stoi(backgroundStr);
 
-            playerData_[id] = data;
+                playerData_[id] = data;
+            }
         }
     }
 
     while (std::getline(file, line))
     {
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
+
         std::stringstream ss(line);
-        std::string id, nick, levelStr, modelStr;
+        std::string id, nick, levelStr, iconStr, modelStr, backgroundStr;
 
         std::getline(ss, id, ',');
         std::getline(ss, nick, ',');
         std::getline(ss, levelStr, ',');
+        std::getline(ss, iconStr, ',');
         std::getline(ss, modelStr, ',');
+        std::getline(ss, backgroundStr, ',');
 
-        if (id.empty()) continue;
+        if (id.empty())
+            continue;
 
         PlayerData data;
         data.id = id;
         data.nickname = nick;
         data.level = std::stoi(levelStr);
+        data.playerIconId = std::stoi(iconStr);
         data.lobbyCharacterModelId = std::stoi(modelStr);
+        data.lobbyBackgroundId = std::stoi(backgroundStr);
 
         playerData_[id] = data;
     }
@@ -438,6 +452,19 @@ bool UserManager::SetLobbyCharacterModel(const std::string& id, int modelId)
         return false;
 
     it->second.lobbyCharacterModelId = modelId;
+    SavePlayerDataUnlocked();
+    return true;
+}
+
+bool UserManager::SetLobbyBackground(const std::string& id, int backgroundId)
+{
+    std::lock_guard<std::mutex> lock(userManagerMutex_);
+
+    auto it = playerData_.find(id);
+    if (it == playerData_.end())
+        return false;
+
+    it->second.lobbyBackgroundId = backgroundId;
     SavePlayerDataUnlocked();
     return true;
 }

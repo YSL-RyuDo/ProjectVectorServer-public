@@ -42,6 +42,7 @@ public:
 
     bool GetPlayerData(const std::string& id, PlayerData& outData);
     bool SetLobbyCharacterModel(const std::string& id, int modelId);
+    bool SetLobbyBackground(const std::string& id, int backgroundId);
 
 private:
 

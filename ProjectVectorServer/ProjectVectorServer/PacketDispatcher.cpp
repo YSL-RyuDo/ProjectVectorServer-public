@@ -128,6 +128,24 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             session->Send(&out);
             break;
         }
+        case PacketType::PKT_CS_LOBBY_BACKGROUND_SELECT:
+        {
+            auto* pkt = reinterpret_cast<CS_LobbyBackgroundSelect*>(header);
+
+            bool ok = UserManager::Instance().SetLobbyBackground(
+                session->GetUserId(),
+                pkt->lobbyBackgroundId
+            );
+
+            SC_LobbyBackgroundSelectResult out{};
+            out.header.size = sizeof(out);
+            out.header.type = (uint16_t)PacketType::PKT_SC_LOBBY_BACKGROUND_SELECT_RESULT;
+            out.result = ok ? 1 : 0;
+            out.lobbyBackgroundId = pkt->lobbyBackgroundId;
+
+            session->Send(&out);
+            break;
+        }
         case PacketType::PKT_CS_LOBBY_CHAT:
         {
             auto* pkt = reinterpret_cast<CS_LobbyChat*>(header);

@@ -22,8 +22,11 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         {
             if (!session->IsAuthenticated())
             {
-                std::cout << "[AUTH BLOCK] playerId="
-                    << session->GetPlayerId() << std::endl;
+                std::cout << "[AUTH BLOCK] session=" << session
+                    << " playerId=" << session->GetPlayerId()
+                    << " type=" << (uint16_t)type
+                    << " userId=" << session->GetUserId()
+                    << std::endl;
                 return;
             }
             break;
@@ -73,6 +76,21 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 				pkt->password
 			);
 
+            if (result == (uint8_t)LoginResult::SUCCESS)
+            {
+                session->SetAuthenticated(true);
+                UserManager::Instance().OnLogin(pkt->id, session);
+
+                uint32_t newPlayerId = SessionManager::Instance().AllocatePlayerId();
+                session->SetPlayerId(newPlayerId);
+                SessionManager::Instance().Add(session);
+
+                std::cout << "[LOGIN SUCCESS READY] id=" << pkt->id
+                    << " playerId=" << newPlayerId
+                    << " session=" << session
+                    << std::endl;
+            }
+
 			SC_LoginResult out{};
 			out.header.size = sizeof(out);
 			out.header.type = (uint16_t)PacketType::PKT_SC_LOGIN_RESULT;
@@ -82,11 +100,11 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
             if (result == (uint8_t)LoginResult::SUCCESS)
             {
-                session->SetAuthenticated(true);
-                UserManager::Instance().OnLogin(pkt->id, session);
-
-                std::cout << "[LOGIN SUCCESS] id=" << pkt->id << std::endl;
+                std::cout << "[LOGIN SUCCESS SENT] id=" << pkt->id
+                    << " playerId=" << session->GetPlayerId()
+                    << std::endl;
             }
+
 
             break;
         }

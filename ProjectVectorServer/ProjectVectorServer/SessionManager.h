@@ -15,7 +15,11 @@ public:
     void Remove(uint32_t playerId);
 
     std::vector<Session*> GetAll();
+    std::vector<Session*> GetLobbySessions();
+
     void Broadcast(void* packet);
+	void BroadcastLobby(void* packet);
+
     Session* Find(uint32_t playerId);
 
 private:

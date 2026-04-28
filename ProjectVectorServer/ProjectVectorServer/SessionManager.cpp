@@ -1,5 +1,6 @@
 #include "SessionManager.h"
 #include "Session.h"
+#include "Packet.h"
 
 SessionManager& SessionManager::Instance()
 {
@@ -54,6 +55,23 @@ std::vector<Session*> SessionManager::GetAll()
     return list;
 }
 
+std::vector<Session*> SessionManager::GetLobbySessions()
+{
+    std::lock_guard<std::mutex> lock(sessionManagerMutex_);
+
+    std::vector<Session*> list;
+    list.reserve(sessions_.size());
+
+    for (auto& pair : sessions_)
+    {
+        Session* session = pair.second;
+        if (session != nullptr && session->GetState() == SessionState::IN_LOBBY)
+            list.push_back(session);
+    }
+
+    return list;
+}
+
 void SessionManager::Broadcast(void* packet)
 {
 	std::vector<Session*> copied = GetAll();
@@ -62,4 +80,32 @@ void SessionManager::Broadcast(void* packet)
 	{
 		session->Send(packet);
 	}
+}
+
+void SessionManager::BroadcastLobby(void* packet)
+{
+    std::vector<Session*> copied = GetLobbySessions();
+
+    PacketHeader* header = reinterpret_cast<PacketHeader*>(packet);
+
+    std::cout << "[BROADCAST LOBBY BEGIN] type=" << header->type
+        << " size=" << header->size
+        << " targetCount=" << copied.size()
+        << std::endl;
+
+    for (Session* session : copied)
+    {
+        if (session == nullptr)
+            continue;
+
+        std::cout << "[BROADCAST LOBBY TARGET] session=" << session
+            << " playerId=" << session->GetPlayerId()
+            << " userId=" << session->GetUserId()
+            << " state=" << (int)session->GetState()
+            << std::endl;
+
+        session->Send(packet);
+    }
+
+    std::cout << "[BROADCAST LOBBY END]" << std::endl;
 }

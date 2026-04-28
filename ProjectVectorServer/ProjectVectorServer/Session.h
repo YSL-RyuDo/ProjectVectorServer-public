@@ -35,6 +35,13 @@ public:
     void SetAuthenticated(bool val) { isAuthenticated_ = val; }
     bool IsAuthenticated() const { return isAuthenticated_; }
 
+    void SetState(SessionState state) { state_ = state; }
+    SessionState GetState() const { return state_; }
+
+    bool IsInLobby() const { return state_ == SessionState::IN_LOBBY; }
+    bool IsInRoom() const { return state_ == SessionState::IN_ROOM; }
+    bool IsInGame() const { return state_ == SessionState::IN_GAME; }
+
     void SetPlayerId(uint32_t id) { playerId_ = id; }
     uint32_t GetPlayerId() const { return playerId_; }
 
@@ -70,6 +77,8 @@ private:
     char recvBuffer_[4096];
     int recvSize_ = 0;
     bool isAuthenticated_ = false;
+    SessionState state_ = SessionState::CONNECTED;
+
     std::string userId_;
 
     uint32_t playerId_ = 0;

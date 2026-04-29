@@ -151,19 +151,10 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
     case PacketType::PKT_CS_LOBBY_ENTER:
     {
-        std::cout << "[LOBBY ENTER REQUEST] playerId=" << session->GetPlayerId()
-            << " userId=" << session->GetUserId()
-            << std::endl;
-
         PlayerData data{};
         bool ok = UserManager::Instance().GetPlayerData(session->GetUserId(), data);
         if (!ok)
-        {
-            std::cout << "[LOBBY ENTER FAIL] playerData not found userId="
-                << session->GetUserId()
-                << std::endl;
             break;
-        }
 
         session->SetState(SessionState::IN_LOBBY);
 
@@ -172,7 +163,11 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         out.header.type = (uint16_t)PacketType::PKT_SC_LOBBY_ENTER;
 
         strncpy_s(out.nickname, data.nickname.c_str(), _TRUNCATE);
+
         out.level = data.level;
+        out.currentExp = data.currentExp;
+        out.requiredExp = UserManager::Instance().GetRequiredExpForLevel(data.level);
+
         out.playerIconId = data.playerIconId;
         out.lobbyCharacterModelId = data.lobbyCharacterModelId;
         out.lobbyBackgroundId = data.lobbyBackgroundId;
@@ -183,6 +178,8 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             << " userId=" << session->GetUserId()
             << " nickname=" << data.nickname
             << " level=" << data.level
+            << " currentExp=" << data.currentExp
+            << " requiredExp=" << out.requiredExp
             << " icon=" << data.playerIconId
             << " char=" << data.lobbyCharacterModelId
             << " bg=" << data.lobbyBackgroundId
@@ -356,6 +353,82 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             << (int)out.characters[1].owned << ","
             << (int)out.characters[2].owned << ","
             << (int)out.characters[3].owned << ")"
+            << std::endl;
+        break;
+    }
+
+    //추후에 유니티랑 비교할것
+    case PacketType::PKT_CS_TEMP_GAME_ROOM_ENTER:
+    {
+        std::cout << "[TEMP GAME ROOM ENTER REQUEST] playerId="
+            << session->GetPlayerId()
+            << " userId=" << session->GetUserId()
+            << std::endl;
+
+        PlayerData data{};
+        bool ok = UserManager::Instance().GetPlayerData(session->GetUserId(), data);
+
+        SC_TempGameRoomEnter out{};
+        out.header.size = sizeof(out);
+        out.header.type = (uint16_t)PacketType::PKT_SC_TEMP_GAME_ROOM_ENTER;
+
+        if (!ok)
+        {
+            out.result = 1;
+            out.playerCount = 0;
+            session->Send(&out);
+
+            std::cout << "[TEMP GAME ROOM ENTER FAIL] userId="
+                << session->GetUserId()
+                << std::endl;
+            break;
+        }
+
+        out.result = 0;
+        out.playerCount = 1;
+
+        // 0번 슬롯 = 본인
+        out.players[0].slotIndex = 0;
+        strncpy_s(out.players[0].nickname, data.nickname.c_str(), _TRUNCATE);
+        out.players[0].playerIconId = data.playerIconId;
+
+        // 현재 서버 데이터에 없으므로 임시값
+        out.players[0].logoBorderId = 0;
+        out.players[0].rankImageId = 0;
+
+        // 1,2는 비워둠
+        out.players[1].slotIndex = 1;
+        out.players[2].slotIndex = 2;
+
+        session->Send(&out);
+
+        std::cout << "[TEMP GAME ROOM ENTER SUCCESS] playerId="
+            << session->GetPlayerId()
+            << " nickname=" << out.players[0].nickname
+            << " iconId=" << out.players[0].playerIconId
+            << " borderId=" << out.players[0].logoBorderId
+            << " rankId=" << out.players[0].rankImageId
+            << std::endl;
+        break;
+    }
+
+    case PacketType::PKT_CS_TEMP_GAME_START:
+    {
+        std::cout << "[TEMP GAME START REQUEST] playerId="
+            << session->GetPlayerId()
+            << " userId=" << session->GetUserId()
+            << std::endl;
+
+        SC_TempGameStartResult out{};
+        out.header.size = sizeof(out);
+        out.header.type = (uint16_t)PacketType::PKT_SC_TEMP_GAME_START_RESULT;
+        out.result = 0; // 임시로 무조건 성공
+
+        session->Send(&out);
+
+        std::cout << "[TEMP GAME START RESULT] playerId="
+            << session->GetPlayerId()
+            << " result=" << (int)out.result
             << std::endl;
         break;
     }

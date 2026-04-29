@@ -14,66 +14,94 @@
 namespace
 {
     constexpr ULONG PBKDF2_ITERATION = 100000;
-	constexpr ULONG DERIVED_KEY_LENGTH = 32;
+    constexpr ULONG DERIVED_KEY_LENGTH = 32;
 
-	std::string BytesToHex(const std::vector<uint8_t>& bytes)
-	{
+    constexpr const char* PLAYER_DATA_HEADER =
+        "id,nickname,level,currentExp,playerIconId,logoBorderId,rankImageId,lobbyCharacterModelId,lobbyBackgroundId";
+
+    constexpr const char* LEVEL_EXP_TABLE_HEADER =
+        "level,requiredExp";
+
+    int GetDefaultRequiredExpForLevel(int level)
+    {
+        if (level < 1)
+            level = 1;
+
+        return 100 + (level - 1) * 50;
+    }
+
+    std::vector<std::string> SplitCsvLine(const std::string& line)
+    {
+        std::vector<std::string> tokens;
+        std::stringstream ss(line);
+        std::string token;
+
+        while (std::getline(ss, token, ','))
+        {
+            tokens.push_back(token);
+        }
+
+        return tokens;
+    }
+
+    std::string BytesToHex(const std::vector<uint8_t>& bytes)
+    {
         std::ostringstream oss;
-		oss << std::hex << std::setfill('0');
+        oss << std::hex << std::setfill('0');
 
-		for (uint8_t b : bytes)
-		{
-			oss << std::setw(2) << static_cast<int>(b);
-		}
+        for (uint8_t b : bytes)
+        {
+            oss << std::setw(2) << static_cast<int>(b);
+        }
 
-		return oss.str();
-	}
+        return oss.str();
+    }
 
-	std::vector<uint8_t> HexToBytes(const std::string& hex)
-	{
-		std::vector<uint8_t> out;
+    std::vector<uint8_t> HexToBytes(const std::string& hex)
+    {
+        std::vector<uint8_t> out;
 
-		if (hex.size() % 2 != 0)
-			return out;
+        if (hex.size() % 2 != 0)
+            return out;
 
-		for (size_t i = 0; i < hex.size(); i += 2)
-		{
-			std::string byteStr = hex.substr(i, 2);
+        for (size_t i = 0; i < hex.size(); i += 2)
+        {
+            std::string byteStr = hex.substr(i, 2);
             uint8_t value = static_cast<uint8_t>(strtoul(byteStr.c_str(), nullptr, 16));
-			out.push_back(value);
-		}
+            out.push_back(value);
+        }
 
-		return out;
-	}
+        return out;
+    }
 
     bool IsValidId(const std::string& id)
     {
-		static const std::regex pattern("^[a-zA-Z0-9_]{4,20}$");
-		return std::regex_match(id, pattern);
+        static const std::regex pattern("^[a-zA-Z0-9_]{4,20}$");
+        return std::regex_match(id, pattern);
     }
 
     bool IsValidNickname(const std::string& nick)
     {
-		return !nick.empty() && nick.size() >= 2 && nick.size() <= 16;
+        return !nick.empty() && nick.size() >= 2 && nick.size() <= 16;
     }
 
     bool IsValidPassword(const std::string& pw)
     {
-		if (pw.size() < 8 || pw.size() > 64)
-			return false;
+        if (pw.size() < 8 || pw.size() > 64)
+            return false;
 
         bool hasAlpha = false;
-		bool hasDigit = false;
+        bool hasDigit = false;
 
         for (char c : pw)
         {
-            if(std::isalpha(static_cast<unsigned char>(c)))
-				hasAlpha = true;
-			if (std::isdigit(static_cast<unsigned char>(c)))
-				hasDigit = true;
+            if (std::isalpha(static_cast<unsigned char>(c)))
+                hasAlpha = true;
+            if (std::isdigit(static_cast<unsigned char>(c)))
+                hasDigit = true;
         }
 
-		return hasAlpha && hasDigit;
+        return hasAlpha && hasDigit;
     }
 }
 
@@ -266,10 +294,13 @@ int UserManager::Register(const std::string& id,const std::string& nick,const st
     data.id = id;
     data.nickname = nick;
     data.level = 1;
+    data.currentExp = 0;
     data.playerIconId = 0;
+    data.logoBorderId = 0;
+    data.rankImageId = 0;
     data.lobbyCharacterModelId = 0;
     data.lobbyBackgroundId = 0;
-	playerData_[id] = data;
+    playerData_[id] = data;
 
     CharacterOwnedData ownedData;
     ownedData.id = id;
@@ -362,66 +393,49 @@ void UserManager::LoadPlayerData()
         return;
 
     std::string line;
-
-    if (std::getline(file, line))
-    {
-        if (!line.empty() && line.back() == '\r')
-            line.pop_back();
-
-        if (line != "id,nickname,level,playerIconId,lobbyCharacterModelId,lobbyBackgroundId")
-        {
-            std::stringstream ss(line);
-            std::string id, nick, levelStr, iconStr, modelStr, backgroundStr;
-
-            std::getline(ss, id, ',');
-            std::getline(ss, nick, ',');
-            std::getline(ss, levelStr, ',');
-            std::getline(ss, iconStr, ',');
-            std::getline(ss, modelStr, ',');
-            std::getline(ss, backgroundStr, ',');
-
-            if (!id.empty())
-            {
-                PlayerData data;
-                data.id = id;
-                data.nickname = nick;
-                data.level = std::stoi(levelStr);
-                data.playerIconId = std::stoi(iconStr);
-                data.lobbyCharacterModelId = std::stoi(modelStr);
-                data.lobbyBackgroundId = std::stoi(backgroundStr);
-
-                playerData_[id] = data;
-            }
-        }
-    }
+    bool firstLine = true;
 
     while (std::getline(file, line))
     {
         if (!line.empty() && line.back() == '\r')
             line.pop_back();
 
-        std::stringstream ss(line);
-        std::string id, nick, levelStr, iconStr, modelStr, backgroundStr;
-
-        std::getline(ss, id, ',');
-        std::getline(ss, nick, ',');
-        std::getline(ss, levelStr, ',');
-        std::getline(ss, iconStr, ',');
-        std::getline(ss, modelStr, ',');
-        std::getline(ss, backgroundStr, ',');
-
-        if (id.empty())
+        if (line.empty())
             continue;
 
-        PlayerData data;
-        data.id = id;
-        data.nickname = nick;
-        data.level = std::stoi(levelStr);
-        data.playerIconId = std::stoi(iconStr);
-        data.lobbyCharacterModelId = std::stoi(modelStr);
-        data.lobbyBackgroundId = std::stoi(backgroundStr);
+        if (firstLine)
+        {
+            firstLine = false;
 
-        playerData_[id] = data;
+            if (line != PLAYER_DATA_HEADER)
+            {
+                std::cout << "[LOAD PLAYER DATA FAIL] invalid header: " << line << std::endl;
+                return;
+            }
+
+            continue;
+        }
+
+        std::vector<std::string> tokens = SplitCsvLine(line);
+        if (tokens.size() < 9)
+        {
+            std::cout << "[LOAD PLAYER DATA SKIP] invalid column count line=" << line << std::endl;
+            continue;
+        }
+
+        PlayerData data;
+        data.id = tokens[0];
+        data.nickname = tokens[1];
+        data.level = std::stoi(tokens[2]);
+        data.currentExp = std::stoi(tokens[3]);
+        data.playerIconId = std::stoi(tokens[4]);
+        data.logoBorderId = std::stoi(tokens[5]);
+        data.rankImageId = std::stoi(tokens[6]);
+        data.lobbyCharacterModelId = std::stoi(tokens[7]);
+        data.lobbyBackgroundId = std::stoi(tokens[8]);
+
+        if (!data.id.empty())
+            playerData_[data.id] = data;
     }
 }
 
@@ -431,14 +445,17 @@ void UserManager::SavePlayerDataUnlocked()
     if (!file.is_open())
         return;
 
-    file << "id,nickname,level,playerIconId,lobbyCharacterModelId,lobbyBackgroundId\n";
+    file << PLAYER_DATA_HEADER << "\n";
 
     for (auto& pair : playerData_)
     {
         file << pair.second.id << ","
             << pair.second.nickname << ","
             << pair.second.level << ","
+            << pair.second.currentExp << ","
             << pair.second.playerIconId << ","
+            << pair.second.logoBorderId << ","
+            << pair.second.rankImageId << ","
             << pair.second.lobbyCharacterModelId << ","
             << pair.second.lobbyBackgroundId << "\n";
     }
@@ -448,6 +465,59 @@ void UserManager::SavePlayerData()
 {
     std::lock_guard<std::mutex> lock(userManagerMutex_);
     SavePlayerDataUnlocked();
+}
+
+void UserManager::LoadLevelExpTable()
+{
+    std::lock_guard<std::mutex> lock(userManagerMutex_);
+    levelExpTable_.clear();
+
+    for (int level = 1; level <= 100; ++level)
+    {
+        levelExpTable_[level] = GetDefaultRequiredExpForLevel(level);
+    }
+
+    std::ifstream file("level_exp_table.csv");
+    if (!file.is_open())
+    {
+        SaveDefaultLevelExpTableUnlocked();
+        return;
+    }
+
+    std::string line;
+    bool firstLine = true;
+
+    while (std::getline(file, line))
+    {
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
+
+        if (line.empty())
+            continue;
+
+        if (firstLine)
+        {
+            firstLine = false;
+
+            if (line != LEVEL_EXP_TABLE_HEADER)
+            {
+                std::cout << "[LOAD LEVEL EXP TABLE FAIL] invalid header: " << line << std::endl;
+                return;
+            }
+
+            continue;
+        }
+
+        std::vector<std::string> tokens = SplitCsvLine(line);
+        if (tokens.size() < 2)
+            continue;
+
+        int level = std::stoi(tokens[0]);
+        int requiredExp = std::stoi(tokens[1]);
+
+        if (level >= 1 && requiredExp > 0)
+            levelExpTable_[level] = requiredExp;
+    }
 }
 
 bool UserManager::GetPlayerData(const std::string& id, PlayerData& outData)
@@ -484,6 +554,93 @@ bool UserManager::SetLobbyBackground(const std::string& id, int backgroundId)
         return false;
 
     it->second.lobbyBackgroundId = backgroundId;
+    SavePlayerDataUnlocked();
+    return true;
+}
+
+bool UserManager::SetPlayerIcon(const std::string& id, int iconId)
+{
+    std::lock_guard<std::mutex> lock(userManagerMutex_);
+
+    auto it = playerData_.find(id);
+    if (it == playerData_.end())
+        return false;
+
+    it->second.playerIconId = iconId;
+    SavePlayerDataUnlocked();
+    return true;
+}
+
+bool UserManager::SetLogoBorder(const std::string& id, int borderId)
+{
+    std::lock_guard<std::mutex> lock(userManagerMutex_);
+
+    auto it = playerData_.find(id);
+    if (it == playerData_.end())
+        return false;
+
+    it->second.logoBorderId = borderId;
+    SavePlayerDataUnlocked();
+    return true;
+}
+
+bool UserManager::SetRankImage(const std::string& id, int rankImageId)
+{
+    std::lock_guard<std::mutex> lock(userManagerMutex_);
+
+    auto it = playerData_.find(id);
+    if (it == playerData_.end())
+        return false;
+
+    it->second.rankImageId = rankImageId;
+    SavePlayerDataUnlocked();
+    return true;
+}
+int UserManager::GetRequiredExpForLevel(int level)
+{
+    std::lock_guard<std::mutex> lock(userManagerMutex_);
+
+    auto it = levelExpTable_.find(level);
+    if (it != levelExpTable_.end())
+        return it->second;
+
+    return GetDefaultRequiredExpForLevel(level);
+}
+
+bool UserManager::AddExp(const std::string& id, int amount, int& outLevel, int& outCurrentExp, int& outRequiredExp)
+{
+    std::lock_guard<std::mutex> lock(userManagerMutex_);
+
+    auto it = playerData_.find(id);
+    if (it == playerData_.end())
+        return false;
+
+    if (amount < 0)
+        return false;
+
+    PlayerData& data = it->second;
+    data.currentExp += amount;
+
+    while (true)
+    {
+        int requiredExp = GetDefaultRequiredExpForLevel(data.level);
+
+        auto expIt = levelExpTable_.find(data.level);
+        if (expIt != levelExpTable_.end())
+            requiredExp = expIt->second;
+
+        if (data.currentExp < requiredExp)
+        {
+            outLevel = data.level;
+            outCurrentExp = data.currentExp;
+            outRequiredExp = requiredExp;
+            break;
+        }
+
+        data.currentExp -= requiredExp;
+        data.level += 1;
+    }
+
     SavePlayerDataUnlocked();
     return true;
 }
@@ -623,6 +780,20 @@ void UserManager::SaveCharacterAffinityDataUnlocked()
             << pair.second.c1 << ","
             << pair.second.c2 << ","
             << pair.second.c3 << "\n";
+    }
+}
+
+void UserManager::SaveDefaultLevelExpTableUnlocked()
+{
+    std::ofstream file("level_exp_table.csv", std::ios::trunc);
+    if (!file.is_open())
+        return;
+
+    file << LEVEL_EXP_TABLE_HEADER << "\n";
+
+    for (int level = 1; level <= 100; ++level)
+    {
+        file << level << "," << GetDefaultRequiredExpForLevel(level) << "\n";
     }
 }
 

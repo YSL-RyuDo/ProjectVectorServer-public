@@ -7,6 +7,7 @@ constexpr int MAP_NAME_LEN = 32;
 constexpr int HOST_NAME_LEN = 20;
 constexpr int MAX_ROOM_LIST_COUNT = 32;
 constexpr int MAX_LOBBY_CHARACTER_COUNT = 4;
+constexpr int TEMP_GAME_MAX_PLAYER_COUNT = 3;
 
 #pragma pack(push, 1)
 struct PacketHeader
@@ -53,7 +54,11 @@ struct SC_LobbyEnter
 {
     PacketHeader header;
     char nickname[20];
+
     int level;
+    int currentExp;
+    int requiredExp;
+
     int playerIconId;
     int lobbyCharacterModelId;
     int lobbyBackgroundId;
@@ -120,6 +125,40 @@ struct SC_LobbyCharacterList
     uint16_t count;
 	int currentCharacterModelId;
 	LobbyCharacterSlot characters[MAX_LOBBY_CHARACTER_COUNT];
+};
+
+struct CS_TempGameRoomEnter
+{
+    PacketHeader header;
+};
+
+struct TempGamePlayerSlotInfo
+{
+    uint8_t slotIndex;      // 0,1,2
+    char nickname[20];
+    int playerIconId;       // 로고 이미지
+    int logoBorderId;       // 임시값
+    int rankImageId;        // 임시값
+};
+
+struct SC_TempGameRoomEnter
+{
+    PacketHeader header;
+    uint8_t result;         // 0 = 성공, 1 = 실패
+    uint8_t playerCount;    // 현재 방 인원 수
+    TempGamePlayerSlotInfo players[TEMP_GAME_MAX_PLAYER_COUNT];
+};
+
+// 임시 게임 시작
+struct CS_TempGameStart
+{
+    PacketHeader header;
+};
+
+struct SC_TempGameStartResult
+{
+    PacketHeader header;
+    uint8_t result;         // 0 = 성공, 1 = 실패
 };
 
 // 룸 리스트

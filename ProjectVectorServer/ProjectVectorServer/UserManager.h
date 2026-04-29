@@ -17,8 +17,14 @@ struct PlayerData
 {
     std::string id;
     std::string nickname;
+
     int level;
+    int currentExp;
+
     int playerIconId;
+    int logoBorderId;
+    int rankImageId;
+
     int lobbyCharacterModelId;
     int lobbyBackgroundId;
 };
@@ -58,9 +64,19 @@ public:
     void LoadPlayerData();
     void SavePlayerData();
 
+    void LoadLevelExpTable();
+
     bool GetPlayerData(const std::string& id, PlayerData& outData);
+
     bool SetLobbyCharacterModel(const std::string& id, int modelId);
     bool SetLobbyBackground(const std::string& id, int backgroundId);
+
+    bool SetPlayerIcon(const std::string& id, int iconId);
+    bool SetLogoBorder(const std::string& id, int borderId);
+    bool SetRankImage(const std::string& id, int rankImageId);
+
+    int GetRequiredExpForLevel(int level);
+    bool AddExp(const std::string& id, int amount, int& outLevel, int& outCurrentExp, int& outRequiredExp);
 
     void LoadCharacterOwnedData();
     void SaveCharacterOwnedData();
@@ -78,6 +94,7 @@ private:
     void SavePlayerDataUnlocked();
     void SaveCharacterOwnedDataUnlocked();
     void SaveCharacterAffinityDataUnlocked();
+    void SaveDefaultLevelExpTableUnlocked();
 
     std::unordered_map<std::string, User> users_;
     std::unordered_map<std::string, std::string> nicknameIndex_;
@@ -87,7 +104,7 @@ private:
     std::unordered_map<std::string, PlayerData> playerData_;
     std::unordered_map<std::string, CharacterOwnedData> characterOwnedData_;
     std::unordered_map<std::string, CharacterAffinityData> characterAffinityData_;
-
+    std::unordered_map<int, int> levelExpTable_;
 };
 
 std::string GenerateSalt(size_t byteSize = 16);

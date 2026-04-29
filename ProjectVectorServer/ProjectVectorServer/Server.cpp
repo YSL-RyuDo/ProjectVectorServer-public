@@ -17,8 +17,10 @@ bool Server::Start()
         {
             listener_.Start(9000, iocp_);
         });
+
     UserManager::Instance().Load();
     UserManager::Instance().LoadPlayerData();
+    UserManager::Instance().LoadLevelExpTable();
     UserManager::Instance().LoadCharacterOwnedData();
     UserManager::Instance().LoadCharacterAffinityData();
 

@@ -331,12 +331,12 @@ int UserManager::Login(const std::string& id, const std::string& pw)
 {
     std::lock_guard<std::mutex> lock(userManagerMutex_);
 
-    if (!IsValidId(id) || pw.empty())
-        return (int)LoginResult::INVALID_INPUT;
-
     auto it = users_.find(id);
     if (it == users_.end())
         return (int)LoginResult::NO_ID;
+
+    if (!IsValidId(id) || pw.empty())
+        return (int)LoginResult::INVALID_INPUT;
 
     const User& user = it->second;
 

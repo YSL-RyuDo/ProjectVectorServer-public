@@ -25,19 +25,20 @@ std::vector<Room> RoomManager::GetRoomList()
 uint32_t RoomManager::CreateRoom(const std::string& roomName,
     const std::string& mapName,
     const std::string& hostName,
-    uint16_t maxPlayerCount)
+    Session* hostSession)
 {
     std::lock_guard<std::mutex> lock(roomManagerMutex_);
-    
+
     Room room;
     room.roomId = nextRoomId_.fetch_add(1);
     room.roomName = roomName;
     room.mapName = mapName;
     room.hostName = hostName;
-    room.currentPlayerCount = 1;
-    room.maxPlayerCount = maxPlayerCount;
     room.state = RoomState::WAITING;
 
+    room.teamA.push_back(hostSession);
+
     rooms_[room.roomId] = room;
+
     return room.roomId;
 }

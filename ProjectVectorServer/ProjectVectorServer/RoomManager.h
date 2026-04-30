@@ -12,7 +12,7 @@ public:
 	static RoomManager& Instance();
 
 	std::vector<Room> GetRoomList();
-	uint32_t CreateRoom(const std::string& roomName, const std::string& mapName, const std::string& hostName, uint16_t maxPlayerCount = 8);
+	uint32_t CreateRoom(const std::string& roomName,const std::string& mapName,const std::string& hostName,Session* hostSession);
 
 private:
 	std::unordered_map<uint32_t, Room> rooms_;

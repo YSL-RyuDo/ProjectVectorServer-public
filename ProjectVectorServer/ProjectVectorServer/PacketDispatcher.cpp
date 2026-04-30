@@ -6,6 +6,28 @@
 #include "UserManager.h"
 #include "RoomManager.h"
 #include <cstring>
+#include <windows.h>
+
+void WriteUTF8(char* dest, int size, const wchar_t* src)
+{
+    memset(dest, 0, size);
+
+    int len = WideCharToMultiByte(
+        CP_UTF8,
+        0,
+        src,
+        -1,
+        dest,
+        size - 1,
+        NULL,
+        NULL
+    );
+
+    if (len <= 0)
+        return;
+
+    dest[len - 1] = '\0'; 
+}
 
 void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 {
@@ -387,14 +409,11 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         out.result = 0;
         out.playerCount = 1;
 
-        // 0번 슬롯 = 본인
         out.players[0].slotIndex = 0;
         strncpy_s(out.players[0].nickname, data.nickname.c_str(), _TRUNCATE);
         out.players[0].playerIconId = data.playerIconId;
-
-        // 현재 서버 데이터에 없으므로 임시값
-        out.players[0].logoBorderId = 0;
-        out.players[0].rankImageId = 0;
+        out.players[0].logoBorderId = data.logoBorderId;
+        out.players[0].rankImageId = data.rankImageId;
 
         // 1,2는 비워둠
         out.players[1].slotIndex = 1;
@@ -440,10 +459,94 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             << std::endl;
 
         SC_RoomList out{};
-        out.header.size = sizeof(out);
         out.header.type = (uint16_t)PacketType::PKT_SC_ROOM_LIST;
 
-        std::vector<Room> roomList = RoomManager::Instance().GetRoomList();
+        // =========================================================
+        // [TEMP TEST CODE START] - 임시 룸 생성 (UI 테스트용)
+        // =========================================================
+
+        {
+            const uint16_t MAX_PLAYERS = 8;
+
+            out.roomCount = 3;
+
+            // ROOM 0
+            out.rooms[0].roomId = 1;
+            memset(out.rooms[0].roomName, 0, ROOM_NAME_LEN);
+            WriteUTF8(out.rooms[0].roomName, ROOM_NAME_LEN, L"초보자 방");
+
+            memset(out.rooms[0].mapName, 0, MAP_NAME_LEN);
+            strncpy_s(out.rooms[0].mapName, MAP_NAME_LEN, "Campus", _TRUNCATE);
+
+            memset(out.rooms[0].hostName, 0, HOST_NAME_LEN);
+            strncpy_s(out.rooms[0].hostName, HOST_NAME_LEN, "qwer", _TRUNCATE);
+            out.rooms[0].currentPlayerCount = 1;
+            out.rooms[0].maxPlayerCount = MAX_PLAYERS;
+            out.rooms[0].state = 0;
+
+            // ROOM 1
+            out.rooms[1].roomId = 2;
+            memset(out.rooms[1].roomName, 0, ROOM_NAME_LEN);
+            WriteUTF8(out.rooms[1].roomName, ROOM_NAME_LEN, L"중급자 방");
+            memset(out.rooms[1].mapName, 0, MAP_NAME_LEN);
+            strncpy_s(out.rooms[1].mapName, MAP_NAME_LEN, "Gym", _TRUNCATE);
+            memset(out.rooms[1].hostName, 0, HOST_NAME_LEN);
+            strncpy_s(out.rooms[1].hostName, HOST_NAME_LEN, "asdf", _TRUNCATE);
+            out.rooms[1].currentPlayerCount = 5;
+            out.rooms[1].maxPlayerCount = MAX_PLAYERS;
+            out.rooms[1].state = 0;
+
+            // ROOM 2
+            out.rooms[2].roomId = 3;
+            memset(out.rooms[2].roomName, 0, ROOM_NAME_LEN);
+            WriteUTF8(out.rooms[2].roomName, ROOM_NAME_LEN, L"랭크 매치");
+            memset(out.rooms[2].mapName, 0, MAP_NAME_LEN);
+            strncpy_s(out.rooms[2].mapName, MAP_NAME_LEN, u8"Lab", _TRUNCATE);
+            memset(out.rooms[2].hostName, 0, HOST_NAME_LEN);
+            strncpy_s(out.rooms[2].hostName, HOST_NAME_LEN, "zxcv", _TRUNCATE);
+            out.rooms[2].currentPlayerCount = 8;
+            out.rooms[2].maxPlayerCount = MAX_PLAYERS;
+            out.rooms[2].state = 1;
+
+            out.header.size =
+                sizeof(PacketHeader)
+                + sizeof(uint16_t)
+                + sizeof(RoomInfo) * out.roomCount;
+
+            for (uint16_t i = 0; i < out.roomCount; ++i)
+            {
+                auto& info = out.rooms[i];
+
+                std::cout << "[ROOM INFO][TEMP] index=" << i
+                    << " roomId=" << info.roomId
+                    << " roomName=" << info.roomName
+                    << " mapName=" << info.mapName
+                    << " hostName=" << info.hostName
+                    << " players=" << info.currentPlayerCount << "/" << info.maxPlayerCount
+                    << " state=" << (int)info.state
+                    << std::endl;
+            }
+
+            session->Send(&out);
+
+            std::cout << "[ROOM LIST SENT][TEMP] playerId=" << session->GetPlayerId()
+                << " roomCount=" << out.roomCount
+                << std::endl;
+
+            return;
+        }
+
+        // =========================================================
+        // [TEMP TEST CODE END]
+        // =========================================================
+
+
+
+        // =========================================================
+        // [ORIGINAL CODE - 절대 건드리지 않음]
+        // =========================================================
+
+        /*std::vector<Room> roomList = RoomManager::Instance().GetRoomList();
 
         uint16_t count = static_cast<uint16_t>(roomList.size());
         if (count > MAX_ROOM_LIST_COUNT)
@@ -462,8 +565,15 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             strncpy_s(info.mapName, MAP_NAME_LEN, room.mapName.c_str(), _TRUNCATE);
             strncpy_s(info.hostName, HOST_NAME_LEN, room.hostName.c_str(), _TRUNCATE);
 
-            info.currentPlayerCount = room.currentPlayerCount;
-            info.maxPlayerCount = room.maxPlayerCount;
+            info.currentPlayerCount =
+                (uint16_t)(
+                    room.teamA.size() +
+                    room.teamB.size() +
+                    room.spectators.size()
+                    );
+
+            info.maxPlayerCount = 8;
+
             info.state = (uint8_t)room.state;
 
             std::cout << "[ROOM INFO] index=" << i
@@ -481,7 +591,8 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         std::cout << "[ROOM LIST SENT] playerId=" << session->GetPlayerId()
             << " roomCount=" << out.roomCount
             << std::endl;
-        break;
+
+        break;*/
     }
 
     case PacketType::PKT_CS_MOVE_STATE:

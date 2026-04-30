@@ -1,6 +1,9 @@
 #pragma once
 #include <string>
 #include <cstdint>
+#include <vector>
+
+class Session;
 
 enum class RoomState : uint8_t
 {
@@ -10,11 +13,14 @@ enum class RoomState : uint8_t
 
 struct Room
 {
-    uint32_t roomId = 0;
+    uint32_t roomId;
     std::string roomName;
     std::string mapName;
     std::string hostName;
-    uint16_t currentPlayerCount = 1;
-    uint16_t maxPlayerCount = 8;
+
+    std::vector<Session*> teamA;      // 최대 3
+    std::vector<Session*> teamB;      // 최대 3
+    std::vector<Session*> spectators; // 최대 2
+
     RoomState state = RoomState::WAITING;
 };

@@ -9,6 +9,11 @@ constexpr int MAX_ROOM_LIST_COUNT = 32;
 constexpr int MAX_LOBBY_CHARACTER_COUNT = 4;
 constexpr int TEMP_GAME_MAX_PLAYER_COUNT = 3;
 
+constexpr int ROOM_A_TEAM_COUNT = 3;
+constexpr int ROOM_B_TEAM_COUNT = 3;
+constexpr int ROOM_OBSERVER_COUNT = 2;
+constexpr int ROOM_MAX_MEMBER_COUNT = ROOM_A_TEAM_COUNT + ROOM_B_TEAM_COUNT + ROOM_OBSERVER_COUNT;
+
 #pragma pack(push, 1)
 struct PacketHeader
 {
@@ -183,6 +188,100 @@ struct SC_RoomList
     PacketHeader header;
     uint16_t roomCount;
     RoomInfo rooms[MAX_ROOM_LIST_COUNT];
+};
+
+enum class RoomCreateResult : uint8_t
+{
+    SUCCESS = 0,
+    NOT_IN_LOBBY = 1,
+    ALREADY_IN_ROOM = 2,
+    PLAYER_DATA_NOT_FOUND = 3,
+    CREATE_FAILED = 4
+};
+
+enum class RoomSlotTeam : uint8_t
+{
+    A = 0,
+    B = 1,
+    OBSERVER = 2
+};
+
+struct CS_RoomCreate
+{
+    PacketHeader header;
+};
+
+struct RoomMemberInfo
+{
+    uint32_t playerId;
+    char nickname[20];
+    int level;
+    int playerIconId;
+
+    uint8_t team;
+    uint8_t slotIndex;
+    uint8_t isLeader; // 1 = 리더, 0 = 일반 유저
+};
+
+struct SC_RoomCreateResult
+{
+    PacketHeader header;
+
+    uint8_t result;
+
+    uint32_t roomId;
+    char roomName[ROOM_NAME_LEN];
+    char mapName[MAP_NAME_LEN];
+
+    uint8_t isLeader;
+    uint8_t canStart;
+
+    uint8_t memberCount;
+    RoomMemberInfo members[ROOM_MAX_MEMBER_COUNT];
+};
+
+struct SC_RoomState
+{
+    PacketHeader header;
+    uint32_t roomId;
+    char roomName[ROOM_NAME_LEN];
+    char mapName[MAP_NAME_LEN];
+
+    uint8_t canStart;
+
+    uint8_t memberCount;
+    RoomMemberInfo members[ROOM_MAX_MEMBER_COUNT];
+};
+
+struct CS_RoomGameStart
+{
+    PacketHeader header;
+};
+
+struct SC_RoomGameStartResult
+{
+    PacketHeader header;
+    uint8_t result; // 0 = 성공, 1 = 리더 아님, 2 = 인원 부족, 3 = 방 없음
+};
+
+enum class RoomLeaveResult : uint8_t
+{
+    SUCCESS = 0,
+    NOT_IN_ROOM = 1,
+    ROOM_NOT_FOUND = 2
+};
+
+struct CS_RoomLeave
+{
+    PacketHeader header;
+};
+
+struct SC_RoomLeaveResult
+{
+    PacketHeader header;
+    uint8_t result;
+    uint32_t roomId;
+    uint8_t roomDeleted;
 };
 
 struct SC_Hello

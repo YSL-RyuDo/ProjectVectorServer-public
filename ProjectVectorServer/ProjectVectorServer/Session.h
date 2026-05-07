@@ -42,6 +42,9 @@ public:
     bool IsInRoom() const { return state_ == SessionState::IN_ROOM; }
     bool IsInGame() const { return state_ == SessionState::IN_GAME; }
 
+    void SetCurrentRoomId(uint32_t roomId) { currentRoomId_ = roomId; }
+    uint32_t GetCurrentRoomId() const { return currentRoomId_; }
+
     void SetPlayerId(uint32_t id) { playerId_ = id; }
     uint32_t GetPlayerId() const { return playerId_; }
 
@@ -78,6 +81,7 @@ private:
     int recvSize_ = 0;
     bool isAuthenticated_ = false;
     SessionState state_ = SessionState::CONNECTED;
+    uint32_t currentRoomId_ = 0;
 
     std::string userId_;
 

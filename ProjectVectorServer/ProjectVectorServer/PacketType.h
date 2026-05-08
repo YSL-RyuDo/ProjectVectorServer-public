@@ -11,8 +11,8 @@ enum class PacketType : uint16_t
     // 로그인
     PKT_CS_LOGIN = 2,
     PKT_SC_LOGIN_RESULT = 3,
-    
-    //로비
+
+    // 로비
     PKT_CS_LOBBY_ENTER = 4,
     PKT_SC_LOBBY_ENTER = 5,
     PKT_CS_LOBBY_CHAT = 6,
@@ -22,36 +22,60 @@ enum class PacketType : uint16_t
     PKT_CS_LOBBY_BACKGROUND_SELECT = 10,
     PKT_SC_LOBBY_BACKGROUND_SELECT_RESULT = 11,
 
-    //룸 조회
+    // 로비 캐릭터 리스트
     PKT_CS_LOBBY_CHARACTER_LIST = 12,
     PKT_SC_LOBBY_CHARACTER_LIST = 13,
 
-    //게임 임시 시작방
+    // 임시 게임방
     PKT_CS_TEMP_GAME_ROOM_ENTER = 14,
     PKT_SC_TEMP_GAME_ROOM_ENTER = 15,
     PKT_CS_TEMP_GAME_START = 16,
     PKT_SC_TEMP_GAME_START_RESULT = 17,
 
-    //룸 리스트
+    // 룸 리스트
     PKT_CS_ROOM_LIST = 20,
     PKT_SC_ROOM_LIST = 21,
 
+    // 룸 생성
     PKT_CS_ROOM_CREATE = 22,
     PKT_SC_ROOM_CREATE_RESULT = 23,
 
+    // 룸 상태 갱신
     PKT_SC_ROOM_STATE = 24,
 
+    // 룸 게임 시작
     PKT_CS_ROOM_GAME_START = 25,
-    PKT_SC_ROOM_GAME_START = 26,
+    PKT_SC_ROOM_GAME_START_RESULT = 26,
+
+    // 룸 나가기
     PKT_CS_ROOM_LEAVE = 27,
     PKT_SC_ROOM_LEAVE_RESULT = 28,
 
+    // 룸 입장
+    PKT_CS_ROOM_ENTER = 29,
+    PKT_SC_ROOM_ENTER_RESULT = 30,
 
+    PKT_CS_ROOM_SLOT_CHANGE = 31,
+    PKT_SC_ROOM_SLOT_CHANGE_RESULT = 32,
+    PKT_SC_ROOM_SLOT_SWAP_REQUEST = 33,
+    PKT_CS_ROOM_SLOT_SWAP_RESPONSE = 34,
+
+    PKT_CS_ROOM_TRANSFER_LEADER = 35,
+    PKT_SC_ROOM_TRANSFER_LEADER_RESULT = 36,
+
+    PKT_CS_ROOM_KICK = 37,
+    PKT_SC_ROOM_KICK_RESULT = 38,
+    PKT_SC_ROOM_KICKED = 39,
+
+
+    // 인게임
     PKT_SC_HELLO = 100,
     PKT_SC_SPAWN_PLAYER = 101,
     PKT_SC_DESPAWN_PLAYER = 102,
+
     PKT_CS_MOVE_STATE = 110,
     PKT_SC_MOVE_STATE = 111,
+
     PKT_CS_HIT = 120,
     PKT_SC_HP_UPDATE = 121,
     PKT_SC_DIE = 122,

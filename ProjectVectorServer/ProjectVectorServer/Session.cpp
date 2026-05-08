@@ -4,6 +4,67 @@
 #include "PacketDispatcher.h"
 #include "PacketType.h"
 #include "Packet.h"
+#include "RoomManager.h"
+
+namespace
+{
+    void FillRoomMemberInfoForDisconnect(RoomMemberInfo& out, const RoomMember& member)
+    {
+        out.playerId = member.playerId;
+
+        memset(out.nickname, 0, sizeof(out.nickname));
+        strncpy_s(out.nickname, sizeof(out.nickname), member.nickname.c_str(), _TRUNCATE);
+
+        out.level = member.level;
+        out.playerIconId = member.playerIconId;
+
+        out.team = static_cast<uint8_t>(member.team);
+        out.slotIndex = member.slotIndex;
+        out.isLeader = member.isLeader ? 1 : 0;
+    }
+
+    void SendRoomStateToMembersAfterDisconnect(const Room& room)
+    {
+        SC_RoomState out{};
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_ROOM_STATE);
+
+        out.roomId = room.roomId;
+
+        memset(out.roomName, 0, ROOM_NAME_LEN);
+        memset(out.mapName, 0, MAP_NAME_LEN);
+
+        strncpy_s(out.roomName, ROOM_NAME_LEN, room.roomName.c_str(), _TRUNCATE);
+        strncpy_s(out.mapName, MAP_NAME_LEN, room.mapName.c_str(), _TRUNCATE);
+
+        out.canStart = RoomManager::Instance().CanStartGame(room.roomId) ? 1 : 0;
+
+        uint8_t count = static_cast<uint8_t>(room.members.size());
+        if (count > ROOM_MAX_MEMBER_COUNT)
+            count = ROOM_MAX_MEMBER_COUNT;
+
+        out.memberCount = count;
+
+        for (uint8_t i = 0; i < count; ++i)
+        {
+            FillRoomMemberInfoForDisconnect(out.members[i], room.members[i]);
+        }
+
+        for (const RoomMember& member : room.members)
+        {
+            Session* target = SessionManager::Instance().Find(member.playerId);
+            if (target == nullptr)
+                continue;
+
+            target->Send(&out);
+        }
+
+        std::cout << "[ROOM STATE BROADCAST ON DISCONNECT] roomId="
+            << room.roomId
+            << " memberCount=" << static_cast<int>(out.memberCount)
+            << std::endl;
+    }
+}
 
 Session::Session(SOCKET socket)
     : socket_(socket)
@@ -39,10 +100,54 @@ void Session::Send(void* packet)
 
 void Session::Disconnect()
 {
-    std::cout << "[DISCONNECT] playerId=" << GetPlayerId() << std::endl;
+    std::cout << "[DISCONNECT] playerId=" << GetPlayerId()
+        << " userId=" << GetUserId()
+        << " state=" << static_cast<int>(GetState())
+        << " roomId=" << GetCurrentRoomId()
+        << std::endl;
+
+    if (GetState() == SessionState::IN_ROOM && GetCurrentRoomId() != 0)
+    {
+        uint32_t roomId = GetCurrentRoomId();
+
+        bool roomDeleted = false;
+        Room updatedRoom{};
+
+        bool ok = RoomManager::Instance().LeaveRoom(
+            roomId,
+            GetPlayerId(),
+            roomDeleted,
+            updatedRoom
+        );
+
+        if (ok)
+        {
+            std::cout << "[ROOM LEAVE BY DISCONNECT] playerId="
+                << GetPlayerId()
+                << " roomId=" << roomId
+                << " roomDeleted=" << roomDeleted
+                << std::endl;
+
+            if (!roomDeleted)
+            {
+                SendRoomStateToMembersAfterDisconnect(updatedRoom);
+            }
+        }
+        else
+        {
+            std::cout << "[ROOM LEAVE BY DISCONNECT FAIL] playerId="
+                << GetPlayerId()
+                << " roomId=" << roomId
+                << std::endl;
+        }
+
+        SetCurrentRoomId(0);
+        SetState(SessionState::IN_LOBBY);
+    }
 
     UserManager::Instance().OnLogout(this);
     SessionManager::Instance().Remove(GetPlayerId());
+
     closesocket(socket_);
 }
 
@@ -110,7 +215,7 @@ void Session::SendSpawn(uint32_t playerId, float x, float y, float z)
 void Session::Damage(int amount)
 {
     if (hp_ <= 0)
-        return; // 이미 죽었으면 무시
+        return;
 
     hp_ -= amount;
 
@@ -118,13 +223,11 @@ void Session::Damage(int amount)
         hp_ = 0;
 }
 
-
 void Session::Respawn()
 {
     hp_ = 100;
     isDead_ = false;
 
-    // 임시 스폰 위치 (간소화)
     position_.x = 0.f;
     position_.y = 1.f;
     position_.z = 0.f;

@@ -5,15 +5,61 @@
 #include "SessionManager.h"
 #include "UserManager.h"
 #include "RoomManager.h"
+
 #include <cstring>
 #include <windows.h>
+#include <unordered_map>
+#include <mutex>
 
 namespace
 {
+    std::string WideToUTF8(const wchar_t* wstr)
+    {
+        if (wstr == nullptr)
+            return "";
+
+        int sizeNeeded = WideCharToMultiByte(
+            CP_UTF8,
+            0,
+            wstr,
+            -1,
+            nullptr,
+            0,
+            nullptr,
+            nullptr
+        );
+
+        if (sizeNeeded <= 0)
+            return "";
+
+        std::string result;
+        result.resize(sizeNeeded);
+
+        int converted = WideCharToMultiByte(
+            CP_UTF8,
+            0,
+            wstr,
+            -1,
+            &result[0],
+            sizeNeeded,
+            nullptr,
+            nullptr
+        );
+
+        if (converted <= 0)
+            return "";
+
+        if (!result.empty() && result.back() == '\0')
+            result.pop_back();
+
+        return result;
+    }
+
     void FillRoomMemberInfo(RoomMemberInfo& out, const RoomMember& member)
     {
         out.playerId = member.playerId;
 
+        memset(out.nickname, 0, sizeof(out.nickname));
         strncpy_s(out.nickname, sizeof(out.nickname), member.nickname.c_str(), _TRUNCATE);
 
         out.level = member.level;
@@ -36,6 +82,9 @@ namespace
         out.result = result;
         out.roomId = room.roomId;
 
+        memset(out.roomName, 0, ROOM_NAME_LEN);
+        memset(out.mapName, 0, MAP_NAME_LEN);
+
         strncpy_s(out.roomName, ROOM_NAME_LEN, room.roomName.c_str(), _TRUNCATE);
         strncpy_s(out.mapName, MAP_NAME_LEN, room.mapName.c_str(), _TRUNCATE);
 
@@ -53,69 +102,188 @@ namespace
             FillRoomMemberInfo(out.members[i], room.members[i]);
         }
     }
-}
 
-void WriteUTF8(char* dest, int size, const wchar_t* src)
-{
-    memset(dest, 0, size);
+    void FillRoomStatePacket(SC_RoomState& out, const Room& room)
+    {
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_ROOM_STATE);
 
-    int len = WideCharToMultiByte(
-        CP_UTF8,
-        0,
-        src,
-        -1,
-        dest,
-        size - 1,
-        NULL,
-        NULL
-    );
+        out.roomId = room.roomId;
 
-    if (len <= 0)
-        return;
+        memset(out.roomName, 0, ROOM_NAME_LEN);
+        memset(out.mapName, 0, MAP_NAME_LEN);
 
-    dest[len - 1] = '\0'; 
-}
+        strncpy_s(out.roomName, ROOM_NAME_LEN, room.roomName.c_str(), _TRUNCATE);
+        strncpy_s(out.mapName, MAP_NAME_LEN, room.mapName.c_str(), _TRUNCATE);
 
-std::string WideToUTF8(const wchar_t* wstr)
-{
-    if (wstr == nullptr)
-        return "";
+        out.canStart = RoomManager::Instance().CanStartGame(room.roomId) ? 1 : 0;
 
-    int sizeNeeded = WideCharToMultiByte(
-        CP_UTF8,
-        0,
-        wstr,
-        -1,
-        nullptr,
-        0,
-        nullptr,
-        nullptr
-    );
+        uint8_t count = static_cast<uint8_t>(room.members.size());
+        if (count > ROOM_MAX_MEMBER_COUNT)
+            count = ROOM_MAX_MEMBER_COUNT;
 
-    if (sizeNeeded <= 0)
-        return "";
+        out.memberCount = count;
 
-    std::string result;
-    result.resize(sizeNeeded);
+        for (uint8_t i = 0; i < count; ++i)
+        {
+            FillRoomMemberInfo(out.members[i], room.members[i]);
+        }
+    }
 
-    int converted = WideCharToMultiByte(
-        CP_UTF8,
-        0,
-        wstr,
-        -1,
-        &result[0],
-        sizeNeeded,
-        nullptr,
-        nullptr
-    );
+    void BroadcastRoomState(const Room& room)
+    {
+        SC_RoomState out{};
+        FillRoomStatePacket(out, room);
 
-    if (converted <= 0)
-        return "";
+        for (const RoomMember& member : room.members)
+        {
+            Session* target = SessionManager::Instance().Find(member.playerId);
+            if (target == nullptr)
+                continue;
 
-    if (!result.empty() && result.back() == '\0')
-        result.pop_back();
+            target->Send(&out);
+        }
 
-    return result;
+        std::cout << "[ROOM STATE BROADCAST] roomId=" << room.roomId
+            << " memberCount=" << (int)out.memberCount
+            << std::endl;
+    }
+
+    struct PendingSlotSwap
+    {
+        uint32_t roomId = 0;
+
+        uint32_t requesterPlayerId = 0;
+        uint32_t targetPlayerId = 0;
+
+        RoomTeam requesterTeam = RoomTeam::A;
+        uint8_t requesterSlotIndex = 0;
+
+        RoomTeam targetTeam = RoomTeam::A;
+        uint8_t targetSlotIndex = 0;
+    };
+
+    std::mutex g_pendingSlotSwapMutex;
+    std::unordered_map<uint32_t, PendingSlotSwap> g_pendingSlotSwapsByTarget;
+
+    bool AddPendingSlotSwap(const PendingSlotSwap& request)
+    {
+        std::lock_guard<std::mutex> lock(g_pendingSlotSwapMutex);
+
+        if (g_pendingSlotSwapsByTarget.count(request.targetPlayerId) > 0)
+            return false;
+
+        g_pendingSlotSwapsByTarget[request.targetPlayerId] = request;
+        return true;
+    }
+
+    bool TakePendingSlotSwap(
+        uint32_t targetPlayerId,
+        uint32_t requesterPlayerId,
+        PendingSlotSwap& outRequest)
+    {
+        std::lock_guard<std::mutex> lock(g_pendingSlotSwapMutex);
+
+        auto it = g_pendingSlotSwapsByTarget.find(targetPlayerId);
+        if (it == g_pendingSlotSwapsByTarget.end())
+            return false;
+
+        if (it->second.requesterPlayerId != requesterPlayerId)
+            return false;
+
+        outRequest = it->second;
+        g_pendingSlotSwapsByTarget.erase(it);
+
+        return true;
+    }
+
+    void SendRoomSlotChangeResult(
+        Session* session,
+        RoomSlotChangeResult result,
+        RoomTeam targetTeam,
+        uint8_t targetSlotIndex,
+        const std::string& targetNickname = "")
+    {
+        if (session == nullptr)
+            return;
+
+        SC_RoomSlotChangeResult out{};
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_ROOM_SLOT_CHANGE_RESULT);
+
+        out.result = static_cast<uint8_t>(result);
+        out.targetTeam = static_cast<uint8_t>(targetTeam);
+        out.targetSlotIndex = targetSlotIndex;
+
+        memset(out.targetNickname, 0, sizeof(out.targetNickname));
+        if (!targetNickname.empty())
+            strncpy_s(out.targetNickname, sizeof(out.targetNickname), targetNickname.c_str(), _TRUNCATE);
+
+        session->Send(&out);
+    }
+
+    void SendRoomTransferLeaderResult(
+        Session* session,
+        RoomAdminResult result,
+        uint32_t targetPlayerId,
+        const std::string& targetNickname = "")
+    {
+        if (session == nullptr)
+            return;
+
+        SC_RoomTransferLeaderResult out{};
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_ROOM_TRANSFER_LEADER_RESULT);
+
+        out.result = static_cast<uint8_t>(result);
+        out.targetPlayerId = targetPlayerId;
+
+        memset(out.targetNickname, 0, sizeof(out.targetNickname));
+        if (!targetNickname.empty())
+            strncpy_s(out.targetNickname, sizeof(out.targetNickname), targetNickname.c_str(), _TRUNCATE);
+
+        session->Send(&out);
+    }
+
+    void SendRoomKickResult(
+        Session* session,
+        RoomAdminResult result,
+        uint32_t targetPlayerId,
+        const std::string& targetNickname = "")
+    {
+        if (session == nullptr)
+            return;
+
+        SC_RoomKickResult out{};
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_ROOM_KICK_RESULT);
+
+        out.result = static_cast<uint8_t>(result);
+        out.targetPlayerId = targetPlayerId;
+
+        memset(out.targetNickname, 0, sizeof(out.targetNickname));
+        if (!targetNickname.empty())
+            strncpy_s(out.targetNickname, sizeof(out.targetNickname), targetNickname.c_str(), _TRUNCATE);
+
+        session->Send(&out);
+    }
+
+    void SendRoomKicked(Session* session, uint32_t roomId, const std::string& kickerNickname)
+    {
+        if (session == nullptr)
+            return;
+
+        SC_RoomKicked out{};
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_ROOM_KICKED);
+
+        out.roomId = roomId;
+
+        memset(out.kickerNickname, 0, sizeof(out.kickerNickname));
+        strncpy_s(out.kickerNickname, sizeof(out.kickerNickname), kickerNickname.c_str(), _TRUNCATE);
+
+        session->Send(&out);
+    }
 }
 
 void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
@@ -129,7 +297,6 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         << " size=" << header->size
         << std::endl;
 
-    // 인증 필터
     switch (type)
     {
     case PacketType::PKT_CS_REGISTER:
@@ -156,6 +323,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
     case PacketType::PKT_CS_REGISTER:
     {
         auto* pkt = reinterpret_cast<CS_Register*>(header);
+
         std::cout << "[REGISTER PACKET] id=" << pkt->id
             << " nick=" << pkt->nickname
             << std::endl;
@@ -167,10 +335,6 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             pkt->confirmPassword
         );
 
-        std::cout << "[REGISTER RESULT] id=" << pkt->id
-            << " result=" << (int)result
-            << std::endl;
-
         SC_RegisterResult out{};
         out.header.size = sizeof(out);
         out.header.type = (uint16_t)PacketType::PKT_SC_REGISTER_RESULT;
@@ -178,9 +342,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
         session->Send(&out);
 
-        std::cout << "[REGISTER RESULT SENT] session=" << session
-            << " result=" << (int)result
-            << std::endl;
+        std::cout << "[REGISTER RESULT SENT] result=" << (int)result << std::endl;
         break;
     }
 
@@ -200,10 +362,6 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             out.header.type = (uint16_t)PacketType::PKT_SC_LOGIN_RESULT;
             out.result = (uint8_t)LoginResult::SUCCESS;
             session->Send(&out);
-
-            std::cout << "[LOGIN SKIP ALREADY AUTH] id=" << pkt->id
-                << " playerId=" << session->GetPlayerId()
-                << std::endl;
             break;
         }
 
@@ -211,10 +369,6 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             pkt->id,
             pkt->password
         );
-
-        std::cout << "[LOGIN RESULT CHECK] id=" << pkt->id
-            << " result=" << (int)result
-            << std::endl;
 
         if (result == (uint8_t)LoginResult::SUCCESS)
         {
@@ -231,12 +385,6 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
                 << " session=" << session
                 << std::endl;
         }
-        else
-        {
-            std::cout << "[LOGIN FAIL] id=" << pkt->id
-                << " result=" << (int)result
-                << std::endl;
-        }
 
         SC_LoginResult out{};
         out.header.size = sizeof(out);
@@ -249,13 +397,6 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             << " result=" << (int)result
             << " playerId=" << session->GetPlayerId()
             << std::endl;
-
-        if (result == (uint8_t)LoginResult::SUCCESS)
-        {
-            std::cout << "[LOGIN SUCCESS SENT] id=" << pkt->id
-                << " playerId=" << session->GetPlayerId()
-                << std::endl;
-        }
 
         break;
     }
@@ -288,12 +429,6 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         std::cout << "[LOBBY ENTER] playerId=" << session->GetPlayerId()
             << " userId=" << session->GetUserId()
             << " nickname=" << data.nickname
-            << " level=" << data.level
-            << " currentExp=" << data.currentExp
-            << " requiredExp=" << out.requiredExp
-            << " icon=" << data.playerIconId
-            << " char=" << data.lobbyCharacterModelId
-            << " bg=" << data.lobbyBackgroundId
             << std::endl;
 
         break;
@@ -303,20 +438,10 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
     {
         auto* pkt = reinterpret_cast<CS_LobbyCharacterSelect*>(header);
 
-        std::cout << "[LOBBY CHARACTER SELECT REQUEST] playerId=" << session->GetPlayerId()
-            << " userId=" << session->GetUserId()
-            << " modelId=" << pkt->lobbyCharacterModelId
-            << std::endl;
-
         bool owned = UserManager::Instance().IsCharacterOwned(
             session->GetUserId(),
             pkt->lobbyCharacterModelId
         );
-
-        std::cout << "[LOBBY CHARACTER OWN CHECK] userId=" << session->GetUserId()
-            << " modelId=" << pkt->lobbyCharacterModelId
-            << " owned=" << owned
-            << std::endl;
 
         bool ok = false;
 
@@ -336,21 +461,12 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
         session->Send(&out);
 
-        std::cout << "[LOBBY CHARACTER SELECT RESULT] playerId=" << session->GetPlayerId()
-            << " modelId=" << pkt->lobbyCharacterModelId
-            << " result=" << (int)out.result
-            << std::endl;
         break;
     }
 
     case PacketType::PKT_CS_LOBBY_BACKGROUND_SELECT:
     {
         auto* pkt = reinterpret_cast<CS_LobbyBackgroundSelect*>(header);
-
-        std::cout << "[LOBBY BACKGROUND SELECT REQUEST] playerId=" << session->GetPlayerId()
-            << " userId=" << session->GetUserId()
-            << " backgroundId=" << pkt->lobbyBackgroundId
-            << std::endl;
 
         bool ok = UserManager::Instance().SetLobbyBackground(
             session->GetUserId(),
@@ -365,10 +481,6 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
         session->Send(&out);
 
-        std::cout << "[LOBBY BACKGROUND SELECT RESULT] playerId=" << session->GetPlayerId()
-            << " backgroundId=" << pkt->lobbyBackgroundId
-            << " result=" << (int)out.result
-            << std::endl;
         break;
     }
 
@@ -384,20 +496,10 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
         auto* pkt = reinterpret_cast<CS_LobbyChat*>(header);
 
-        std::cout << "[LOBBY CHAT REQUEST] playerId=" << session->GetPlayerId()
-            << " userId=" << session->GetUserId()
-            << " message=" << pkt->message
-            << std::endl;
-
         PlayerData data{};
         bool ok = UserManager::Instance().GetPlayerData(session->GetUserId(), data);
         if (!ok)
-        {
-            std::cout << "[LOBBY CHAT FAIL] playerData not found userId="
-                << session->GetUserId()
-                << std::endl;
             break;
-        }
 
         SC_LobbyChat out{};
         out.header.size = sizeof(out);
@@ -409,32 +511,18 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
         SessionManager::Instance().BroadcastLobby(&out);
 
-        std::cout << "[LOBBY CHAT BROADCAST] playerId=" << session->GetPlayerId()
-            << " nickname=" << data.nickname
-            << " message=" << out.message
-            << std::endl;
         break;
     }
 
     case PacketType::PKT_CS_LOBBY_CHARACTER_LIST:
     {
-        std::cout << "[LOBBY CHARACTER LIST REQUEST] playerId=" << session->GetPlayerId()
-            << " userId=" << session->GetUserId()
-            << std::endl;
-
         CharacterOwnedData ownedData{};
         PlayerData playerData{};
 
         bool okOwned = UserManager::Instance().GetCharacterOwnedData(session->GetUserId(), ownedData);
         bool okPlayer = UserManager::Instance().GetPlayerData(session->GetUserId(), playerData);
         if (!okOwned || !okPlayer)
-        {
-            std::cout << "[LOBBY CHARACTER LIST FAIL] userId=" << session->GetUserId()
-                << " okOwned=" << okOwned
-                << " okPlayer=" << okPlayer
-                << std::endl;
             break;
-        }
 
         SC_LobbyCharacterList out{};
         out.header.size = sizeof(out);
@@ -456,26 +544,11 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
         session->Send(&out);
 
-        std::cout << "[LOBBY CHARACTER LIST SENT] playerId=" << session->GetPlayerId()
-            << " currentChar=" << out.currentCharacterModelId
-            << " count=" << out.count
-            << " owned=("
-            << (int)out.characters[0].owned << ","
-            << (int)out.characters[1].owned << ","
-            << (int)out.characters[2].owned << ","
-            << (int)out.characters[3].owned << ")"
-            << std::endl;
         break;
     }
 
-    //추후에 유니티랑 비교할것
     case PacketType::PKT_CS_TEMP_GAME_ROOM_ENTER:
     {
-        std::cout << "[TEMP GAME ROOM ENTER REQUEST] playerId="
-            << session->GetPlayerId()
-            << " userId=" << session->GetUserId()
-            << std::endl;
-
         PlayerData data{};
         bool ok = UserManager::Instance().GetPlayerData(session->GetUserId(), data);
 
@@ -488,10 +561,6 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             out.result = 1;
             out.playerCount = 0;
             session->Send(&out);
-
-            std::cout << "[TEMP GAME ROOM ENTER FAIL] userId="
-                << session->GetUserId()
-                << std::endl;
             break;
         }
 
@@ -504,40 +573,23 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         out.players[0].logoBorderId = data.logoBorderId;
         out.players[0].rankImageId = data.rankImageId;
 
-        // 1,2는 비워둠
         out.players[1].slotIndex = 1;
         out.players[2].slotIndex = 2;
 
         session->Send(&out);
 
-        std::cout << "[TEMP GAME ROOM ENTER SUCCESS] playerId="
-            << session->GetPlayerId()
-            << " nickname=" << out.players[0].nickname
-            << " iconId=" << out.players[0].playerIconId
-            << " borderId=" << out.players[0].logoBorderId
-            << " rankId=" << out.players[0].rankImageId
-            << std::endl;
         break;
     }
 
     case PacketType::PKT_CS_TEMP_GAME_START:
     {
-        std::cout << "[TEMP GAME START REQUEST] playerId="
-            << session->GetPlayerId()
-            << " userId=" << session->GetUserId()
-            << std::endl;
-
         SC_TempGameStartResult out{};
         out.header.size = sizeof(out);
         out.header.type = (uint16_t)PacketType::PKT_SC_TEMP_GAME_START_RESULT;
-        out.result = 0; // 임시로 무조건 성공
+        out.result = 0;
 
         session->Send(&out);
 
-        std::cout << "[TEMP GAME START RESULT] playerId="
-            << session->GetPlayerId()
-            << " result=" << (int)out.result
-            << std::endl;
         break;
     }
 
@@ -617,10 +669,6 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             out.result = (uint8_t)RoomCreateResult::ALREADY_IN_ROOM;
 
             session->Send(&out);
-
-            std::cout << "[ROOM CREATE FAIL] already in room playerId="
-                << session->GetPlayerId()
-                << std::endl;
             break;
         }
 
@@ -632,10 +680,6 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             out.result = (uint8_t)RoomCreateResult::NOT_IN_LOBBY;
 
             session->Send(&out);
-
-            std::cout << "[ROOM CREATE FAIL] not in lobby playerId="
-                << session->GetPlayerId()
-                << std::endl;
             break;
         }
 
@@ -650,14 +694,9 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             out.result = (uint8_t)RoomCreateResult::PLAYER_DATA_NOT_FOUND;
 
             session->Send(&out);
-
-            std::cout << "[ROOM CREATE FAIL] player data not found userId="
-                << session->GetUserId()
-                << std::endl;
             break;
         }
 
-        char roomNameBuffer[ROOM_NAME_LEN]{};
         std::string roomName = data.nickname + WideToUTF8(L"의 방");
         std::string mapName = WideToUTF8(L"기본 맵");
 
@@ -687,10 +726,6 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             out.result = (uint8_t)RoomCreateResult::CREATE_FAILED;
 
             session->Send(&out);
-
-            std::cout << "[ROOM CREATE FAIL] create failed playerId="
-                << session->GetPlayerId()
-                << std::endl;
             break;
         }
 
@@ -719,6 +754,86 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         break;
     }
 
+    case PacketType::PKT_CS_ROOM_ENTER:
+    {
+        auto* pkt = reinterpret_cast<CS_RoomEnter*>(header);
+
+        std::cout << "[ROOM ENTER REQUEST] playerId=" << session->GetPlayerId()
+            << " userId=" << session->GetUserId()
+            << " roomId=" << pkt->roomId
+            << " state=" << (int)session->GetState()
+            << std::endl;
+
+        SC_RoomEnterResult resultPkt{};
+        resultPkt.header.size = sizeof(resultPkt);
+        resultPkt.header.type = (uint16_t)PacketType::PKT_SC_ROOM_ENTER_RESULT;
+        resultPkt.roomId = pkt->roomId;
+
+        if (session->GetState() == SessionState::IN_ROOM ||
+            session->GetState() == SessionState::IN_GAME)
+        {
+            resultPkt.result = (uint8_t)RoomEnterResult::ALREADY_IN_ROOM;
+            session->Send(&resultPkt);
+            break;
+        }
+
+        if (session->GetState() != SessionState::IN_LOBBY)
+        {
+            resultPkt.result = (uint8_t)RoomEnterResult::NOT_IN_LOBBY;
+            session->Send(&resultPkt);
+            break;
+        }
+
+        Room checkRoom{};
+        if (!RoomManager::Instance().GetRoom(pkt->roomId, checkRoom))
+        {
+            resultPkt.result = (uint8_t)RoomEnterResult::ROOM_NOT_FOUND;
+            session->Send(&resultPkt);
+            break;
+        }
+
+        PlayerData data{};
+        if (!UserManager::Instance().GetPlayerData(session->GetUserId(), data))
+        {
+            resultPkt.result = (uint8_t)RoomEnterResult::PLAYER_DATA_NOT_FOUND;
+            session->Send(&resultPkt);
+            break;
+        }
+
+        RoomMember member{};
+        member.playerId = session->GetPlayerId();
+        member.userId = session->GetUserId();
+        member.nickname = data.nickname;
+        member.level = data.level;
+        member.playerIconId = data.playerIconId;
+        member.isLeader = false;
+
+        Room updatedRoom{};
+        bool ok = RoomManager::Instance().EnterRoom(pkt->roomId, member, updatedRoom);
+
+        if (!ok)
+        {
+            resultPkt.result = (uint8_t)RoomEnterResult::ROOM_FULL;
+            session->Send(&resultPkt);
+            break;
+        }
+
+        session->SetState(SessionState::IN_ROOM);
+        session->SetCurrentRoomId(pkt->roomId);
+
+        resultPkt.result = (uint8_t)RoomEnterResult::SUCCESS;
+        session->Send(&resultPkt);
+
+        BroadcastRoomState(updatedRoom);
+
+        std::cout << "[ROOM ENTER SUCCESS] roomId=" << pkt->roomId
+            << " playerId=" << session->GetPlayerId()
+            << " nickname=" << data.nickname
+            << std::endl;
+
+        break;
+    }
+
     case PacketType::PKT_CS_ROOM_LEAVE:
     {
         std::cout << "[ROOM LEAVE REQUEST] playerId=" << session->GetPlayerId()
@@ -737,31 +852,25 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         {
             out.result = (uint8_t)RoomLeaveResult::NOT_IN_ROOM;
             session->Send(&out);
-
-            std::cout << "[ROOM LEAVE FAIL] not in room playerId="
-                << session->GetPlayerId()
-                << std::endl;
             break;
         }
 
         uint32_t roomId = session->GetCurrentRoomId();
 
         bool roomDeleted = false;
+        Room updatedRoom{};
+
         bool ok = RoomManager::Instance().LeaveRoom(
             roomId,
             session->GetPlayerId(),
-            roomDeleted
+            roomDeleted,
+            updatedRoom
         );
 
         if (!ok)
         {
             out.result = (uint8_t)RoomLeaveResult::ROOM_NOT_FOUND;
             session->Send(&out);
-
-            std::cout << "[ROOM LEAVE FAIL] room not found roomId="
-                << roomId
-                << " playerId=" << session->GetPlayerId()
-                << std::endl;
             break;
         }
 
@@ -773,6 +882,11 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
         session->Send(&out);
 
+        if (!roomDeleted)
+        {
+            BroadcastRoomState(updatedRoom);
+        }
+
         std::cout << "[ROOM LEAVE SUCCESS] playerId=" << session->GetPlayerId()
             << " roomId=" << roomId
             << " roomDeleted=" << roomDeleted
@@ -781,14 +895,543 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         break;
     }
 
+    case PacketType::PKT_CS_ROOM_SLOT_CHANGE:
+    {
+        auto* pkt = reinterpret_cast<CS_RoomSlotChange*>(header);
+
+        RoomTeam targetTeam = static_cast<RoomTeam>(pkt->targetTeam);
+        uint8_t targetSlotIndex = pkt->targetSlotIndex;
+
+        std::cout << "[ROOM SLOT CHANGE REQUEST] playerId=" << session->GetPlayerId()
+            << " roomId=" << session->GetCurrentRoomId()
+            << " targetTeam=" << static_cast<int>(pkt->targetTeam)
+            << " targetSlot=" << static_cast<int>(targetSlotIndex)
+            << std::endl;
+
+        if (session->GetState() != SessionState::IN_ROOM || session->GetCurrentRoomId() == 0)
+        {
+            SendRoomSlotChangeResult(
+                session,
+                RoomSlotChangeResult::NOT_IN_ROOM,
+                targetTeam,
+                targetSlotIndex
+            );
+            break;
+        }
+
+        uint32_t roomId = session->GetCurrentRoomId();
+
+        Room room{};
+        if (!RoomManager::Instance().GetRoom(roomId, room))
+        {
+            SendRoomSlotChangeResult(
+                session,
+                RoomSlotChangeResult::ROOM_NOT_FOUND,
+                targetTeam,
+                targetSlotIndex
+            );
+            break;
+        }
+
+        RoomMember requesterMember{};
+        if (!RoomManager::Instance().GetMember(roomId, session->GetPlayerId(), requesterMember))
+        {
+            SendRoomSlotChangeResult(
+                session,
+                RoomSlotChangeResult::NOT_IN_ROOM,
+                targetTeam,
+                targetSlotIndex
+            );
+            break;
+        }
+
+        if (requesterMember.team == targetTeam && requesterMember.slotIndex == targetSlotIndex)
+        {
+            SendRoomSlotChangeResult(
+                session,
+                RoomSlotChangeResult::SAME_SLOT,
+                targetTeam,
+                targetSlotIndex
+            );
+            break;
+        }
+
+        RoomMember targetMember{};
+        bool occupied = RoomManager::Instance().GetMemberBySlot(
+            roomId,
+            targetTeam,
+            targetSlotIndex,
+            targetMember
+        );
+
+        if (!occupied)
+        {
+            Room updatedRoom{};
+            bool moved = RoomManager::Instance().MoveMemberToSlot(
+                roomId,
+                session->GetPlayerId(),
+                targetTeam,
+                targetSlotIndex,
+                updatedRoom
+            );
+
+            if (!moved)
+            {
+                SendRoomSlotChangeResult(
+                    session,
+                    RoomSlotChangeResult::INVALID_SLOT,
+                    targetTeam,
+                    targetSlotIndex
+                );
+                break;
+            }
+
+            SendRoomSlotChangeResult(
+                session,
+                RoomSlotChangeResult::SUCCESS,
+                targetTeam,
+                targetSlotIndex
+            );
+
+            BroadcastRoomState(updatedRoom);
+
+            std::cout << "[ROOM SLOT MOVE SUCCESS] playerId=" << session->GetPlayerId()
+                << " roomId=" << roomId
+                << std::endl;
+
+            break;
+        }
+
+        if (targetMember.playerId == session->GetPlayerId())
+        {
+            SendRoomSlotChangeResult(
+                session,
+                RoomSlotChangeResult::SAME_SLOT,
+                targetTeam,
+                targetSlotIndex
+            );
+            break;
+        }
+
+        Session* targetSession = SessionManager::Instance().Find(targetMember.playerId);
+        if (targetSession == nullptr)
+        {
+            SendRoomSlotChangeResult(
+                session,
+                RoomSlotChangeResult::TARGET_NOT_FOUND,
+                targetTeam,
+                targetSlotIndex,
+                targetMember.nickname
+            );
+            break;
+        }
+
+        PendingSlotSwap pending{};
+        pending.roomId = roomId;
+        pending.requesterPlayerId = session->GetPlayerId();
+        pending.targetPlayerId = targetMember.playerId;
+        pending.requesterTeam = requesterMember.team;
+        pending.requesterSlotIndex = requesterMember.slotIndex;
+        pending.targetTeam = targetMember.team;
+        pending.targetSlotIndex = targetMember.slotIndex;
+
+        if (!AddPendingSlotSwap(pending))
+        {
+            SendRoomSlotChangeResult(
+                session,
+                RoomSlotChangeResult::REQUEST_ALREADY_EXISTS,
+                targetTeam,
+                targetSlotIndex,
+                targetMember.nickname
+            );
+            break;
+        }
+
+        SC_RoomSlotSwapRequest requestOut{};
+        requestOut.header.size = sizeof(requestOut);
+        requestOut.header.type = static_cast<uint16_t>(PacketType::PKT_SC_ROOM_SLOT_SWAP_REQUEST);
+
+        requestOut.requesterPlayerId = session->GetPlayerId();
+
+        memset(requestOut.requesterNickname, 0, sizeof(requestOut.requesterNickname));
+        strncpy_s(
+            requestOut.requesterNickname,
+            sizeof(requestOut.requesterNickname),
+            requesterMember.nickname.c_str(),
+            _TRUNCATE
+        );
+
+        requestOut.requesterTeam = static_cast<uint8_t>(requesterMember.team);
+        requestOut.requesterSlotIndex = requesterMember.slotIndex;
+
+        requestOut.targetTeam = static_cast<uint8_t>(targetMember.team);
+        requestOut.targetSlotIndex = targetMember.slotIndex;
+
+        targetSession->Send(&requestOut);
+
+        SendRoomSlotChangeResult(
+            session,
+            RoomSlotChangeResult::REQUEST_SENT,
+            targetTeam,
+            targetSlotIndex,
+            targetMember.nickname
+        );
+
+        std::cout << "[ROOM SLOT SWAP REQUEST SENT] requester=" << session->GetPlayerId()
+            << " target=" << targetMember.playerId
+            << " roomId=" << roomId
+            << std::endl;
+
+        break;
+    }
+
+    case PacketType::PKT_CS_ROOM_SLOT_SWAP_RESPONSE:
+    {
+        auto* pkt = reinterpret_cast<CS_RoomSlotSwapResponse*>(header);
+
+        uint32_t targetPlayerId = session->GetPlayerId();
+        uint32_t requesterPlayerId = pkt->requesterPlayerId;
+        bool accept = pkt->accept != 0;
+
+        std::cout << "[ROOM SLOT SWAP RESPONSE] target=" << targetPlayerId
+            << " requester=" << requesterPlayerId
+            << " accept=" << accept
+            << std::endl;
+
+        PendingSlotSwap pending{};
+        bool found = TakePendingSlotSwap(
+            targetPlayerId,
+            requesterPlayerId,
+            pending
+        );
+
+        if (!found)
+        {
+            std::cout << "[ROOM SLOT SWAP RESPONSE FAIL] pending not found"
+                << std::endl;
+            break;
+        }
+
+        Session* requesterSession = SessionManager::Instance().Find(requesterPlayerId);
+
+        RoomMember targetMember{};
+        RoomManager::Instance().GetMember(
+            pending.roomId,
+            targetPlayerId,
+            targetMember
+        );
+
+        if (!accept)
+        {
+            if (requesterSession != nullptr)
+            {
+                SendRoomSlotChangeResult(
+                    requesterSession,
+                    RoomSlotChangeResult::REJECTED,
+                    pending.targetTeam,
+                    pending.targetSlotIndex,
+                    targetMember.nickname
+                );
+            }
+
+            std::cout << "[ROOM SLOT SWAP REJECTED] requester=" << requesterPlayerId
+                << " target=" << targetPlayerId
+                << std::endl;
+
+            break;
+        }
+
+        Room updatedRoom{};
+        bool swapped = RoomManager::Instance().SwapMembers(
+            pending.roomId,
+            requesterPlayerId,
+            targetPlayerId,
+            updatedRoom
+        );
+
+        if (!swapped)
+        {
+            if (requesterSession != nullptr)
+            {
+                SendRoomSlotChangeResult(
+                    requesterSession,
+                    RoomSlotChangeResult::FAILED,
+                    pending.targetTeam,
+                    pending.targetSlotIndex,
+                    targetMember.nickname
+                );
+            }
+
+            SendRoomSlotChangeResult(
+                session,
+                RoomSlotChangeResult::FAILED,
+                pending.requesterTeam,
+                pending.requesterSlotIndex
+            );
+
+            std::cout << "[ROOM SLOT SWAP FAIL] roomId=" << pending.roomId
+                << std::endl;
+
+            break;
+        }
+
+        if (requesterSession != nullptr)
+        {
+            SendRoomSlotChangeResult(
+                requesterSession,
+                RoomSlotChangeResult::SUCCESS,
+                pending.targetTeam,
+                pending.targetSlotIndex,
+                targetMember.nickname
+            );
+        }
+
+        SendRoomSlotChangeResult(
+            session,
+            RoomSlotChangeResult::SUCCESS,
+            pending.requesterTeam,
+            pending.requesterSlotIndex
+        );
+
+        BroadcastRoomState(updatedRoom);
+
+        std::cout << "[ROOM SLOT SWAP SUCCESS] roomId=" << pending.roomId
+            << " requester=" << requesterPlayerId
+            << " target=" << targetPlayerId
+            << std::endl;
+
+        break;
+    }
+
+    case PacketType::PKT_CS_ROOM_TRANSFER_LEADER:
+    {
+        auto* pkt = reinterpret_cast<CS_RoomTransferLeader*>(header);
+
+        uint32_t roomId = session->GetCurrentRoomId();
+        uint32_t targetPlayerId = pkt->targetPlayerId;
+
+        std::cout << "[ROOM TRANSFER LEADER REQUEST] leader="
+            << session->GetPlayerId()
+            << " target=" << targetPlayerId
+            << " roomId=" << roomId
+            << std::endl;
+
+        if (session->GetState() != SessionState::IN_ROOM || roomId == 0)
+        {
+            SendRoomTransferLeaderResult(
+                session,
+                RoomAdminResult::NOT_IN_ROOM,
+                targetPlayerId
+            );
+            break;
+        }
+
+        if (session->GetPlayerId() == targetPlayerId)
+        {
+            SendRoomTransferLeaderResult(
+                session,
+                RoomAdminResult::CANNOT_TARGET_SELF,
+                targetPlayerId
+            );
+            break;
+        }
+
+        Room room{};
+        if (!RoomManager::Instance().GetRoom(roomId, room))
+        {
+            SendRoomTransferLeaderResult(
+                session,
+                RoomAdminResult::ROOM_NOT_FOUND,
+                targetPlayerId
+            );
+            break;
+        }
+
+        if (room.leaderPlayerId != session->GetPlayerId())
+        {
+            SendRoomTransferLeaderResult(
+                session,
+                RoomAdminResult::NOT_LEADER,
+                targetPlayerId
+            );
+            break;
+        }
+
+        RoomMember targetMember{};
+        if (!RoomManager::Instance().GetMember(roomId, targetPlayerId, targetMember))
+        {
+            SendRoomTransferLeaderResult(
+                session,
+                RoomAdminResult::TARGET_NOT_FOUND,
+                targetPlayerId
+            );
+            break;
+        }
+
+        Room updatedRoom{};
+        bool ok = RoomManager::Instance().TransferLeader(
+            roomId,
+            session->GetPlayerId(),
+            targetPlayerId,
+            updatedRoom
+        );
+
+        if (!ok)
+        {
+            SendRoomTransferLeaderResult(
+                session,
+                RoomAdminResult::FAILED,
+                targetPlayerId,
+                targetMember.nickname
+            );
+            break;
+        }
+
+        SendRoomTransferLeaderResult(
+            session,
+            RoomAdminResult::SUCCESS,
+            targetPlayerId,
+            targetMember.nickname
+        );
+
+        BroadcastRoomState(updatedRoom);
+
+        std::cout << "[ROOM TRANSFER LEADER SUCCESS] oldLeader="
+            << session->GetPlayerId()
+            << " newLeader=" << targetPlayerId
+            << std::endl;
+
+        break;
+    }
+
+    case PacketType::PKT_CS_ROOM_KICK:
+    {
+        auto* pkt = reinterpret_cast<CS_RoomKick*>(header);
+
+        uint32_t roomId = session->GetCurrentRoomId();
+        uint32_t targetPlayerId = pkt->targetPlayerId;
+
+        std::cout << "[ROOM KICK REQUEST] leader="
+            << session->GetPlayerId()
+            << " target=" << targetPlayerId
+            << " roomId=" << roomId
+            << std::endl;
+
+        if (session->GetState() != SessionState::IN_ROOM || roomId == 0)
+        {
+            SendRoomKickResult(
+                session,
+                RoomAdminResult::NOT_IN_ROOM,
+                targetPlayerId
+            );
+            break;
+        }
+
+        if (session->GetPlayerId() == targetPlayerId)
+        {
+            SendRoomKickResult(
+                session,
+                RoomAdminResult::CANNOT_TARGET_SELF,
+                targetPlayerId
+            );
+            break;
+        }
+
+        Room room{};
+        if (!RoomManager::Instance().GetRoom(roomId, room))
+        {
+            SendRoomKickResult(
+                session,
+                RoomAdminResult::ROOM_NOT_FOUND,
+                targetPlayerId
+            );
+            break;
+        }
+
+        if (room.leaderPlayerId != session->GetPlayerId())
+        {
+            SendRoomKickResult(
+                session,
+                RoomAdminResult::NOT_LEADER,
+                targetPlayerId
+            );
+            break;
+        }
+
+        RoomMember targetMember{};
+        if (!RoomManager::Instance().GetMember(roomId, targetPlayerId, targetMember))
+        {
+            SendRoomKickResult(
+                session,
+                RoomAdminResult::TARGET_NOT_FOUND,
+                targetPlayerId
+            );
+            break;
+        }
+
+        PlayerData leaderData{};
+        std::string leaderNickname = "방장";
+
+        if (UserManager::Instance().GetPlayerData(session->GetUserId(), leaderData))
+            leaderNickname = leaderData.nickname;
+
+        bool roomDeleted = false;
+        Room updatedRoom{};
+
+        bool ok = RoomManager::Instance().KickMember(
+            roomId,
+            session->GetPlayerId(),
+            targetPlayerId,
+            roomDeleted,
+            updatedRoom
+        );
+
+        if (!ok)
+        {
+            SendRoomKickResult(
+                session,
+                RoomAdminResult::FAILED,
+                targetPlayerId,
+                targetMember.nickname
+            );
+            break;
+        }
+
+        Session* targetSession = SessionManager::Instance().Find(targetPlayerId);
+        if (targetSession != nullptr)
+        {
+            targetSession->SetState(SessionState::IN_LOBBY);
+            targetSession->SetCurrentRoomId(0);
+
+            SendRoomKicked(
+                targetSession,
+                roomId,
+                leaderNickname
+            );
+        }
+
+        SendRoomKickResult(
+            session,
+            RoomAdminResult::SUCCESS,
+            targetPlayerId,
+            targetMember.nickname
+        );
+
+        if (!roomDeleted)
+            BroadcastRoomState(updatedRoom);
+
+        std::cout << "[ROOM KICK SUCCESS] leader="
+            << session->GetPlayerId()
+            << " target=" << targetPlayerId
+            << " roomId=" << roomId
+            << std::endl;
+
+        break;
+    }
+
     case PacketType::PKT_CS_MOVE_STATE:
     {
         auto* pkt = reinterpret_cast<CS_MoveState*>(header);
-
-        std::cout << "[MOVE REQUEST] playerId=" << session->GetPlayerId()
-            << " pos=(" << pkt->x << "," << pkt->y << "," << pkt->z << ")"
-            << " yaw=" << pkt->yaw
-            << std::endl;
 
         session->SetPosition(pkt->x, pkt->y, pkt->z);
         session->SetYaw(pkt->yaw);
@@ -805,10 +1448,6 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
         SessionManager::Instance().Broadcast(&out);
 
-        std::cout << "[MOVE BROADCAST] playerId=" << out.playerId
-            << " pos=(" << out.x << "," << out.y << "," << out.z << ")"
-            << " yaw=" << out.yaw
-            << std::endl;
         break;
     }
 
@@ -816,25 +1455,11 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
     {
         auto* pkt = reinterpret_cast<CS_Hit*>(header);
 
-        std::cout << "[HIT REQUEST] attacker=" << session->GetPlayerId()
-            << " target=" << pkt->targetId
-            << " damage=" << pkt->damage
-            << std::endl;
-
         Session* target = SessionManager::Instance().Find(pkt->targetId);
         if (!target)
-        {
-            std::cout << "[HIT FAIL] target not found targetId="
-                << pkt->targetId
-                << std::endl;
             break;
-        }
 
         target->Damage(pkt->damage);
-
-        std::cout << "[HIT APPLIED] target=" << target->GetPlayerId()
-            << " hp=" << target->GetHP()
-            << std::endl;
 
         SC_HPUpdate hpPkt{};
         hpPkt.header.size = sizeof(hpPkt);
@@ -844,14 +1469,8 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
         SessionManager::Instance().Broadcast(&hpPkt);
 
-        std::cout << "[HP UPDATE BROADCAST] target=" << hpPkt.playerId
-            << " hp=" << hpPkt.hp
-            << std::endl;
-
         if (target->IsDead())
         {
-            std::cout << "[TARGET DEAD] playerId=" << target->GetPlayerId()
-                << std::endl;
             HandleDeath(target);
         }
 
@@ -870,10 +1489,6 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
 void PacketDispatcher::HandleDeath(Session* target)
 {
-    std::cout << "[HANDLE DEATH BEGIN] playerId=" << target->GetPlayerId()
-        << " hp=" << target->GetHP()
-        << std::endl;
-
     SC_Die diePkt{};
     diePkt.header.size = sizeof(diePkt);
     diePkt.header.type = (uint16_t)PacketType::PKT_SC_DIE;
@@ -881,17 +1496,7 @@ void PacketDispatcher::HandleDeath(Session* target)
 
     SessionManager::Instance().Broadcast(&diePkt);
 
-    std::cout << "[DIE BROADCAST] playerId=" << diePkt.playerId
-        << std::endl;
-
     target->Respawn();
-
-    std::cout << "[RESPAWN DONE] playerId=" << target->GetPlayerId()
-        << " pos=(" << target->GetPosition().x << ","
-        << target->GetPosition().y << ","
-        << target->GetPosition().z << ")"
-        << " hp=" << target->GetHP()
-        << std::endl;
 
     SC_SpawnPlayer spawnPkt{};
     spawnPkt.header.size = sizeof(spawnPkt);
@@ -903,9 +1508,4 @@ void PacketDispatcher::HandleDeath(Session* target)
     spawnPkt.hp = target->GetHP();
 
     SessionManager::Instance().Broadcast(&spawnPkt);
-
-    std::cout << "[RESPAWN BROADCAST] playerId=" << spawnPkt.playerId
-        << " pos=(" << spawnPkt.x << "," << spawnPkt.y << "," << spawnPkt.z << ")"
-        << " hp=" << spawnPkt.hp
-        << std::endl;
 }

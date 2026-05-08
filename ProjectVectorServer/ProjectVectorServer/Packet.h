@@ -5,6 +5,7 @@
 constexpr int ROOM_NAME_LEN = 32;
 constexpr int MAP_NAME_LEN = 32;
 constexpr int HOST_NAME_LEN = 20;
+
 constexpr int MAX_ROOM_LIST_COUNT = 32;
 constexpr int MAX_LOBBY_CHARACTER_COUNT = 4;
 constexpr int TEMP_GAME_MAX_PLAYER_COUNT = 3;
@@ -12,9 +13,11 @@ constexpr int TEMP_GAME_MAX_PLAYER_COUNT = 3;
 constexpr int ROOM_A_TEAM_COUNT = 3;
 constexpr int ROOM_B_TEAM_COUNT = 3;
 constexpr int ROOM_OBSERVER_COUNT = 2;
-constexpr int ROOM_MAX_MEMBER_COUNT = ROOM_A_TEAM_COUNT + ROOM_B_TEAM_COUNT + ROOM_OBSERVER_COUNT;
+constexpr int ROOM_MAX_MEMBER_COUNT =
+ROOM_A_TEAM_COUNT + ROOM_B_TEAM_COUNT + ROOM_OBSERVER_COUNT;
 
 #pragma pack(push, 1)
+
 struct PacketHeader
 {
     uint16_t size;
@@ -49,7 +52,6 @@ struct SC_LoginResult
     uint8_t result;
 };
 
-// 로비 입장
 struct CS_LobbyEnter
 {
     PacketHeader header;
@@ -69,7 +71,6 @@ struct SC_LobbyEnter
     int lobbyBackgroundId;
 };
 
-// 로비 채팅
 struct CS_LobbyChat
 {
     PacketHeader header;
@@ -84,7 +85,6 @@ struct SC_LobbyChat
     char message[128];
 };
 
-// 로비 캐릭터 선택
 struct CS_LobbyCharacterSelect
 {
     PacketHeader header;
@@ -98,7 +98,6 @@ struct SC_LobbyCharacterSelectResult
     int lobbyCharacterModelId;
 };
 
-// 로비 배경 선택
 struct CS_LobbyBackgroundSelect
 {
     PacketHeader header;
@@ -112,24 +111,23 @@ struct SC_LobbyBackgroundSelectResult
     int lobbyBackgroundId;
 };
 
-// 로비 캐릭터 리스트
 struct CS_LobbyCharacterList
 {
-	PacketHeader header;
+    PacketHeader header;
 };
 
 struct LobbyCharacterSlot
 {
     int characterId;
-	uint8_t owned;
+    uint8_t owned;
 };
 
 struct SC_LobbyCharacterList
 {
     PacketHeader header;
     uint16_t count;
-	int currentCharacterModelId;
-	LobbyCharacterSlot characters[MAX_LOBBY_CHARACTER_COUNT];
+    int currentCharacterModelId;
+    LobbyCharacterSlot characters[MAX_LOBBY_CHARACTER_COUNT];
 };
 
 struct CS_TempGameRoomEnter
@@ -139,22 +137,21 @@ struct CS_TempGameRoomEnter
 
 struct TempGamePlayerSlotInfo
 {
-    uint8_t slotIndex;      // 0,1,2
+    uint8_t slotIndex;
     char nickname[20];
-    int playerIconId;       // 로고 이미지
-    int logoBorderId;       // 임시값
-    int rankImageId;        // 임시값
+    int playerIconId;
+    int logoBorderId;
+    int rankImageId;
 };
 
 struct SC_TempGameRoomEnter
 {
     PacketHeader header;
-    uint8_t result;         // 0 = 성공, 1 = 실패
-    uint8_t playerCount;    // 현재 방 인원 수
+    uint8_t result;
+    uint8_t playerCount;
     TempGamePlayerSlotInfo players[TEMP_GAME_MAX_PLAYER_COUNT];
 };
 
-// 임시 게임 시작
 struct CS_TempGameStart
 {
     PacketHeader header;
@@ -163,10 +160,9 @@ struct CS_TempGameStart
 struct SC_TempGameStartResult
 {
     PacketHeader header;
-    uint8_t result;         // 0 = 성공, 1 = 실패
+    uint8_t result;
 };
 
-// 룸 리스트
 struct CS_RoomList
 {
     PacketHeader header;
@@ -178,8 +174,10 @@ struct RoomInfo
     char roomName[ROOM_NAME_LEN];
     char mapName[MAP_NAME_LEN];
     char hostName[HOST_NAME_LEN];
+
     uint16_t currentPlayerCount;
     uint16_t maxPlayerCount;
+
     uint8_t state;
 };
 
@@ -199,6 +197,23 @@ enum class RoomCreateResult : uint8_t
     CREATE_FAILED = 4
 };
 
+enum class RoomEnterResult : uint8_t
+{
+    SUCCESS = 0,
+    ROOM_NOT_FOUND = 1,
+    ROOM_FULL = 2,
+    ALREADY_IN_ROOM = 3,
+    PLAYER_DATA_NOT_FOUND = 4,
+    NOT_IN_LOBBY = 5
+};
+
+enum class RoomLeaveResult : uint8_t
+{
+    SUCCESS = 0,
+    NOT_IN_ROOM = 1,
+    ROOM_NOT_FOUND = 2
+};
+
 enum class RoomSlotTeam : uint8_t
 {
     A = 0,
@@ -206,21 +221,22 @@ enum class RoomSlotTeam : uint8_t
     OBSERVER = 2
 };
 
-struct CS_RoomCreate
-{
-    PacketHeader header;
-};
-
 struct RoomMemberInfo
 {
     uint32_t playerId;
     char nickname[20];
+
     int level;
     int playerIconId;
 
     uint8_t team;
     uint8_t slotIndex;
-    uint8_t isLeader; // 1 = 리더, 0 = 일반 유저
+    uint8_t isLeader;
+};
+
+struct CS_RoomCreate
+{
+    PacketHeader header;
 };
 
 struct SC_RoomCreateResult
@@ -240,9 +256,36 @@ struct SC_RoomCreateResult
     RoomMemberInfo members[ROOM_MAX_MEMBER_COUNT];
 };
 
+struct CS_RoomEnter
+{
+    PacketHeader header;
+    uint32_t roomId;
+};
+
+struct SC_RoomEnterResult
+{
+    PacketHeader header;
+    uint8_t result;
+    uint32_t roomId;
+};
+
+struct CS_RoomLeave
+{
+    PacketHeader header;
+};
+
+struct SC_RoomLeaveResult
+{
+    PacketHeader header;
+    uint8_t result;
+    uint32_t roomId;
+    uint8_t roomDeleted;
+};
+
 struct SC_RoomState
 {
     PacketHeader header;
+
     uint32_t roomId;
     char roomName[ROOM_NAME_LEN];
     char mapName[MAP_NAME_LEN];
@@ -261,27 +304,108 @@ struct CS_RoomGameStart
 struct SC_RoomGameStartResult
 {
     PacketHeader header;
-    uint8_t result; // 0 = 성공, 1 = 리더 아님, 2 = 인원 부족, 3 = 방 없음
+    uint8_t result;
 };
 
-enum class RoomLeaveResult : uint8_t
+enum class RoomSlotChangeResult : uint8_t
+{
+    SUCCESS = 0,
+    REQUEST_SENT = 1,
+    NOT_IN_ROOM = 2,
+    ROOM_NOT_FOUND = 3,
+    INVALID_SLOT = 4,
+    SAME_SLOT = 5,
+    TARGET_NOT_FOUND = 6,
+    REQUEST_ALREADY_EXISTS = 7,
+    REJECTED = 8,
+    FAILED = 9
+};
+
+struct CS_RoomSlotChange
+{
+    PacketHeader header;
+    uint8_t targetTeam;
+    uint8_t targetSlotIndex;
+};
+
+struct SC_RoomSlotChangeResult
+{
+    PacketHeader header;
+
+    uint8_t result;
+
+    uint8_t targetTeam;
+    uint8_t targetSlotIndex;
+
+    char targetNickname[20];
+};
+
+struct SC_RoomSlotSwapRequest
+{
+    PacketHeader header;
+
+    uint32_t requesterPlayerId;
+    char requesterNickname[20];
+
+    uint8_t requesterTeam;
+    uint8_t requesterSlotIndex;
+
+    uint8_t targetTeam;
+    uint8_t targetSlotIndex;
+};
+
+struct CS_RoomSlotSwapResponse
+{
+    PacketHeader header;
+
+    uint32_t requesterPlayerId;
+    uint8_t accept;
+};
+
+enum class RoomAdminResult : uint8_t
 {
     SUCCESS = 0,
     NOT_IN_ROOM = 1,
-    ROOM_NOT_FOUND = 2
+    ROOM_NOT_FOUND = 2,
+    NOT_LEADER = 3,
+    TARGET_NOT_FOUND = 4,
+    CANNOT_TARGET_SELF = 5,
+    FAILED = 6
 };
 
-struct CS_RoomLeave
+struct CS_RoomTransferLeader
 {
     PacketHeader header;
+    uint32_t targetPlayerId;
 };
 
-struct SC_RoomLeaveResult
+struct SC_RoomTransferLeaderResult
 {
     PacketHeader header;
     uint8_t result;
+    uint32_t targetPlayerId;
+    char targetNickname[20];
+};
+
+struct CS_RoomKick
+{
+    PacketHeader header;
+    uint32_t targetPlayerId;
+};
+
+struct SC_RoomKickResult
+{
+    PacketHeader header;
+    uint8_t result;
+    uint32_t targetPlayerId;
+    char targetNickname[20];
+};
+
+struct SC_RoomKicked
+{
+    PacketHeader header;
     uint32_t roomId;
-    uint8_t roomDeleted;
+    char kickerNickname[20];
 };
 
 struct SC_Hello

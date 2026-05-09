@@ -38,6 +38,13 @@ public:
     );
 
     bool CanStartGame(uint32_t roomId);
+
+    bool StartGame(
+        uint32_t roomId,
+        uint32_t leaderPlayerId,
+        Room& outRoom
+    );
+
     bool IsLeader(uint32_t roomId, uint32_t playerId);
 
     bool GetMember(
@@ -83,6 +90,22 @@ public:
         Room& outRoom
     );
 
+    bool SetPickHover(
+        uint32_t roomId,
+        uint32_t playerId,
+        int characterId,
+        Room& outRoom
+    );
+
+    bool LockPick(
+        uint32_t roomId,
+        uint32_t playerId,
+        int characterId,
+        Room& outRoom,
+        uint8_t& outResult
+    );
+
+
 private:
     int CountTeamMemberUnlocked(const Room& room, RoomTeam team);
 
@@ -96,6 +119,21 @@ private:
 
     RoomMember* FindFirstMemberByLeaderOrderUnlocked(Room& room);
     bool IsValidSlotUnlocked(RoomTeam team, uint8_t slotIndex);
+
+    bool IsValidCharacterIdUnlocked(int characterId);
+
+    bool IsCharacterLockedByTeamUnlocked(
+        const Room& room,
+        RoomTeam team,
+        int characterId
+    );
+
+    void ClearSameHoverCharacterUnlocked(
+        Room& room,
+        RoomTeam team,
+        int characterId,
+        uint32_t exceptPlayerId
+    );
 
 private:
     std::unordered_map<uint32_t, Room> rooms_;

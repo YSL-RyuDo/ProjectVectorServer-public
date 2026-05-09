@@ -149,6 +149,42 @@ namespace
             << std::endl;
     }
 
+    void SendRoomGameStartResult(Session* session, RoomGameStartResult result)
+    {
+        if (session == nullptr)
+            return;
+
+        SC_RoomGameStartResult out{};
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_ROOM_GAME_START_RESULT);
+        out.result = static_cast<uint8_t>(result);
+
+        session->Send(&out);
+    }
+
+    void BroadcastRoomGameStartResult(const Room& room, RoomGameStartResult result)
+    {
+        SC_RoomGameStartResult out{};
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_ROOM_GAME_START_RESULT);
+        out.result = static_cast<uint8_t>(result);
+
+        for (const RoomMember& member : room.members)
+        {
+            Session* target = SessionManager::Instance().Find(member.playerId);
+            if (target == nullptr)
+                continue;
+
+            target->Send(&out);
+        }
+
+        std::cout << "[ROOM GAME START BROADCAST] roomId="
+            << room.roomId
+            << " result=" << static_cast<int>(result)
+            << " memberCount=" << room.members.size()
+            << std::endl;
+    }
+
     struct PendingSlotSwap
     {
         uint32_t roomId = 0;
@@ -284,6 +320,194 @@ namespace
 
         session->Send(&out);
     }
+
+    void FillPickTeamMemberInfo(
+        PickTeamMemberInfo& out,
+        const RoomMember& member,
+        uint32_t receiverPlayerId)
+    {
+        out.playerId = member.playerId;
+
+        memset(out.nickname, 0, sizeof(out.nickname));
+        strncpy_s(out.nickname, sizeof(out.nickname), member.nickname.c_str(), _TRUNCATE);
+
+        out.slotIndex = member.slotIndex;
+
+        out.hoverCharacterId = member.hoverCharacterId;
+        out.lockedCharacterId = member.lockedCharacterId;
+
+        out.isLocked = member.isPickLocked ? 1 : 0;
+        out.isMe = member.playerId == receiverPlayerId ? 1 : 0;
+    }
+
+    void FillPickStatePacket(
+        SC_PickState& out,
+        const Room& room,
+        const RoomMember& receiverMember,
+        uint32_t receiverPlayerId)
+    {
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_PICK_STATE);
+
+        out.roomId = room.roomId;
+
+        memset(out.mapName, 0, MAP_NAME_LEN);
+        strncpy_s(out.mapName, MAP_NAME_LEN, room.mapName.c_str(), _TRUNCATE);
+
+        out.myTeam = static_cast<uint8_t>(receiverMember.team);
+
+        if (receiverMember.team == RoomTeam::A)
+        {
+            out.firstRole = static_cast<uint8_t>(PickRole::ATTACK);
+            out.secondRole = static_cast<uint8_t>(PickRole::DEFENSE);
+        }
+        else if (receiverMember.team == RoomTeam::B)
+        {
+            out.firstRole = static_cast<uint8_t>(PickRole::DEFENSE);
+            out.secondRole = static_cast<uint8_t>(PickRole::ATTACK);
+        }
+        else
+        {
+            out.firstRole = static_cast<uint8_t>(PickRole::ATTACK);
+            out.secondRole = static_cast<uint8_t>(PickRole::DEFENSE);
+        }
+
+        out.remainingSeconds = 0;
+        out.blueScore = 0;
+        out.redScore = 0;
+
+        uint8_t count = 0;
+
+        for (uint8_t slot = 0; slot < 3; ++slot)
+        {
+            for (const RoomMember& member : room.members)
+            {
+                if (member.team != receiverMember.team)
+                    continue;
+
+                if (member.slotIndex != slot)
+                    continue;
+
+                if (count >= 3)
+                    break;
+
+                FillPickTeamMemberInfo(
+                    out.members[count],
+                    member,
+                    receiverPlayerId
+                );
+
+                ++count;
+                break;
+            }
+        }
+
+        out.memberCount = count;
+    }
+
+    bool SendPickState(Session* session)
+    {
+        if (session == nullptr)
+            return false;
+
+        uint32_t roomId = session->GetCurrentRoomId();
+
+        Room room{};
+        if (!RoomManager::Instance().GetRoom(roomId, room))
+        {
+            std::cout << "[PICK STATE FAIL] room not found roomId="
+                << roomId
+                << std::endl;
+            return false;
+        }
+
+        RoomMember receiverMember{};
+        if (!RoomManager::Instance().GetMember(
+            roomId,
+            session->GetPlayerId(),
+            receiverMember))
+        {
+            std::cout << "[PICK STATE FAIL] member not found playerId="
+                << session->GetPlayerId()
+                << " roomId=" << roomId
+                << std::endl;
+            return false;
+        }
+
+        SC_PickState out{};
+        FillPickStatePacket(
+            out,
+            room,
+            receiverMember,
+            session->GetPlayerId()
+        );
+
+        session->Send(&out);
+
+        std::cout << "[PICK STATE SENT] playerId="
+            << session->GetPlayerId()
+            << " roomId=" << roomId
+            << " myTeam=" << static_cast<int>(out.myTeam)
+            << " memberCount=" << static_cast<int>(out.memberCount)
+            << std::endl;
+
+        return true;
+    }
+
+    void BroadcastPickStateToTeam(const Room& room, RoomTeam team)
+    {
+        for (const RoomMember& member : room.members)
+        {
+            if (member.team != team)
+                continue;
+
+            Session* target = SessionManager::Instance().Find(member.playerId);
+            if (target == nullptr)
+                continue;
+
+            RoomMember receiverMember{};
+            if (!RoomManager::Instance().GetMember(
+                room.roomId,
+                member.playerId,
+                receiverMember))
+            {
+                continue;
+            }
+
+            SC_PickState out{};
+            FillPickStatePacket(
+                out,
+                room,
+                receiverMember,
+                member.playerId
+            );
+
+            target->Send(&out);
+        }
+
+        std::cout << "[PICK STATE BROADCAST TEAM] roomId="
+            << room.roomId
+            << " team=" << static_cast<int>(team)
+            << std::endl;
+    }
+
+    void SendPickLockResult(
+        Session* session,
+        PickLockResult result,
+        int characterId)
+    {
+        if (session == nullptr)
+            return;
+
+        SC_PickLockResult out{};
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_PICK_LOCK_RESULT);
+
+        out.result = static_cast<uint8_t>(result);
+        out.characterId = characterId;
+
+        session->Send(&out);
+    }
 }
 
 void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
@@ -372,18 +596,30 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
         if (result == (uint8_t)LoginResult::SUCCESS)
         {
-            session->SetAuthenticated(true);
-            session->SetState(SessionState::AUTHENTICATED);
-            UserManager::Instance().OnLogin(pkt->id, session);
+            bool loginOk = UserManager::Instance().OnLogin(pkt->id, session);
 
-            uint32_t newPlayerId = SessionManager::Instance().AllocatePlayerId();
-            session->SetPlayerId(newPlayerId);
-            SessionManager::Instance().Add(session);
+            if (!loginOk)
+            {
+                result = (uint8_t)LoginResult::ALREADY_LOGIN;
 
-            std::cout << "[LOGIN SUCCESS READY] id=" << pkt->id
-                << " playerId=" << newPlayerId
-                << " session=" << session
-                << std::endl;
+                std::cout << "[LOGIN FAIL] already logged in id=" << pkt->id
+                    << " session=" << session
+                    << std::endl;
+            }
+            else
+            {
+                session->SetAuthenticated(true);
+                session->SetState(SessionState::AUTHENTICATED);
+
+                uint32_t newPlayerId = SessionManager::Instance().AllocatePlayerId();
+                session->SetPlayerId(newPlayerId);
+                SessionManager::Instance().Add(session);
+
+                std::cout << "[LOGIN SUCCESS READY] id=" << pkt->id
+                    << " playerId=" << newPlayerId
+                    << " session=" << session
+                    << std::endl;
+            }
         }
 
         SC_LoginResult out{};
@@ -890,6 +1126,71 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         std::cout << "[ROOM LEAVE SUCCESS] playerId=" << session->GetPlayerId()
             << " roomId=" << roomId
             << " roomDeleted=" << roomDeleted
+            << std::endl;
+
+        break;
+    }
+
+    case PacketType::PKT_CS_ROOM_GAME_START:
+    {
+        std::cout << "[ROOM GAME START REQUEST] playerId="
+            << session->GetPlayerId()
+            << " userId=" << session->GetUserId()
+            << " roomId=" << session->GetCurrentRoomId()
+            << " state=" << static_cast<int>(session->GetState())
+            << std::endl;
+
+        if (session->GetState() != SessionState::IN_ROOM || session->GetCurrentRoomId() == 0)
+        {
+            SendRoomGameStartResult(session, RoomGameStartResult::NOT_IN_ROOM);
+            break;
+        }
+
+        uint32_t roomId = session->GetCurrentRoomId();
+
+        Room room{};
+        if (!RoomManager::Instance().GetRoom(roomId, room))
+        {
+            SendRoomGameStartResult(session, RoomGameStartResult::ROOM_NOT_FOUND);
+            break;
+        }
+
+        if (room.state == RoomState::PLAYING)
+        {
+            SendRoomGameStartResult(session, RoomGameStartResult::ALREADY_PLAYING);
+            break;
+        }
+
+        if (room.leaderPlayerId != session->GetPlayerId())
+        {
+            SendRoomGameStartResult(session, RoomGameStartResult::NOT_LEADER);
+            break;
+        }
+
+        if (!RoomManager::Instance().CanStartGame(roomId))
+        {
+            SendRoomGameStartResult(session, RoomGameStartResult::NOT_ENOUGH_PLAYERS);
+            break;
+        }
+
+        Room updatedRoom{};
+        bool ok = RoomManager::Instance().StartGame(
+            roomId,
+            session->GetPlayerId(),
+            updatedRoom
+        );
+
+        if (!ok)
+        {
+            SendRoomGameStartResult(session, RoomGameStartResult::FAILED);
+            break;
+        }
+
+        BroadcastRoomGameStartResult(updatedRoom, RoomGameStartResult::SUCCESS);
+
+        std::cout << "[ROOM GAME START SUCCESS] roomId="
+            << roomId
+            << " leaderPlayerId=" << session->GetPlayerId()
             << std::endl;
 
         break;
@@ -1424,6 +1725,158 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             << session->GetPlayerId()
             << " target=" << targetPlayerId
             << " roomId=" << roomId
+            << std::endl;
+
+        break;
+    }
+
+    case PacketType::PKT_CS_PICK_ENTER:
+    {
+        std::cout << "[PICK ENTER REQUEST] playerId="
+            << session->GetPlayerId()
+            << " userId=" << session->GetUserId()
+            << " roomId=" << session->GetCurrentRoomId()
+            << " state=" << static_cast<int>(session->GetState())
+            << std::endl;
+
+        if (session->GetCurrentRoomId() == 0)
+        {
+            std::cout << "[PICK ENTER BLOCK] currentRoomId is 0" << std::endl;
+            break;
+        }
+
+        SendPickState(session);
+
+        break;
+    }
+
+    case PacketType::PKT_CS_PICK_HOVER:
+    {
+        auto* pkt = reinterpret_cast<CS_PickHover*>(header);
+
+        std::cout << "[PICK HOVER REQUEST] playerId="
+            << session->GetPlayerId()
+            << " roomId=" << session->GetCurrentRoomId()
+            << " characterId=" << pkt->characterId
+            << std::endl;
+
+        if (session->GetCurrentRoomId() == 0)
+        {
+            std::cout << "[PICK HOVER BLOCK] currentRoomId is 0" << std::endl;
+            break;
+        }
+
+        uint32_t roomId = session->GetCurrentRoomId();
+
+        RoomMember requester{};
+        if (!RoomManager::Instance().GetMember(
+            roomId,
+            session->GetPlayerId(),
+            requester))
+        {
+            std::cout << "[PICK HOVER BLOCK] requester not found" << std::endl;
+            break;
+        }
+
+        Room updatedRoom{};
+        bool ok = RoomManager::Instance().SetPickHover(
+            roomId,
+            session->GetPlayerId(),
+            pkt->characterId,
+            updatedRoom
+        );
+
+        if (!ok)
+        {
+            std::cout << "[PICK HOVER FAIL] playerId="
+                << session->GetPlayerId()
+                << " characterId=" << pkt->characterId
+                << std::endl;
+
+            SendPickState(session);
+            break;
+        }
+
+        BroadcastPickStateToTeam(updatedRoom, requester.team);
+
+        std::cout << "[PICK HOVER SUCCESS] playerId="
+            << session->GetPlayerId()
+            << " characterId=" << pkt->characterId
+            << std::endl;
+
+        break;
+    }
+
+    case PacketType::PKT_CS_PICK_LOCK:
+    {
+        auto* pkt = reinterpret_cast<CS_PickLock*>(header);
+
+        std::cout << "[PICK LOCK REQUEST] playerId="
+            << session->GetPlayerId()
+            << " roomId=" << session->GetCurrentRoomId()
+            << " characterId=" << pkt->characterId
+            << std::endl;
+
+        if (session->GetCurrentRoomId() == 0)
+        {
+            SendPickLockResult(
+                session,
+                PickLockResult::NOT_IN_GAME,
+                pkt->characterId
+            );
+            break;
+        }
+
+        uint32_t roomId = session->GetCurrentRoomId();
+
+        RoomMember requester{};
+        if (!RoomManager::Instance().GetMember(
+            roomId,
+            session->GetPlayerId(),
+            requester))
+        {
+            SendPickLockResult(
+                session,
+                PickLockResult::NOT_IN_GAME,
+                pkt->characterId
+            );
+            break;
+        }
+
+        Room updatedRoom{};
+        uint8_t result = static_cast<uint8_t>(PickLockResult::FAILED);
+
+        bool ok = RoomManager::Instance().LockPick(
+            roomId,
+            session->GetPlayerId(),
+            pkt->characterId,
+            updatedRoom,
+            result
+        );
+
+        SendPickLockResult(
+            session,
+            static_cast<PickLockResult>(result),
+            pkt->characterId
+        );
+
+        if (!ok)
+        {
+            std::cout << "[PICK LOCK FAIL] playerId="
+                << session->GetPlayerId()
+                << " characterId=" << pkt->characterId
+                << " result=" << static_cast<int>(result)
+                << std::endl;
+
+            SendPickState(session);
+            break;
+        }
+
+        BroadcastPickStateToTeam(updatedRoom, requester.team);
+
+        std::cout << "[PICK LOCK SUCCESS] playerId="
+            << session->GetPlayerId()
+            << " characterId=" << pkt->characterId
             << std::endl;
 
         break;

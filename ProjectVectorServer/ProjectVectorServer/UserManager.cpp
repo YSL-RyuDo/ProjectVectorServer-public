@@ -331,39 +331,44 @@ int UserManager::Login(const std::string& id, const std::string& pw)
 {
     std::lock_guard<std::mutex> lock(userManagerMutex_);
 
+    if (!IsValidId(id) || pw.empty())
+        return (int)LoginResult::INVALID_INPUT;
+
     auto it = users_.find(id);
     if (it == users_.end())
         return (int)LoginResult::NO_ID;
-
-    if (!IsValidId(id) || pw.empty())
-        return (int)LoginResult::INVALID_INPUT;
 
     const User& user = it->second;
 
     if (!VerifyPassword(user.salt, user.passwordHash, pw))
         return (int)LoginResult::WRONG_PASSWORD;
 
+    auto loginIt = loggedInUsers_.find(id);
+    if (loginIt != loggedInUsers_.end() && loginIt->second != nullptr)
+    {
+        std::cout << "[LOGIN BLOCK] already logged in id=" << id << std::endl;
+        return (int)LoginResult::ALREADY_LOGIN;
+    }
+
     return (int)LoginResult::SUCCESS;
 }
 
 
-void UserManager::OnLogin(const std::string& id, Session* session)
+bool UserManager::OnLogin(const std::string& id, Session* session)
 {
-	std::lock_guard<std::mutex> lock(userManagerMutex_);
+    std::lock_guard<std::mutex> lock(userManagerMutex_);
 
-    if (loggedInUsers_.count(id))
+    auto it = loggedInUsers_.find(id);
+    if (it != loggedInUsers_.end() && it->second != nullptr && it->second != session)
     {
-        Session* oldSession = loggedInUsers_[id];
-
-        if (oldSession && oldSession != session)
-        {
-            std::cout << "[DUP LOGIN] 기존 세션 종료 id=" << id << std::endl;
-            oldSession->Disconnect();
-        }
+        std::cout << "[LOGIN BLOCK ONLOGIN] already logged in id=" << id << std::endl;
+        return false;
     }
 
     loggedInUsers_[id] = session;
     session->SetUserId(id);
+
+    return true;
 }
 
 void UserManager::OnLogout(Session* session)

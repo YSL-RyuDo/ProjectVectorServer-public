@@ -58,7 +58,7 @@ public:
     int Register(const std::string& id,const std::string& nick,const std::string& pw,const std::string& confirmPw);
     int Login(const std::string& id, const std::string& pw);
 
-    void OnLogin(const std::string& id, Session* session);
+    bool OnLogin(const std::string& id, Session* session);
     void OnLogout(Session* session);
 
     void LoadPlayerData();
@@ -88,6 +88,7 @@ public:
     bool GetCharacterAffinityData(const std::string& id, CharacterAffinityData& outData);
 
 	bool IsCharacterOwned(const std::string& id, int characterId);
+
 private:
 
     void SaveUnlocked();

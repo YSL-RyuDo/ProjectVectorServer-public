@@ -296,6 +296,17 @@ struct SC_RoomState
     RoomMemberInfo members[ROOM_MAX_MEMBER_COUNT];
 };
 
+enum class RoomGameStartResult : uint8_t
+{
+    SUCCESS = 0,
+    NOT_IN_ROOM = 1,
+    ROOM_NOT_FOUND = 2,
+    NOT_LEADER = 3,
+    NOT_ENOUGH_PLAYERS = 4,
+    ALREADY_PLAYING = 5,
+    FAILED = 6
+};
+
 struct CS_RoomGameStart
 {
     PacketHeader header;
@@ -407,6 +418,89 @@ struct SC_RoomKicked
     uint32_t roomId;
     char kickerNickname[20];
 };
+
+enum class PickRole : uint8_t
+{
+    ATTACK = 0,
+    DEFENSE = 1
+};
+
+enum class PickLockResult : uint8_t
+{
+    SUCCESS = 0,
+    NOT_IN_GAME = 1,
+    ROOM_NOT_FOUND = 2,
+    INVALID_CHARACTER = 3,
+    ALREADY_LOCKED = 4,
+    CHARACTER_ALREADY_TAKEN = 5,
+    FAILED = 6
+};
+
+struct CS_PickEnter
+{
+    PacketHeader header;
+};
+
+struct CS_PickHover
+{
+    PacketHeader header;
+    int characterId;
+};
+
+struct CS_PickLock
+{
+    PacketHeader header;
+    int characterId;
+};
+
+struct SC_PickLockResult
+{
+    PacketHeader header;
+    uint8_t result;
+    int characterId;
+};
+
+struct PickTeamMemberInfo
+{
+    uint32_t playerId;
+    char nickname[20];
+
+    uint8_t slotIndex;
+
+    int hoverCharacterId;
+    int lockedCharacterId;
+
+    uint8_t isLocked;
+    uint8_t isMe;
+};
+
+struct SC_PickState
+{
+    PacketHeader header;
+
+    uint32_t roomId;
+    char mapName[MAP_NAME_LEN];
+
+    uint8_t myTeam;
+    uint8_t firstRole;
+    uint8_t secondRole;
+
+    uint16_t remainingSeconds;
+
+    uint8_t blueScore;
+    uint8_t redScore;
+
+    uint8_t memberCount;
+    PickTeamMemberInfo members[3];
+};
+
+struct SC_PickTimer
+{
+    PacketHeader header;
+    uint16_t remainingSeconds;
+};
+
+
 
 struct SC_Hello
 {

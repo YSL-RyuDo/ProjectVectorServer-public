@@ -67,6 +67,15 @@ enum class PacketType : uint16_t
     PKT_SC_ROOM_KICK_RESULT = 38,
     PKT_SC_ROOM_KICKED = 39,
 
+    // 캐릭터 픽
+    PKT_CS_PICK_ENTER = 40,
+    PKT_SC_PICK_STATE = 41,
+
+    PKT_CS_PICK_HOVER = 42,
+    PKT_CS_PICK_LOCK = 43,
+    PKT_SC_PICK_LOCK_RESULT = 44,
+
+    PKT_SC_PICK_TIMER = 45,
 
     // 인게임
     PKT_SC_HELLO = 100,

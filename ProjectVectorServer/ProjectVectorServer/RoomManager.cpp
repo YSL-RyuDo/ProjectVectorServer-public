@@ -8,6 +8,9 @@ namespace
     constexpr uint8_t ROOM_B_SLOT_COUNT = 3;
     constexpr uint8_t ROOM_OBSERVER_SLOT_COUNT = 2;
 
+    constexpr int PICK_CHARACTER_MIN_ID = 0;
+    constexpr int PICK_CHARACTER_MAX_ID = 3;
+
     struct RoomSlotPosition
     {
         RoomTeam team;
@@ -36,6 +39,17 @@ namespace
         { RoomTeam::B, 2 },
         { RoomTeam::OBSERVER, 0 },
         { RoomTeam::OBSERVER, 1 },
+    };
+
+    enum PickLockResultValue : uint8_t
+    {
+        PICK_SUCCESS = 0,
+        PICK_NOT_IN_GAME = 1,
+        PICK_ROOM_NOT_FOUND = 2,
+        PICK_INVALID_CHARACTER = 3,
+        PICK_ALREADY_LOCKED = 4,
+        PICK_CHARACTER_ALREADY_TAKEN = 5,
+        PICK_FAILED = 6
     };
 }
 
@@ -91,6 +105,10 @@ uint32_t RoomManager::CreateRoom(
     leader.slotIndex = 0;
     leader.isLeader = true;
 
+    leader.hoverCharacterId = -1;
+    leader.lockedCharacterId = -1;
+    leader.isPickLocked = false;
+
     room.leaderPlayerId = leader.playerId;
     room.members.push_back(leader);
     room.currentPlayerCount = static_cast<uint16_t>(room.members.size());
@@ -145,6 +163,10 @@ bool RoomManager::EnterRoom(
     newMember.team = team;
     newMember.slotIndex = slotIndex;
     newMember.isLeader = false;
+
+    newMember.hoverCharacterId = -1;
+    newMember.lockedCharacterId = -1;
+    newMember.isPickLocked = false;
 
     room.members.push_back(newMember);
     room.currentPlayerCount = static_cast<uint16_t>(room.members.size());
@@ -231,6 +253,44 @@ bool RoomManager::CanStartGame(uint32_t roomId)
     return aCount == 3 && bCount == 3;
 }
 
+bool RoomManager::StartGame(
+    uint32_t roomId,
+    uint32_t leaderPlayerId,
+    Room& outRoom)
+{
+    std::lock_guard<std::mutex> lock(roomManagerMutex_);
+
+    auto it = rooms_.find(roomId);
+    if (it == rooms_.end())
+        return false;
+
+    Room& room = it->second;
+
+    if (room.state != RoomState::WAITING)
+        return false;
+
+    if (room.leaderPlayerId != leaderPlayerId)
+        return false;
+
+    int aCount = CountTeamMemberUnlocked(room, RoomTeam::A);
+    int bCount = CountTeamMemberUnlocked(room, RoomTeam::B);
+
+    if (aCount != 3 || bCount != 3)
+        return false;
+
+    room.state = RoomState::PLAYING;
+
+    for (RoomMember& member : room.members)
+    {
+        member.hoverCharacterId = -1;
+        member.lockedCharacterId = -1;
+        member.isPickLocked = false;
+    }
+
+    outRoom = room;
+    return true;
+}
+
 bool RoomManager::IsLeader(uint32_t roomId, uint32_t playerId)
 {
     std::lock_guard<std::mutex> lock(roomManagerMutex_);
@@ -241,8 +301,6 @@ bool RoomManager::IsLeader(uint32_t roomId, uint32_t playerId)
 
     return it->second.leaderPlayerId == playerId;
 }
-
-
 
 int RoomManager::CountTeamMemberUnlocked(const Room& room, RoomTeam team)
 {
@@ -555,4 +613,180 @@ bool RoomManager::KickMember(
 
     outRoom = room;
     return true;
+}
+
+bool RoomManager::SetPickHover(
+    uint32_t roomId,
+    uint32_t playerId,
+    int characterId,
+    Room& outRoom)
+{
+    std::lock_guard<std::mutex> lock(roomManagerMutex_);
+
+    auto it = rooms_.find(roomId);
+    if (it == rooms_.end())
+        return false;
+
+    Room& room = it->second;
+
+    if (room.state != RoomState::PLAYING)
+        return false;
+
+    if (!IsValidCharacterIdUnlocked(characterId))
+        return false;
+
+    RoomMember* targetMember = nullptr;
+
+    for (RoomMember& member : room.members)
+    {
+        if (member.playerId == playerId)
+        {
+            targetMember = &member;
+            break;
+        }
+    }
+
+    if (targetMember == nullptr)
+        return false;
+
+    if (targetMember->team == RoomTeam::OBSERVER)
+        return false;
+
+    if (targetMember->isPickLocked)
+        return false;
+
+    if (IsCharacterLockedByTeamUnlocked(room, targetMember->team, characterId))
+        return false;
+
+    targetMember->hoverCharacterId = characterId;
+
+    outRoom = room;
+    return true;
+}
+
+bool RoomManager::LockPick(
+    uint32_t roomId,
+    uint32_t playerId,
+    int characterId,
+    Room& outRoom,
+    uint8_t& outResult)
+{
+    std::lock_guard<std::mutex> lock(roomManagerMutex_);
+
+    outResult = PICK_FAILED;
+    outRoom = Room{};
+
+    auto it = rooms_.find(roomId);
+    if (it == rooms_.end())
+    {
+        outResult = PICK_ROOM_NOT_FOUND;
+        return false;
+    }
+
+    Room& room = it->second;
+
+    if (room.state != RoomState::PLAYING)
+    {
+        outResult = PICK_NOT_IN_GAME;
+        return false;
+    }
+
+    if (!IsValidCharacterIdUnlocked(characterId))
+    {
+        outResult = PICK_INVALID_CHARACTER;
+        return false;
+    }
+
+    RoomMember* targetMember = nullptr;
+
+    for (RoomMember& member : room.members)
+    {
+        if (member.playerId == playerId)
+        {
+            targetMember = &member;
+            break;
+        }
+    }
+
+    if (targetMember == nullptr || targetMember->team == RoomTeam::OBSERVER)
+    {
+        outResult = PICK_NOT_IN_GAME;
+        return false;
+    }
+
+    if (targetMember->isPickLocked)
+    {
+        outResult = PICK_ALREADY_LOCKED;
+        return false;
+    }
+
+    if (IsCharacterLockedByTeamUnlocked(room, targetMember->team, characterId))
+    {
+        outResult = PICK_CHARACTER_ALREADY_TAKEN;
+        return false;
+    }
+
+    targetMember->hoverCharacterId = characterId;
+    targetMember->lockedCharacterId = characterId;
+    targetMember->isPickLocked = true;
+
+    ClearSameHoverCharacterUnlocked(
+        room,
+        targetMember->team,
+        characterId,
+        playerId
+    );
+
+    outResult = PICK_SUCCESS;
+    outRoom = room;
+
+    return true;
+}
+
+bool RoomManager::IsValidCharacterIdUnlocked(int characterId)
+{
+    return characterId >= PICK_CHARACTER_MIN_ID &&
+        characterId <= PICK_CHARACTER_MAX_ID;
+}
+
+bool RoomManager::IsCharacterLockedByTeamUnlocked(
+    const Room& room,
+    RoomTeam team,
+    int characterId)
+{
+    for (const RoomMember& member : room.members)
+    {
+        if (member.team != team)
+            continue;
+
+        if (!member.isPickLocked)
+            continue;
+
+        if (member.lockedCharacterId == characterId)
+            return true;
+    }
+
+    return false;
+}
+
+void RoomManager::ClearSameHoverCharacterUnlocked(
+    Room& room,
+    RoomTeam team,
+    int characterId,
+    uint32_t exceptPlayerId)
+{
+    for (RoomMember& member : room.members)
+    {
+        if (member.playerId == exceptPlayerId)
+            continue;
+
+        if (member.team != team)
+            continue;
+
+        if (member.isPickLocked)
+            continue;
+
+        if (member.hoverCharacterId == characterId)
+            member.hoverCharacterId = -1;
+    }
 }

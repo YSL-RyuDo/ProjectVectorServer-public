@@ -31,6 +31,10 @@ struct RoomMember
     uint8_t slotIndex = 0;
 
     bool isLeader = false;
+
+    int hoverCharacterId = -1;
+    int lockedCharacterId = -1;
+    bool isPickLocked = false;
 };
 
 struct Room

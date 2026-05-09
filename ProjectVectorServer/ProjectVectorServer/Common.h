@@ -32,5 +32,6 @@ enum class LoginResult : uint8_t
     SUCCESS = 0,
     NO_ID = 1,
     WRONG_PASSWORD = 2,
-    INVALID_INPUT = 3
+    INVALID_INPUT = 3,
+    ALREADY_LOGIN = 4
 };

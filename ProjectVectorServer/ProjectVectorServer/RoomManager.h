@@ -105,6 +105,31 @@ public:
         uint8_t& outResult
     );
 
+    bool SetPickRemainingSeconds(
+        uint32_t roomId,
+        uint16_t remainingSeconds,
+        Room& outRoom
+    );
+
+    bool ForceLockMissingPicks(
+        uint32_t roomId,
+        Room& outRoom
+    );
+
+    bool SetPickReady(
+        uint32_t roomId,
+        uint32_t playerId,
+        Room& outRoom
+    );
+
+    bool IsAllPickReady(
+        uint32_t roomId
+    );
+
+    bool TryStartPickTimer(
+        uint32_t roomId,
+        Room& outRoom
+    );
 
 private:
     int CountTeamMemberUnlocked(const Room& room, RoomTeam team);
@@ -133,6 +158,10 @@ private:
         RoomTeam team,
         int characterId,
         uint32_t exceptPlayerId
+    );
+
+    int FindLowestAvailableCharacterUnlocked(
+        const bool usedCharacters[4]
     );
 
 private:

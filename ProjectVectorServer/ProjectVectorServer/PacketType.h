@@ -76,6 +76,8 @@ enum class PacketType : uint16_t
     PKT_SC_PICK_LOCK_RESULT = 44,
 
     PKT_SC_PICK_TIMER = 45,
+    PKT_SC_MATCH_LOADING_INFO = 46,
+    PKT_SC_MATCH_START = 47,
 
     // ¿Œ∞‘¿”
     PKT_SC_HELLO = 100,

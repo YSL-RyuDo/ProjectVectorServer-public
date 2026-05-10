@@ -8,6 +8,7 @@ namespace
     constexpr uint8_t ROOM_B_SLOT_COUNT = 3;
     constexpr uint8_t ROOM_OBSERVER_SLOT_COUNT = 2;
 
+    constexpr int PICK_CHARACTER_COUNT = 4;
     constexpr int PICK_CHARACTER_MIN_ID = 0;
     constexpr int PICK_CHARACTER_MAX_ID = 3;
 
@@ -99,6 +100,8 @@ uint32_t RoomManager::CreateRoom(
     room.hostName = hostName;
     room.maxPlayerCount = maxPlayerCount;
     room.state = RoomState::WAITING;
+    room.pickRemainingSeconds = 20;
+    room.pickFinished = false;
 
     RoomMember leader = leaderMember;
     leader.team = RoomTeam::A;
@@ -279,12 +282,15 @@ bool RoomManager::StartGame(
         return false;
 
     room.state = RoomState::PLAYING;
+    room.pickRemainingSeconds = 20;
+    room.pickFinished = false;
 
     for (RoomMember& member : room.members)
     {
         member.hoverCharacterId = -1;
         member.lockedCharacterId = -1;
         member.isPickLocked = false;
+        member.isPickReady = false;
     }
 
     outRoom = room;
@@ -300,73 +306,6 @@ bool RoomManager::IsLeader(uint32_t roomId, uint32_t playerId)
         return false;
 
     return it->second.leaderPlayerId == playerId;
-}
-
-int RoomManager::CountTeamMemberUnlocked(const Room& room, RoomTeam team)
-{
-    int count = 0;
-
-    for (const RoomMember& member : room.members)
-    {
-        if (member.team == team)
-            ++count;
-    }
-
-    return count;
-}
-
-bool RoomManager::IsPlayerInRoomUnlocked(const Room& room, uint32_t playerId)
-{
-    for (const RoomMember& member : room.members)
-    {
-        if (member.playerId == playerId)
-            return true;
-    }
-
-    return false;
-}
-
-bool RoomManager::FindNextSlotUnlocked(
-    const Room& room,
-    RoomTeam& outTeam,
-    uint8_t& outSlotIndex)
-{
-    for (const RoomSlotPosition& pos : ENTER_SLOT_ORDER)
-    {
-        bool occupied = false;
-
-        for (const RoomMember& member : room.members)
-        {
-            if (member.team == pos.team && member.slotIndex == pos.slotIndex)
-            {
-                occupied = true;
-                break;
-            }
-        }
-
-        if (!occupied)
-        {
-            outTeam = pos.team;
-            outSlotIndex = pos.slotIndex;
-            return true;
-        }
-    }
-
-    return false;
-}
-
-RoomMember* RoomManager::FindFirstMemberByLeaderOrderUnlocked(Room& room)
-{
-    for (const RoomSlotPosition& pos : LEADER_SLOT_ORDER)
-    {
-        for (RoomMember& member : room.members)
-        {
-            if (member.team == pos.team && member.slotIndex == pos.slotIndex)
-                return &member;
-        }
-    }
-
-    return nullptr;
 }
 
 bool RoomManager::GetMember(
@@ -510,20 +449,6 @@ bool RoomManager::SwapMembers(
     return true;
 }
 
-bool RoomManager::IsValidSlotUnlocked(RoomTeam team, uint8_t slotIndex)
-{
-    if (team == RoomTeam::A)
-        return slotIndex < ROOM_A_SLOT_COUNT;
-
-    if (team == RoomTeam::B)
-        return slotIndex < ROOM_B_SLOT_COUNT;
-
-    if (team == RoomTeam::OBSERVER)
-        return slotIndex < ROOM_OBSERVER_SLOT_COUNT;
-
-    return false;
-}
-
 bool RoomManager::TransferLeader(
     uint32_t roomId,
     uint32_t currentLeaderPlayerId,
@@ -632,6 +557,9 @@ bool RoomManager::SetPickHover(
     if (room.state != RoomState::PLAYING)
         return false;
 
+    if (room.pickFinished)
+        return false;
+
     if (!IsValidCharacterIdUnlocked(characterId))
         return false;
 
@@ -691,6 +619,12 @@ bool RoomManager::LockPick(
         return false;
     }
 
+    if (room.pickFinished)
+    {
+        outResult = PICK_NOT_IN_GAME;
+        return false;
+    }
+
     if (!IsValidCharacterIdUnlocked(characterId))
     {
         outResult = PICK_INVALID_CHARACTER;
@@ -743,6 +677,330 @@ bool RoomManager::LockPick(
     return true;
 }
 
+bool RoomManager::SetPickRemainingSeconds(
+    uint32_t roomId,
+    uint16_t remainingSeconds,
+    Room& outRoom)
+{
+    std::lock_guard<std::mutex> lock(roomManagerMutex_);
+
+    auto it = rooms_.find(roomId);
+    if (it == rooms_.end())
+        return false;
+
+    Room& room = it->second;
+
+    if (room.state != RoomState::PLAYING)
+        return false;
+
+    if (room.pickFinished)
+        return false;
+
+    room.pickRemainingSeconds = remainingSeconds;
+
+    outRoom = room;
+    return true;
+}
+
+bool RoomManager::ForceLockMissingPicks(
+    uint32_t roomId,
+    Room& outRoom)
+{
+    std::lock_guard<std::mutex> lock(roomManagerMutex_);
+
+    auto it = rooms_.find(roomId);
+    if (it == rooms_.end())
+        return false;
+
+    Room& room = it->second;
+
+    if (room.state != RoomState::PLAYING)
+        return false;
+
+    if (room.pickFinished)
+    {
+        outRoom = room;
+        return true;
+    }
+
+    RoomTeam teams[2] = { RoomTeam::A, RoomTeam::B };
+
+    for (RoomTeam team : teams)
+    {
+        bool usedCharacters[PICK_CHARACTER_COUNT] = { false, false, false, false };
+
+        for (const RoomMember& member : room.members)
+        {
+            if (member.team != team)
+                continue;
+
+            if (!member.isPickLocked)
+                continue;
+
+            if (IsValidCharacterIdUnlocked(member.lockedCharacterId))
+                usedCharacters[member.lockedCharacterId] = true;
+        }
+
+        std::vector<RoomMember*> teamMembers;
+
+        for (RoomMember& member : room.members)
+        {
+            if (member.team != team)
+                continue;
+
+            if (member.slotIndex >= 3)
+                continue;
+
+            teamMembers.push_back(&member);
+        }
+
+        std::sort(
+            teamMembers.begin(),
+            teamMembers.end(),
+            [](const RoomMember* a, const RoomMember* b)
+            {
+                return a->slotIndex < b->slotIndex;
+            }
+        );
+
+        for (RoomMember* member : teamMembers)
+        {
+            if (member == nullptr)
+                continue;
+
+            if (member->isPickLocked)
+                continue;
+
+            int hoverId = member->hoverCharacterId;
+
+            if (!IsValidCharacterIdUnlocked(hoverId))
+                continue;
+
+            if (usedCharacters[hoverId])
+                continue;
+
+            member->hoverCharacterId = hoverId;
+            member->lockedCharacterId = hoverId;
+            member->isPickLocked = true;
+
+            usedCharacters[hoverId] = true;
+        }
+
+        for (RoomMember* member : teamMembers)
+        {
+            if (member == nullptr)
+                continue;
+
+            if (member->isPickLocked)
+                continue;
+
+            int pickId = static_cast<int>(member->slotIndex);
+
+            if (!IsValidCharacterIdUnlocked(pickId) || usedCharacters[pickId])
+            {
+                pickId = FindLowestAvailableCharacterUnlocked(usedCharacters);
+            }
+
+            if (!IsValidCharacterIdUnlocked(pickId))
+                continue;
+
+            member->hoverCharacterId = pickId;
+            member->lockedCharacterId = pickId;
+            member->isPickLocked = true;
+
+            usedCharacters[pickId] = true;
+        }
+    }
+
+    room.pickRemainingSeconds = 0;
+    room.pickFinished = true;
+
+    outRoom = room;
+    return true;
+}
+
+bool RoomManager::SetPickReady(
+    uint32_t roomId,
+    uint32_t playerId,
+    Room& outRoom)
+{
+    std::lock_guard<std::mutex> lock(roomManagerMutex_);
+
+    auto it = rooms_.find(roomId);
+    if (it == rooms_.end())
+        return false;
+
+    Room& room = it->second;
+
+    if (room.state != RoomState::PLAYING)
+        return false;
+
+    for (RoomMember& member : room.members)
+    {
+        if (member.playerId == playerId)
+        {
+            member.isPickReady = true;
+            outRoom = room;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool RoomManager::IsAllPickReady(uint32_t roomId)
+{
+    std::lock_guard<std::mutex> lock(roomManagerMutex_);
+
+    auto it = rooms_.find(roomId);
+    if (it == rooms_.end())
+        return false;
+
+    const Room& room = it->second;
+
+    int readyCount = 0;
+    int playMemberCount = 0;
+
+    for (const RoomMember& member : room.members)
+    {
+        if (member.team == RoomTeam::OBSERVER)
+            continue;
+
+        playMemberCount++;
+
+        if (member.isPickReady)
+            readyCount++;
+    }
+
+    return playMemberCount == 6 && readyCount == 6;
+}
+
+bool RoomManager::TryStartPickTimer(
+    uint32_t roomId,
+    Room& outRoom)
+{
+    std::lock_guard<std::mutex> lock(roomManagerMutex_);
+
+    auto it = rooms_.find(roomId);
+    if (it == rooms_.end())
+        return false;
+
+    Room& room = it->second;
+
+    if (room.state != RoomState::PLAYING)
+        return false;
+
+    if (room.pickFinished)
+        return false;
+
+    if (room.pickTimerStarted)
+        return false;
+
+    int readyCount = 0;
+    int playMemberCount = 0;
+
+    for (const RoomMember& member : room.members)
+    {
+        if (member.team == RoomTeam::OBSERVER)
+            continue;
+
+        playMemberCount++;
+
+        if (member.isPickReady)
+            readyCount++;
+    }
+
+    if (playMemberCount != 6 || readyCount != 6)
+        return false;
+
+    room.pickTimerStarted = true;
+    room.pickRemainingSeconds = 20;
+
+    outRoom = room;
+    return true;
+}
+
+int RoomManager::CountTeamMemberUnlocked(const Room& room, RoomTeam team)
+{
+    int count = 0;
+
+    for (const RoomMember& member : room.members)
+    {
+        if (member.team == team)
+            ++count;
+    }
+
+    return count;
+}
+
+bool RoomManager::IsPlayerInRoomUnlocked(const Room& room, uint32_t playerId)
+{
+    for (const RoomMember& member : room.members)
+    {
+        if (member.playerId == playerId)
+            return true;
+    }
+
+    return false;
+}
+
+bool RoomManager::FindNextSlotUnlocked(
+    const Room& room,
+    RoomTeam& outTeam,
+    uint8_t& outSlotIndex)
+{
+    for (const RoomSlotPosition& pos : ENTER_SLOT_ORDER)
+    {
+        bool occupied = false;
+
+        for (const RoomMember& member : room.members)
+        {
+            if (member.team == pos.team && member.slotIndex == pos.slotIndex)
+            {
+                occupied = true;
+                break;
+            }
+        }
+
+        if (!occupied)
+        {
+            outTeam = pos.team;
+            outSlotIndex = pos.slotIndex;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+RoomMember* RoomManager::FindFirstMemberByLeaderOrderUnlocked(Room& room)
+{
+    for (const RoomSlotPosition& pos : LEADER_SLOT_ORDER)
+    {
+        for (RoomMember& member : room.members)
+        {
+            if (member.team == pos.team && member.slotIndex == pos.slotIndex)
+                return &member;
+        }
+    }
+
+    return nullptr;
+}
+
+bool RoomManager::IsValidSlotUnlocked(RoomTeam team, uint8_t slotIndex)
+{
+    if (team == RoomTeam::A)
+        return slotIndex < ROOM_A_SLOT_COUNT;
+
+    if (team == RoomTeam::B)
+        return slotIndex < ROOM_B_SLOT_COUNT;
+
+    if (team == RoomTeam::OBSERVER)
+        return slotIndex < ROOM_OBSERVER_SLOT_COUNT;
+
+    return false;
+}
+
 bool RoomManager::IsValidCharacterIdUnlocked(int characterId)
 {
     return characterId >= PICK_CHARACTER_MIN_ID &&
@@ -789,4 +1047,16 @@ void RoomManager::ClearSameHoverCharacterUnlocked(
         if (member.hoverCharacterId == characterId)
             member.hoverCharacterId = -1;
     }
+}
+
+int RoomManager::FindLowestAvailableCharacterUnlocked(
+    const bool usedCharacters[4])
+{
+    for (int i = 0; i < PICK_CHARACTER_COUNT; ++i)
+    {
+        if (!usedCharacters[i])
+            return i;
+    }
+
+    return -1;
 }

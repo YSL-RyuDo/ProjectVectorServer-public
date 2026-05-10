@@ -10,9 +10,43 @@
 #include <windows.h>
 #include <unordered_map>
 #include <mutex>
+#include <thread>
+#include <chrono>
+#include <algorithm>
+#include <vector>
 
 namespace
 {
+    constexpr uint16_t PICK_TIME_SECONDS = 20;
+    constexpr uint16_t PREPARE_TIME_SECONDS = 10;
+
+    void BroadcastMatchLoadingInfo(const Room& room);
+    void BroadcastMatchStart(const Room& room);
+
+    void BroadcastPickTimer(const Room& room,PickPhase phase,uint16_t remainingSeconds)
+    {
+        SC_PickTimer out{};
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_PICK_TIMER);
+
+        out.phase = static_cast<uint8_t>(phase);
+        out.remainingSeconds = remainingSeconds;
+
+        for (const RoomMember& member : room.members)
+        {
+            Session* target = SessionManager::Instance().Find(member.playerId);
+            if (target == nullptr)
+                continue;
+
+            target->Send(&out);
+        }
+
+        std::cout << "[PICK TIMER BROADCAST] roomId="
+            << room.roomId
+            << " phase=" << static_cast<int>(phase)
+            << " remaining=" << remainingSeconds
+            << std::endl;
+    }
     std::string WideToUTF8(const wchar_t* wstr)
     {
         if (wstr == nullptr)
@@ -372,7 +406,7 @@ namespace
             out.secondRole = static_cast<uint8_t>(PickRole::DEFENSE);
         }
 
-        out.remainingSeconds = 0;
+        out.remainingSeconds = room.pickRemainingSeconds;;
         out.blueScore = 0;
         out.redScore = 0;
 
@@ -507,6 +541,235 @@ namespace
         out.characterId = characterId;
 
         session->Send(&out);
+    }
+
+    void BroadcastPickStateToRoom(const Room& room)
+    {
+        for (const RoomMember& member : room.members)
+        {
+            if (member.team == RoomTeam::OBSERVER)
+                continue;
+
+            Session* target = SessionManager::Instance().Find(member.playerId);
+            if (target == nullptr)
+                continue;
+
+            RoomMember receiverMember{};
+            if (!RoomManager::Instance().GetMember(
+                room.roomId,
+                member.playerId,
+                receiverMember))
+            {
+                continue;
+            }
+
+            SC_PickState out{};
+            FillPickStatePacket(
+                out,
+                room,
+                receiverMember,
+                member.playerId
+            );
+
+            target->Send(&out);
+        }
+
+        std::cout << "[PICK STATE BROADCAST ROOM] roomId="
+            << room.roomId
+            << std::endl;
+    }
+
+    void StartPickTimerThread(uint32_t roomId)
+    {
+        std::thread([roomId]()
+            {
+                // 1) 20초 픽
+                for (int remain = PICK_TIME_SECONDS; remain >= 0; --remain)
+                {
+                    Room updatedRoom{};
+
+                    bool ok = RoomManager::Instance().SetPickRemainingSeconds(
+                        roomId,
+                        static_cast<uint16_t>(remain),
+                        updatedRoom
+                    );
+
+                    if (!ok)
+                        return;
+
+                    BroadcastPickTimer(
+                        updatedRoom,
+                        PickPhase::PICKING,
+                        static_cast<uint16_t>(remain)
+                    );
+
+                    if (remain == 0)
+                        break;
+
+                    std::this_thread::sleep_for(std::chrono::seconds(1));
+                }
+
+                // 2) 자동 픽 확정
+                Room finalPickRoom{};
+                bool forceOk = RoomManager::Instance().ForceLockMissingPicks(
+                    roomId,
+                    finalPickRoom
+                );
+
+                if (!forceOk)
+                    return;
+
+                BroadcastPickStateToRoom(finalPickRoom);
+
+                std::cout << "[PICK AUTO LOCK DONE] roomId="
+                    << roomId
+                    << std::endl;
+
+                // 3) 10초 준비 시간
+                for (int remain = PREPARE_TIME_SECONDS; remain >= 0; --remain)
+                {
+                    Room room{};
+                    if (!RoomManager::Instance().GetRoom(roomId, room))
+                        return;
+
+                    BroadcastPickTimer(
+                        room,
+                        PickPhase::PREPARE,
+                        static_cast<uint16_t>(remain)
+                    );
+
+                    if (remain == 0)
+                        break;
+
+                    std::this_thread::sleep_for(std::chrono::seconds(1));
+                }
+
+                // 4) 준비 끝나면 VS/로딩 화면 정보 전송
+                Room loadingRoom{};
+                if (!RoomManager::Instance().GetRoom(roomId, loadingRoom))
+                    return;
+
+                BroadcastMatchLoadingInfo(loadingRoom);
+
+                // 5) 약간의 연출 시간 주고 게임 시작 패킷
+                std::this_thread::sleep_for(std::chrono::seconds(2));
+
+                Room startRoom{};
+                if (!RoomManager::Instance().GetRoom(roomId, startRoom))
+                    return;
+
+                BroadcastMatchStart(startRoom);
+
+                std::cout << "[MATCH FLOW COMPLETE] roomId="
+                    << roomId
+                    << std::endl;
+            }).detach();
+    }
+
+    void FillMatchLoadingMemberInfo(
+        MatchLoadingMemberInfo& out,
+        const RoomMember& member)
+    {
+        out.playerId = member.playerId;
+
+        memset(out.nickname, 0, sizeof(out.nickname));
+        strncpy_s(out.nickname, sizeof(out.nickname), member.nickname.c_str(), _TRUNCATE);
+
+        out.slotIndex = member.slotIndex;
+        out.characterId = member.lockedCharacterId;
+        out.rankImageId = member.rankImageId;
+    }
+
+    void BroadcastMatchLoadingInfo(const Room& room)
+    {
+        SC_MatchLoadingInfo out{};
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_MATCH_LOADING_INFO);
+
+        out.roomId = room.roomId;
+
+        out.attackTeam = 0;   // A
+        out.defenseTeam = 1;  // B
+
+        out.attackCount = 0;
+        out.defenseCount = 0;
+
+        std::vector<RoomMember> aMembers;
+        std::vector<RoomMember> bMembers;
+
+        for (const RoomMember& member : room.members)
+        {
+            if (member.team == RoomTeam::A)
+                aMembers.push_back(member);
+            else if (member.team == RoomTeam::B)
+                bMembers.push_back(member);
+        }
+
+        std::sort(
+            aMembers.begin(),
+            aMembers.end(),
+            [](const RoomMember& a, const RoomMember& b)
+            {
+                return a.slotIndex < b.slotIndex;
+            }
+        );
+
+        std::sort(
+            bMembers.begin(),
+            bMembers.end(),
+            [](const RoomMember& a, const RoomMember& b)
+            {
+                return a.slotIndex < b.slotIndex;
+            }
+        );
+
+        for (size_t i = 0; i < aMembers.size() && i < MATCH_TEAM_MEMBER_COUNT; ++i)
+        {
+            FillMatchLoadingMemberInfo(out.attackMembers[i], aMembers[i]);
+            out.attackCount++;
+        }
+
+        for (size_t i = 0; i < bMembers.size() && i < MATCH_TEAM_MEMBER_COUNT; ++i)
+        {
+            FillMatchLoadingMemberInfo(out.defenseMembers[i], bMembers[i]);
+            out.defenseCount++;
+        }
+
+        for (const RoomMember& member : room.members)
+        {
+            Session* target = SessionManager::Instance().Find(member.playerId);
+            if (target == nullptr)
+                continue;
+
+            target->Send(&out);
+        }
+
+        std::cout << "[MATCH LOADING INFO BROADCAST] roomId="
+            << room.roomId
+            << " attackCount=" << static_cast<int>(out.attackCount)
+            << " defenseCount=" << static_cast<int>(out.defenseCount)
+            << std::endl;
+    }
+
+    void BroadcastMatchStart(const Room& room)
+    {
+        SC_MatchStart out{};
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_MATCH_START);
+        out.roomId = room.roomId;
+
+        for (const RoomMember& member : room.members)
+        {
+            Session* target = SessionManager::Instance().Find(member.playerId);
+            if (target == nullptr)
+                continue;
+
+            target->Send(&out);
+        }
+
+        std::cout << "[MATCH START BROADCAST] roomId="
+            << room.roomId
+            << std::endl;
     }
 }
 
@@ -942,6 +1205,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         leader.nickname = data.nickname;
         leader.level = data.level;
         leader.playerIconId = data.playerIconId;
+        leader.rankImageId = data.rankImageId;
         leader.team = RoomTeam::A;
         leader.slotIndex = 0;
         leader.isLeader = true;
@@ -1042,6 +1306,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         member.nickname = data.nickname;
         member.level = data.level;
         member.playerIconId = data.playerIconId;
+        member.rankImageId = data.rankImageId;
         member.isLeader = false;
 
         Room updatedRoom{};
@@ -1745,7 +2010,41 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             break;
         }
 
+        uint32_t roomId = session->GetCurrentRoomId();
+
+        Room readyRoom{};
+        bool readyOk = RoomManager::Instance().SetPickReady(
+            roomId,
+            session->GetPlayerId(),
+            readyRoom
+        );
+
+        if (!readyOk)
+        {
+            std::cout << "[PICK ENTER READY FAIL] playerId="
+                << session->GetPlayerId()
+                << " roomId=" << roomId
+                << std::endl;
+            break;
+        }
+
         SendPickState(session);
+
+        Room timerRoom{};
+        bool timerStartOk = RoomManager::Instance().TryStartPickTimer(
+            roomId,
+            timerRoom
+        );
+
+        if (timerStartOk)
+        {
+            std::cout << "[PICK TIMER START] roomId="
+                << roomId
+                << std::endl;
+
+            BroadcastPickStateToRoom(timerRoom);
+            StartPickTimerThread(roomId);
+        }
 
         break;
     }

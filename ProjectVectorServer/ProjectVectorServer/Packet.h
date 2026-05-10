@@ -16,6 +16,9 @@ constexpr int ROOM_OBSERVER_COUNT = 2;
 constexpr int ROOM_MAX_MEMBER_COUNT =
 ROOM_A_TEAM_COUNT + ROOM_B_TEAM_COUNT + ROOM_OBSERVER_COUNT;
 
+constexpr int MATCH_MEMBER_NICKNAME_LEN = 20;
+constexpr int MATCH_TEAM_MEMBER_COUNT = 3;
+
 #pragma pack(push, 1)
 
 struct PacketHeader
@@ -494,13 +497,50 @@ struct SC_PickState
     PickTeamMemberInfo members[3];
 };
 
+enum class PickPhase : uint8_t
+{
+    PICKING = 0,
+    PREPARE = 1,
+    COMPLETE = 2
+};
+
 struct SC_PickTimer
 {
     PacketHeader header;
+    uint8_t phase;
     uint16_t remainingSeconds;
 };
 
+struct MatchLoadingMemberInfo
+{
+    uint32_t playerId;
+    char nickname[MATCH_MEMBER_NICKNAME_LEN];
+    uint8_t slotIndex;
+    int32_t characterId;
+    int32_t rankImageId;
+};
 
+struct SC_MatchLoadingInfo
+{
+    PacketHeader header;
+
+    uint32_t roomId;
+
+    uint8_t attackTeam;   // 0 = A, 1 = B
+    uint8_t defenseTeam;  // 0 = A, 1 = B
+
+    uint8_t attackCount;
+    uint8_t defenseCount;
+
+    MatchLoadingMemberInfo attackMembers[MATCH_TEAM_MEMBER_COUNT];
+    MatchLoadingMemberInfo defenseMembers[MATCH_TEAM_MEMBER_COUNT];
+};
+
+struct SC_MatchStart
+{
+    PacketHeader header;
+    uint32_t roomId;
+};
 
 struct SC_Hello
 {

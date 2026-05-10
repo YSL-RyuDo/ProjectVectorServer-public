@@ -26,6 +26,7 @@ struct RoomMember
 
     int level = 1;
     int playerIconId = 0;
+    int rankImageId = 0;
 
     RoomTeam team = RoomTeam::A;
     uint8_t slotIndex = 0;
@@ -35,6 +36,7 @@ struct RoomMember
     int hoverCharacterId = -1;
     int lockedCharacterId = -1;
     bool isPickLocked = false;
+    bool isPickReady = false;
 };
 
 struct Room
@@ -52,4 +54,8 @@ struct Room
 
     uint32_t leaderPlayerId = 0;
     std::vector<RoomMember> members;
+
+    uint16_t pickRemainingSeconds = 20;
+    bool pickFinished = false;
+    bool pickTimerStarted = false;
 };

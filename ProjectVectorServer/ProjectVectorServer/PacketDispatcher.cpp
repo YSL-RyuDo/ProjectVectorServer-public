@@ -5,6 +5,7 @@
 #include "SessionManager.h"
 #include "UserManager.h"
 #include "RoomManager.h"
+#include "ServerWeaponData.h"
 
 #include <cstring>
 #include <windows.h>
@@ -14,14 +15,63 @@
 #include <chrono>
 #include <algorithm>
 #include <vector>
+#include <unordered_set>
 
 namespace
 {
     constexpr uint16_t PICK_TIME_SECONDS = 20;
     constexpr uint16_t PREPARE_TIME_SECONDS = 10;
+    constexpr uint16_t GAME_PREPARE_SECONDS = 20;
+    constexpr uint16_t ROUND_END_DELAY_SECONDS = 10;
+    // 지금은 2점 선승.
+    // 나중에 17라운드 승리 조건으로 바꾸고 싶으면 17로 바꾸기
+    constexpr uint8_t MATCH_WIN_ROUND_COUNT = 2;
+
+    struct MatchRuntimeState
+    {
+        uint8_t currentRound = 1;
+        uint8_t scoreA = 0;
+        uint8_t scoreB = 0;
+
+        bool roundResolving = false;
+        bool matchEnded = false;
+    };
+
+    std::mutex g_matchStateMutex;
+    std::unordered_map<uint32_t, MatchRuntimeState> g_matchStates;
+
+    std::mutex g_gameLoadReadyMutex;
+    std::unordered_map<uint32_t, std::unordered_set<uint32_t>> g_gameLoadReadyPlayers;
+    std::unordered_set<uint32_t> g_gamePrepareStartedRooms;
+
+    void TryResolveRoundByElimination(uint32_t roomId);
+    void StartRoundEndThread(uint32_t roomId, RoomTeam winnerTeam, bool matchEnd);
+    void ResetRound(uint32_t roomId);
+
+    void ResetMatchRuntimeState(uint32_t roomId)
+    {
+        std::lock_guard<std::mutex> lock(g_matchStateMutex);
+
+        MatchRuntimeState state{};
+        state.currentRound = 1;
+        state.scoreA = 0;
+        state.scoreB = 0;
+        state.roundResolving = false;
+        state.matchEnded = false;
+
+        g_matchStates[roomId] = state;
+
+        std::cout << "[MATCH STATE INIT] roomId="
+            << roomId
+            << std::endl;
+    }
 
     void BroadcastMatchLoadingInfo(const Room& room);
     void BroadcastMatchStart(const Room& room);
+
+    void BroadcastGameAllReady(const Room& room);
+    void BroadcastGamePrepareTimer(const Room& room, uint16_t remainingSeconds);
+    void StartGamePrepareTimerThread(uint32_t roomId);
 
     void BroadcastPickTimer(const Room& room,PickPhase phase,uint16_t remainingSeconds)
     {
@@ -104,11 +154,7 @@ namespace
         out.isLeader = member.isLeader ? 1 : 0;
     }
 
-    void FillRoomCreateResultPacket(
-        SC_RoomCreateResult& out,
-        const Room& room,
-        uint8_t result,
-        uint32_t receiverPlayerId)
+    void FillRoomCreateResultPacket(SC_RoomCreateResult& out,const Room& room,uint8_t result,uint32_t receiverPlayerId)
     {
         out.header.size = sizeof(out);
         out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_ROOM_CREATE_RESULT);
@@ -247,10 +293,7 @@ namespace
         return true;
     }
 
-    bool TakePendingSlotSwap(
-        uint32_t targetPlayerId,
-        uint32_t requesterPlayerId,
-        PendingSlotSwap& outRequest)
+    bool TakePendingSlotSwap(uint32_t targetPlayerId,uint32_t requesterPlayerId,PendingSlotSwap& outRequest)
     {
         std::lock_guard<std::mutex> lock(g_pendingSlotSwapMutex);
 
@@ -267,12 +310,7 @@ namespace
         return true;
     }
 
-    void SendRoomSlotChangeResult(
-        Session* session,
-        RoomSlotChangeResult result,
-        RoomTeam targetTeam,
-        uint8_t targetSlotIndex,
-        const std::string& targetNickname = "")
+    void SendRoomSlotChangeResult(Session* session,RoomSlotChangeResult result,RoomTeam targetTeam,uint8_t targetSlotIndex,const std::string& targetNickname = "")
     {
         if (session == nullptr)
             return;
@@ -292,11 +330,7 @@ namespace
         session->Send(&out);
     }
 
-    void SendRoomTransferLeaderResult(
-        Session* session,
-        RoomAdminResult result,
-        uint32_t targetPlayerId,
-        const std::string& targetNickname = "")
+    void SendRoomTransferLeaderResult(Session* session,RoomAdminResult result,uint32_t targetPlayerId,const std::string& targetNickname = "")
     {
         if (session == nullptr)
             return;
@@ -315,11 +349,7 @@ namespace
         session->Send(&out);
     }
 
-    void SendRoomKickResult(
-        Session* session,
-        RoomAdminResult result,
-        uint32_t targetPlayerId,
-        const std::string& targetNickname = "")
+    void SendRoomKickResult(Session* session,RoomAdminResult result,uint32_t targetPlayerId,const std::string& targetNickname = "")
     {
         if (session == nullptr)
             return;
@@ -355,10 +385,7 @@ namespace
         session->Send(&out);
     }
 
-    void FillPickTeamMemberInfo(
-        PickTeamMemberInfo& out,
-        const RoomMember& member,
-        uint32_t receiverPlayerId)
+    void FillPickTeamMemberInfo(PickTeamMemberInfo& out,const RoomMember& member,uint32_t receiverPlayerId)
     {
         out.playerId = member.playerId;
 
@@ -374,11 +401,7 @@ namespace
         out.isMe = member.playerId == receiverPlayerId ? 1 : 0;
     }
 
-    void FillPickStatePacket(
-        SC_PickState& out,
-        const Room& room,
-        const RoomMember& receiverMember,
-        uint32_t receiverPlayerId)
+    void FillPickStatePacket(SC_PickState& out,const Room& room,const RoomMember& receiverMember,uint32_t receiverPlayerId)
     {
         out.header.size = sizeof(out);
         out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_PICK_STATE);
@@ -525,10 +548,7 @@ namespace
             << std::endl;
     }
 
-    void SendPickLockResult(
-        Session* session,
-        PickLockResult result,
-        int characterId)
+    void SendPickLockResult(Session* session,PickLockResult result,int characterId)
     {
         if (session == nullptr)
             return;
@@ -597,10 +617,7 @@ namespace
                     if (!ok)
                         return;
 
-                    BroadcastPickTimer(
-                        updatedRoom,
-                        PickPhase::PICKING,
-                        static_cast<uint16_t>(remain)
+                    BroadcastPickTimer(updatedRoom,PickPhase::PICKING,static_cast<uint16_t>(remain)
                     );
 
                     if (remain == 0)
@@ -611,10 +628,7 @@ namespace
 
                 // 2) 자동 픽 확정
                 Room finalPickRoom{};
-                bool forceOk = RoomManager::Instance().ForceLockMissingPicks(
-                    roomId,
-                    finalPickRoom
-                );
+                bool forceOk = RoomManager::Instance().ForceLockMissingPicks(roomId,finalPickRoom);
 
                 if (!forceOk)
                     return;
@@ -651,24 +665,12 @@ namespace
 
                 BroadcastMatchLoadingInfo(loadingRoom);
 
-                // 5) 약간의 연출 시간 주고 게임 시작 패킷
-                std::this_thread::sleep_for(std::chrono::seconds(2));
+                std::cout << "[MATCH LOADING WAIT CLIENT LOAD] roomId="<< roomId<< std::endl;
 
-                Room startRoom{};
-                if (!RoomManager::Instance().GetRoom(roomId, startRoom))
-                    return;
-
-                BroadcastMatchStart(startRoom);
-
-                std::cout << "[MATCH FLOW COMPLETE] roomId="
-                    << roomId
-                    << std::endl;
             }).detach();
     }
 
-    void FillMatchLoadingMemberInfo(
-        MatchLoadingMemberInfo& out,
-        const RoomMember& member)
+    void FillMatchLoadingMemberInfo(MatchLoadingMemberInfo& out,const RoomMember& member)
     {
         out.playerId = member.playerId;
 
@@ -770,6 +772,563 @@ namespace
         std::cout << "[MATCH START BROADCAST] roomId="
             << room.roomId
             << std::endl;
+    }
+
+    void FillGameReadyMemberInfo(GameReadyMemberInfo& out, const RoomMember& member)
+    {
+        out.playerId = member.playerId;
+
+        memset(out.userId, 0, sizeof(out.userId));
+        strncpy_s(
+            out.userId,
+            sizeof(out.userId),
+            member.userId.c_str(),
+            _TRUNCATE
+        );
+
+        memset(out.nickname, 0, sizeof(out.nickname));
+        strncpy_s(
+            out.nickname,
+            sizeof(out.nickname),
+            member.nickname.c_str(),
+            _TRUNCATE
+        );
+
+        out.team = static_cast<uint8_t>(member.team);
+        out.slotIndex = member.slotIndex;
+        out.characterId = member.lockedCharacterId;
+        out.rankImageId = member.rankImageId;
+    }
+
+    bool MarkGameLoadReadyAndCheckAll(uint32_t roomId,uint32_t playerId,Room& outRoom)
+    {
+        if (!RoomManager::Instance().GetRoom(roomId, outRoom))
+            return false;
+
+        bool requesterExists = false;
+        int playMemberCount = 0;
+
+        for (const RoomMember& member : outRoom.members)
+        {
+            if (member.team == RoomTeam::OBSERVER)
+                continue;
+
+            if (member.slotIndex >= 3)
+                continue;
+
+            playMemberCount++;
+
+            if (member.playerId == playerId)
+                requesterExists = true;
+        }
+
+        if (!requesterExists)
+            return false;
+
+        if (playMemberCount != 6)
+            return false;
+
+        std::lock_guard<std::mutex> lock(g_gameLoadReadyMutex);
+
+        if (g_gamePrepareStartedRooms.count(roomId) > 0)
+            return false;
+
+        g_gameLoadReadyPlayers[roomId].insert(playerId);
+
+        for (const RoomMember& member : outRoom.members)
+        {
+            if (member.team == RoomTeam::OBSERVER)
+                continue;
+
+            if (member.slotIndex >= 3)
+                continue;
+
+            if (g_gameLoadReadyPlayers[roomId].count(member.playerId) == 0)
+                return false;
+        }
+
+        g_gamePrepareStartedRooms.insert(roomId);
+        return true;
+    }
+    
+    void FillHPUpdatePacket(SC_HPUpdate& out, Session* target)
+    {
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_HP_UPDATE);
+
+        out.playerId = target->GetPlayerId();
+
+        out.hp = target->GetHP();
+        out.barrier = target->GetBarrier();
+
+        out.maxHp = target->GetMaxHP();
+        out.maxBarrier = target->GetMaxBarrier();
+    }
+
+    void BroadcastInitialHPToRoom(const Room& room)
+    {
+        for (const RoomMember& hpOwner : room.members)
+        {
+            if (hpOwner.team == RoomTeam::OBSERVER)
+                continue;
+
+            Session* ownerSession = SessionManager::Instance().Find(hpOwner.playerId);
+            if (ownerSession == nullptr)
+                continue;
+
+            SC_HPUpdate hpPkt{};
+            FillHPUpdatePacket(hpPkt, ownerSession);
+
+            for (const RoomMember& receiver : room.members)
+            {
+                if (receiver.team == RoomTeam::OBSERVER)
+                    continue;
+
+                Session* receiverSession = SessionManager::Instance().Find(receiver.playerId);
+                if (receiverSession == nullptr)
+                    continue;
+
+                receiverSession->Send(&hpPkt);
+            }
+        }
+
+        std::cout << "[INITIAL HP BROADCAST] roomId="
+            << room.roomId
+            << " memberCount=" << room.members.size()
+            << std::endl;
+    }
+
+    void BroadcastGameAllReady(const Room& room)
+    {
+        ResetMatchRuntimeState(room.roomId);
+
+        for (const RoomMember& member : room.members)
+        {
+            if (member.team == RoomTeam::OBSERVER)
+                continue;
+
+            Session* playerSession = SessionManager::Instance().Find(member.playerId);
+            if (playerSession == nullptr)
+                continue;
+
+            playerSession->InitRoundState();
+            playerSession->SetState(SessionState::IN_GAME);
+        }
+
+        SC_GameAllReady out{};
+
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_GAME_ALL_READY);
+
+        out.roomId = room.roomId;
+        out.prepareSeconds = PREPARE_TIME_SECONDS;
+
+        uint8_t count = static_cast<uint8_t>(room.members.size());
+
+        if (count > GAME_READY_MEMBER_COUNT)
+            count = GAME_READY_MEMBER_COUNT;
+
+        out.memberCount = count;
+
+        for (uint8_t i = 0; i < count; ++i)
+        {
+            FillGameReadyMemberInfo(out.members[i], room.members[i]);
+        }
+
+        for (const RoomMember& member : room.members)
+        {
+            Session* target = SessionManager::Instance().Find(member.playerId);
+
+            if (target == nullptr)
+                continue;
+
+            target->Send(&out);
+        }
+
+        BroadcastInitialHPToRoom(room);
+    }
+
+    void BroadcastGamePrepareTimer(const Room& room, uint16_t remainingSeconds)
+    {
+        SC_GamePrepareTimer out{};
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_GAME_PREPARE_TIMER);
+        out.remainingSeconds = remainingSeconds;
+
+        for (const RoomMember& member : room.members)
+        {
+            if (member.team == RoomTeam::OBSERVER)
+                continue;
+
+            Session* target = SessionManager::Instance().Find(member.playerId);
+            if (target == nullptr)
+                continue;
+
+            target->Send(&out);
+        }
+
+        std::cout << "[GAME PREPARE TIMER BROADCAST] roomId="
+            << room.roomId
+            << " remaining=" << remainingSeconds
+            << std::endl;
+    }
+
+    void StartGamePrepareTimerThread(uint32_t roomId)
+    {
+        std::thread([roomId]()
+            {
+                for (int remain = GAME_PREPARE_SECONDS; remain >= 0; --remain)
+                {
+                    Room room{};
+                    if (!RoomManager::Instance().GetRoom(roomId, room))
+                        return;
+
+                    BroadcastGamePrepareTimer(
+                        room,
+                        static_cast<uint16_t>(remain)
+                    );
+
+                    if (remain == 0)
+                        break;
+
+                    std::this_thread::sleep_for(std::chrono::seconds(1));
+                }
+
+                std::cout << "[GAME PREPARE DONE] roomId="
+                    << roomId
+                    << std::endl;
+            }
+        ).detach();
+    }
+
+    void BroadcastToRoom(uint32_t roomId, void* packet)
+    {
+        if (roomId == 0)
+            return;
+
+        Room room{};
+        if (!RoomManager::Instance().GetRoom(roomId, room))
+        {
+            std::cout << "[BROADCAST ROOM FAIL] room not found roomId="
+                << roomId
+                << std::endl;
+            return;
+        }
+
+        for (const RoomMember& member : room.members)
+        {
+            if (member.team == RoomTeam::OBSERVER)
+                continue;
+
+            Session* target = SessionManager::Instance().Find(member.playerId);
+            if (target == nullptr)
+                continue;
+
+            target->Send(packet);
+        }
+    }
+
+    void SendAmmoUpdate(Session* session, const PlayerWeaponState& weaponState)
+    {
+        if (session == nullptr)
+            return;
+
+        SC_AmmoUpdate out{};
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_AMMO_UPDATE);
+
+        out.weaponId = weaponState.weaponId;
+        out.magAmmo = weaponState.magAmmo;
+        out.reserveAmmo = weaponState.reserveAmmo;
+
+        session->Send(&out);
+    }
+
+    void BroadcastRoundResult(
+        uint32_t roomId,
+        RoomTeam winnerTeam,
+        uint8_t scoreA,
+        uint8_t scoreB,
+        uint8_t currentRound,
+        bool matchEnd)
+    {
+        SC_RoundResult out{};
+
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_ROUND_RESULT);
+
+        out.winnerTeam = static_cast<uint8_t>(winnerTeam);
+        out.scoreA = scoreA;
+        out.scoreB = scoreB;
+        out.currentRound = currentRound;
+        out.matchEnd = matchEnd ? 1 : 0;
+        out.delaySeconds = ROUND_END_DELAY_SECONDS;
+
+        BroadcastToRoom(roomId, &out);
+
+        std::cout << "[ROUND RESULT] roomId="
+            << roomId
+            << " winnerTeam=" << static_cast<int>(out.winnerTeam)
+            << " scoreA=" << static_cast<int>(scoreA)
+            << " scoreB=" << static_cast<int>(scoreB)
+            << " currentRound=" << static_cast<int>(currentRound)
+            << " matchEnd=" << matchEnd
+            << std::endl;
+    }
+
+    void BroadcastMatchResult(
+        uint32_t roomId,
+        RoomTeam winnerTeam,
+        uint8_t scoreA,
+        uint8_t scoreB)
+    {
+        SC_MatchResult out{};
+
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_MATCH_RESULT);
+
+        out.winnerTeam = static_cast<uint8_t>(winnerTeam);
+        out.scoreA = scoreA;
+        out.scoreB = scoreB;
+
+        BroadcastToRoom(roomId, &out);
+
+        std::cout << "[MATCH RESULT] roomId="
+            << roomId
+            << " winnerTeam=" << static_cast<int>(winnerTeam)
+            << " scoreA=" << static_cast<int>(scoreA)
+            << " scoreB=" << static_cast<int>(scoreB)
+            << std::endl;
+    }
+
+    void ResetRound(uint32_t roomId)
+    {
+        Room room{};
+
+        if (!RoomManager::Instance().GetRoom(roomId, room))
+            return;
+
+        SC_RoundReset out{};
+
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_ROUND_RESET);
+
+        {
+            std::lock_guard<std::mutex> lock(g_matchStateMutex);
+
+            MatchRuntimeState& state = g_matchStates[roomId];
+
+            state.currentRound++;
+            state.roundResolving = false;
+
+            out.currentRound = state.currentRound;
+            out.scoreA = state.scoreA;
+            out.scoreB = state.scoreB;
+        }
+
+        uint8_t count = 0;
+
+        for (const RoomMember& member : room.members)
+        {
+            if (member.team == RoomTeam::OBSERVER)
+                continue;
+
+            if (member.slotIndex >= 3)
+                continue;
+
+            if (count >= GAME_MEMBER_COUNT)
+                break;
+
+            Session* playerSession =
+                SessionManager::Instance().Find(member.playerId);
+
+            if (playerSession == nullptr)
+                continue;
+
+            playerSession->InitRoundState();
+
+            RoundResetMemberInfo& info = out.members[count];
+
+            info.playerId = playerSession->GetPlayerId();
+
+            info.team = static_cast<uint8_t>(member.team);
+            info.slotIndex = member.slotIndex;
+
+            info.hp = playerSession->GetHP();
+            info.barrier = playerSession->GetBarrier();
+            info.maxHp = playerSession->GetMaxHP();
+            info.maxBarrier = playerSession->GetMaxBarrier();
+
+            info.currentWeaponId = playerSession->GetCurrentWeaponId();
+
+            PlayerWeaponState* weaponState =
+                playerSession->GetWeaponState(info.currentWeaponId);
+
+            if (weaponState != nullptr)
+            {
+                info.magAmmo = weaponState->magAmmo;
+                info.reserveAmmo = weaponState->reserveAmmo;
+            }
+            else
+            {
+                info.magAmmo = 0;
+                info.reserveAmmo = 0;
+            }
+
+            count++;
+        }
+
+        out.memberCount = count;
+
+        BroadcastToRoom(roomId, &out);
+
+        std::cout << "[ROUND RESET] roomId="
+            << roomId
+            << " round=" << static_cast<int>(out.currentRound)
+            << " scoreA=" << static_cast<int>(out.scoreA)
+            << " scoreB=" << static_cast<int>(out.scoreB)
+            << " memberCount=" << static_cast<int>(out.memberCount)
+            << std::endl;
+
+        StartGamePrepareTimerThread(roomId);
+    }
+
+    void StartRoundEndThread(uint32_t roomId, RoomTeam winnerTeam, bool matchEnd)
+    {
+        std::thread([roomId, winnerTeam, matchEnd]()
+            {
+                std::this_thread::sleep_for(
+                    std::chrono::seconds(ROUND_END_DELAY_SECONDS)
+                );
+
+                uint8_t scoreA = 0;
+                uint8_t scoreB = 0;
+
+                {
+                    std::lock_guard<std::mutex> lock(g_matchStateMutex);
+
+                    auto it = g_matchStates.find(roomId);
+                    if (it == g_matchStates.end())
+                        return;
+
+                    scoreA = it->second.scoreA;
+                    scoreB = it->second.scoreB;
+                }
+
+                if (matchEnd)
+                {
+                    BroadcastMatchResult(
+                        roomId,
+                        winnerTeam,
+                        scoreA,
+                        scoreB
+                    );
+
+                    return;
+                }
+
+                ResetRound(roomId);
+            }
+        ).detach();
+    }
+
+    bool IsTeamEliminated(const Room& room, RoomTeam team)
+    {
+        int teamPlayerCount = 0;
+        int aliveCount = 0;
+
+        for (const RoomMember& member : room.members)
+        {
+            if (member.team != team)
+                continue;
+
+            if (member.slotIndex >= 3)
+                continue;
+
+            teamPlayerCount++;
+
+            Session* playerSession =
+                SessionManager::Instance().Find(member.playerId);
+
+            if (playerSession == nullptr)
+                continue;
+
+            if (!playerSession->IsDead())
+                aliveCount++;
+        }
+
+        return teamPlayerCount > 0 && aliveCount == 0;
+    }
+
+    void TryResolveRoundByElimination(uint32_t roomId)
+    {
+        Room room{};
+
+        if (!RoomManager::Instance().GetRoom(roomId, room))
+            return;
+
+        bool teamADead = IsTeamEliminated(room, RoomTeam::A);
+        bool teamBDead = IsTeamEliminated(room, RoomTeam::B);
+
+        if (!teamADead && !teamBDead)
+            return;
+
+        if (teamADead && teamBDead)
+        {
+            std::cout << "[ROUND RESULT BLOCK] both teams dead roomId="
+                << roomId
+                << std::endl;
+            return;
+        }
+
+        RoomTeam winnerTeam = teamADead ? RoomTeam::B : RoomTeam::A;
+
+        uint8_t scoreA = 0;
+        uint8_t scoreB = 0;
+        uint8_t currentRound = 1;
+        bool matchEnd = false;
+
+        {
+            std::lock_guard<std::mutex> lock(g_matchStateMutex);
+
+            MatchRuntimeState& state = g_matchStates[roomId];
+
+            if (state.roundResolving || state.matchEnded)
+                return;
+
+            state.roundResolving = true;
+
+            if (winnerTeam == RoomTeam::A)
+                state.scoreA++;
+            else
+                state.scoreB++;
+
+            currentRound = state.currentRound;
+            scoreA = state.scoreA;
+            scoreB = state.scoreB;
+
+            if (state.scoreA >= MATCH_WIN_ROUND_COUNT ||
+                state.scoreB >= MATCH_WIN_ROUND_COUNT)
+            {
+                state.matchEnded = true;
+                matchEnd = true;
+            }
+        }
+
+        BroadcastRoundResult(
+            roomId,
+            winnerTeam,
+            scoreA,
+            scoreB,
+            currentRound,
+            matchEnd
+        );
+
+        StartRoundEndThread(
+            roomId,
+            winnerTeam,
+            matchEnd
+        );
     }
 }
 
@@ -2181,16 +2740,78 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         break;
     }
 
+    case PacketType::PKT_CS_GAME_LOAD_READY:
+    {
+        std::cout << "[GAME LOAD READY REQUEST] playerId="
+            << session->GetPlayerId()
+            << " roomId=" << session->GetCurrentRoomId()
+            << " state=" << static_cast<int>(session->GetState())
+            << std::endl;
+
+        uint32_t roomId = session->GetCurrentRoomId();
+
+        if (roomId == 0)
+        {
+            std::cout << "[GAME LOAD READY BLOCK] roomId is 0" << std::endl;
+            break;
+        }
+
+        Room readyRoom{};
+        bool allReady = MarkGameLoadReadyAndCheckAll(
+            roomId,
+            session->GetPlayerId(),
+            readyRoom
+        );
+
+        if (!allReady)
+        {
+            std::cout << "[GAME LOAD READY WAIT] playerId="
+                << session->GetPlayerId()
+                << " roomId=" << roomId
+                << std::endl;
+            break;
+        }
+
+        std::cout << "[GAME ALL CLIENT READY] roomId="
+            << roomId
+            << std::endl;
+
+        BroadcastGameAllReady(readyRoom);
+        StartGamePrepareTimerThread(roomId);
+
+        break;
+    }
+
     case PacketType::PKT_CS_MOVE_STATE:
     {
         auto* pkt = reinterpret_cast<CS_MoveState*>(header);
+
+        if (session->GetState() != SessionState::IN_GAME &&
+            session->GetState() != SessionState::IN_ROOM)
+        {
+            std::cout << "[MOVE BLOCK] invalid state playerId="
+                << session->GetPlayerId()
+                << " state=" << static_cast<int>(session->GetState())
+                << std::endl;
+            break;
+        }
+
+        uint32_t roomId = session->GetCurrentRoomId();
+
+        if (roomId == 0)
+        {
+            std::cout << "[MOVE BLOCK] roomId is 0 playerId="
+                << session->GetPlayerId()
+                << std::endl;
+            break;
+        }
 
         session->SetPosition(pkt->x, pkt->y, pkt->z);
         session->SetYaw(pkt->yaw);
 
         SC_MoveState out{};
         out.header.size = sizeof(out);
-        out.header.type = (uint16_t)PacketType::PKT_SC_MOVE_STATE;
+        out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_MOVE_STATE);
 
         out.playerId = session->GetPlayerId();
         out.x = pkt->x;
@@ -2198,7 +2819,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         out.z = pkt->z;
         out.yaw = pkt->yaw;
 
-        SessionManager::Instance().Broadcast(&out);
+        BroadcastToRoom(roomId, &out);
 
         break;
     }
@@ -2207,24 +2828,141 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
     {
         auto* pkt = reinterpret_cast<CS_Hit*>(header);
 
+        if (session->GetState() != SessionState::IN_GAME)
+        {
+            std::cout << "[HIT BLOCK] attacker not in game. playerId="
+                << session->GetPlayerId()
+                << " state=" << static_cast<int>(session->GetState())
+                << std::endl;
+            break;
+        }
+
+        uint32_t roomId = session->GetCurrentRoomId();
+
+        if (roomId == 0)
+        {
+            std::cout << "[HIT BLOCK] roomId is 0. playerId="
+                << session->GetPlayerId()
+                << std::endl;
+            break;
+        }
+
         Session* target = SessionManager::Instance().Find(pkt->targetId);
-        if (!target)
+        if (target == nullptr)
             break;
 
-        target->Damage(pkt->damage);
+        if (target->GetCurrentRoomId() != roomId)
+        {
+            std::cout << "[HIT BLOCK] different room. attacker="
+                << session->GetPlayerId()
+                << " target=" << target->GetPlayerId()
+                << std::endl;
+            break;
+        }
+
+        if (target->IsDead())
+            break;
+
+        int weaponId = session->GetCurrentWeaponId();
+
+        if (!session->HasWeapon(weaponId))
+        {
+            std::cout << "[HIT BLOCK] weapon not owned. playerId="
+                << session->GetPlayerId()
+                << " weaponId=" << weaponId
+                << std::endl;
+            break;
+        }
+
+        PlayerWeaponState* weaponState = session->GetWeaponState(weaponId);
+
+        if (weaponState == nullptr)
+            break;
+
+        const ServerWeaponData* weaponData = ServerWeaponTable::Find(weaponId);
+
+        if (weaponData == nullptr)
+        {
+            std::cout << "[HIT BLOCK] weapon data not found. weaponId="
+                << weaponId
+                << std::endl;
+            break;
+        }
+
+        if (weaponData->weaponType != ServerWeaponType::Knife)
+        {
+            if (weaponState->magAmmo <= 0)
+            {
+                std::cout << "[HIT BLOCK] no ammo. playerId="
+                    << session->GetPlayerId()
+                    << " weaponId=" << weaponId
+                    << std::endl;
+
+                SendAmmoUpdate(session, *weaponState);
+                break;
+            }
+
+            weaponState->magAmmo -= 1;
+            SendAmmoUpdate(session, *weaponState);
+        }
+
+        target->Damage(weaponData->damage);
 
         SC_HPUpdate hpPkt{};
-        hpPkt.header.size = sizeof(hpPkt);
-        hpPkt.header.type = (uint16_t)PacketType::PKT_SC_HP_UPDATE;
-        hpPkt.playerId = target->GetPlayerId();
-        hpPkt.hp = target->GetHP();
+        FillHPUpdatePacket(hpPkt, target);
 
-        SessionManager::Instance().Broadcast(&hpPkt);
+        BroadcastToRoom(roomId, &hpPkt);
+
+        std::cout << "[HIT APPLY] attacker="
+            << session->GetPlayerId()
+            << " target=" << target->GetPlayerId()
+            << " weaponId=" << weaponId
+            << " damage=" << weaponData->damage
+            << " ammo=" << weaponState->magAmmo
+            << "/" << weaponState->reserveAmmo
+            << " targetHp=" << target->GetHP()
+            << " targetBarrier=" << target->GetBarrier()
+            << std::endl;
 
         if (target->IsDead())
         {
             HandleDeath(target);
         }
+
+        break;
+    }
+
+    case PacketType::PKT_CS_WEAPON_SWITCH:
+    {
+        auto* pkt = reinterpret_cast<CS_WeaponSwitch*>(header);
+
+        if (session->GetState() != SessionState::IN_GAME)
+        {
+            std::cout << "[WEAPON SWITCH BLOCK] not in game playerId="
+                << session->GetPlayerId()
+                << std::endl;
+            break;
+        }
+
+        if (!session->HasWeapon(pkt->weaponId))
+        {
+            std::cout << "[WEAPON SWITCH BLOCK] not owned playerId="
+                << session->GetPlayerId()
+                << " weaponId=" << pkt->weaponId
+                << std::endl;
+            break;
+        }
+
+        session->SetCurrentWeaponId(pkt->weaponId);
+
+        PlayerWeaponState* weaponState = session->GetWeaponState(pkt->weaponId);
+        if (weaponState != nullptr)
+            SendAmmoUpdate(session, *weaponState);
+
+        std::cout << "[WEAPON SWITCH] playerId="
+            << session->GetPlayerId()
+            << " weaponId=" << pkt->weaponId
+            << std::endl;
 
         break;
     }
@@ -2241,23 +2979,27 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
 void PacketDispatcher::HandleDeath(Session* target)
 {
+    if (target == nullptr)
+        return;
+
+    uint32_t roomId = target->GetCurrentRoomId();
+
     SC_Die diePkt{};
     diePkt.header.size = sizeof(diePkt);
-    diePkt.header.type = (uint16_t)PacketType::PKT_SC_DIE;
+    diePkt.header.type = static_cast<uint16_t>(PacketType::PKT_SC_DIE);
     diePkt.playerId = target->GetPlayerId();
 
-    SessionManager::Instance().Broadcast(&diePkt);
+    BroadcastToRoom(roomId, &diePkt);
 
-    target->Respawn();
+    SC_HPUpdate hpPkt{};
+    FillHPUpdatePacket(hpPkt, target);
+    BroadcastToRoom(roomId, &hpPkt);
 
-    SC_SpawnPlayer spawnPkt{};
-    spawnPkt.header.size = sizeof(spawnPkt);
-    spawnPkt.header.type = (uint16_t)PacketType::PKT_SC_SPAWN_PLAYER;
-    spawnPkt.playerId = target->GetPlayerId();
-    spawnPkt.x = target->GetPosition().x;
-    spawnPkt.y = target->GetPosition().y;
-    spawnPkt.z = target->GetPosition().z;
-    spawnPkt.hp = target->GetHP();
+    std::cout << "[PLAYER DEAD] playerId="
+        << target->GetPlayerId()
+        << " roomId=" << roomId
+        << " hp=" << target->GetHP()
+        << std::endl;
 
-    SessionManager::Instance().Broadcast(&spawnPkt);
+    TryResolveRoundByElimination(roomId);
 }

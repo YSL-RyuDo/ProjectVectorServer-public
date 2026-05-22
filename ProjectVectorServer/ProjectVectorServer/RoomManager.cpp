@@ -84,12 +84,7 @@ std::vector<Room> RoomManager::GetRoomList()
     return result;
 }
 
-uint32_t RoomManager::CreateRoom(
-    const std::string& roomName,
-    const std::string& mapName,
-    const std::string& hostName,
-    const RoomMember& leaderMember,
-    uint16_t maxPlayerCount)
+uint32_t RoomManager::CreateRoom(const std::string& roomName,const std::string& mapName,const std::string& hostName,const RoomMember& leaderMember,uint16_t maxPlayerCount)
 {
     std::lock_guard<std::mutex> lock(roomManagerMutex_);
 
@@ -133,10 +128,7 @@ bool RoomManager::GetRoom(uint32_t roomId, Room& outRoom)
     return true;
 }
 
-bool RoomManager::EnterRoom(
-    uint32_t roomId,
-    const RoomMember& member,
-    Room& outRoom)
+bool RoomManager::EnterRoom(uint32_t roomId,const RoomMember& member,Room& outRoom)
 {
     std::lock_guard<std::mutex> lock(roomManagerMutex_);
 
@@ -179,11 +171,7 @@ bool RoomManager::EnterRoom(
     return true;
 }
 
-bool RoomManager::LeaveRoom(
-    uint32_t roomId,
-    uint32_t playerId,
-    bool& outRoomDeleted,
-    Room& outRoom)
+bool RoomManager::LeaveRoom(uint32_t roomId,uint32_t playerId,bool& outRoomDeleted,Room& outRoom)
 {
     std::lock_guard<std::mutex> lock(roomManagerMutex_);
 
@@ -256,10 +244,7 @@ bool RoomManager::CanStartGame(uint32_t roomId)
     return aCount == 3 && bCount == 3;
 }
 
-bool RoomManager::StartGame(
-    uint32_t roomId,
-    uint32_t leaderPlayerId,
-    Room& outRoom)
+bool RoomManager::StartGame(uint32_t roomId,uint32_t leaderPlayerId,Room& outRoom)
 {
     std::lock_guard<std::mutex> lock(roomManagerMutex_);
 
@@ -293,6 +278,9 @@ bool RoomManager::StartGame(
         member.isPickReady = false;
     }
 
+	room.gamePrepareRemainingSeconds = 20;
+	room.gamePrepareTimerStarted = false;
+
     outRoom = room;
     return true;
 }
@@ -308,10 +296,7 @@ bool RoomManager::IsLeader(uint32_t roomId, uint32_t playerId)
     return it->second.leaderPlayerId == playerId;
 }
 
-bool RoomManager::GetMember(
-    uint32_t roomId,
-    uint32_t playerId,
-    RoomMember& outMember)
+bool RoomManager::GetMember(uint32_t roomId,uint32_t playerId,RoomMember& outMember)
 {
     std::lock_guard<std::mutex> lock(roomManagerMutex_);
 
@@ -333,11 +318,7 @@ bool RoomManager::GetMember(
     return false;
 }
 
-bool RoomManager::GetMemberBySlot(
-    uint32_t roomId,
-    RoomTeam team,
-    uint8_t slotIndex,
-    RoomMember& outMember)
+bool RoomManager::GetMemberBySlot(uint32_t roomId,RoomTeam team,uint8_t slotIndex,RoomMember& outMember)
 {
     std::lock_guard<std::mutex> lock(roomManagerMutex_);
 
@@ -362,12 +343,7 @@ bool RoomManager::GetMemberBySlot(
     return false;
 }
 
-bool RoomManager::MoveMemberToSlot(
-    uint32_t roomId,
-    uint32_t playerId,
-    RoomTeam targetTeam,
-    uint8_t targetSlotIndex,
-    Room& outRoom)
+bool RoomManager::MoveMemberToSlot(uint32_t roomId,uint32_t playerId,RoomTeam targetTeam,uint8_t targetSlotIndex,Room& outRoom)
 {
     std::lock_guard<std::mutex> lock(roomManagerMutex_);
 
@@ -407,11 +383,7 @@ bool RoomManager::MoveMemberToSlot(
     return true;
 }
 
-bool RoomManager::SwapMembers(
-    uint32_t roomId,
-    uint32_t playerAId,
-    uint32_t playerBId,
-    Room& outRoom)
+bool RoomManager::SwapMembers(uint32_t roomId,uint32_t playerAId,uint32_t playerBId,Room& outRoom)
 {
     std::lock_guard<std::mutex> lock(roomManagerMutex_);
 
@@ -449,11 +421,7 @@ bool RoomManager::SwapMembers(
     return true;
 }
 
-bool RoomManager::TransferLeader(
-    uint32_t roomId,
-    uint32_t currentLeaderPlayerId,
-    uint32_t newLeaderPlayerId,
-    Room& outRoom)
+bool RoomManager::TransferLeader(uint32_t roomId,uint32_t currentLeaderPlayerId,uint32_t newLeaderPlayerId,Room& outRoom)
 {
     std::lock_guard<std::mutex> lock(roomManagerMutex_);
 
@@ -490,12 +458,7 @@ bool RoomManager::TransferLeader(
     return true;
 }
 
-bool RoomManager::KickMember(
-    uint32_t roomId,
-    uint32_t leaderPlayerId,
-    uint32_t targetPlayerId,
-    bool& outRoomDeleted,
-    Room& outRoom)
+bool RoomManager::KickMember(uint32_t roomId,uint32_t leaderPlayerId,uint32_t targetPlayerId,bool& outRoomDeleted,Room& outRoom)
 {
     std::lock_guard<std::mutex> lock(roomManagerMutex_);
 
@@ -540,11 +503,7 @@ bool RoomManager::KickMember(
     return true;
 }
 
-bool RoomManager::SetPickHover(
-    uint32_t roomId,
-    uint32_t playerId,
-    int characterId,
-    Room& outRoom)
+bool RoomManager::SetPickHover(uint32_t roomId,uint32_t playerId,int characterId,Room& outRoom)
 {
     std::lock_guard<std::mutex> lock(roomManagerMutex_);
 
@@ -592,12 +551,7 @@ bool RoomManager::SetPickHover(
     return true;
 }
 
-bool RoomManager::LockPick(
-    uint32_t roomId,
-    uint32_t playerId,
-    int characterId,
-    Room& outRoom,
-    uint8_t& outResult)
+bool RoomManager::LockPick(uint32_t roomId,uint32_t playerId,int characterId,Room& outRoom,uint8_t& outResult)
 {
     std::lock_guard<std::mutex> lock(roomManagerMutex_);
 
@@ -677,10 +631,7 @@ bool RoomManager::LockPick(
     return true;
 }
 
-bool RoomManager::SetPickRemainingSeconds(
-    uint32_t roomId,
-    uint16_t remainingSeconds,
-    Room& outRoom)
+bool RoomManager::SetPickRemainingSeconds(uint32_t roomId,uint16_t remainingSeconds,Room& outRoom)
 {
     std::lock_guard<std::mutex> lock(roomManagerMutex_);
 
@@ -702,9 +653,7 @@ bool RoomManager::SetPickRemainingSeconds(
     return true;
 }
 
-bool RoomManager::ForceLockMissingPicks(
-    uint32_t roomId,
-    Room& outRoom)
+bool RoomManager::ForceLockMissingPicks(uint32_t roomId,Room& outRoom)
 {
     std::lock_guard<std::mutex> lock(roomManagerMutex_);
 
@@ -819,10 +768,7 @@ bool RoomManager::ForceLockMissingPicks(
     return true;
 }
 
-bool RoomManager::SetPickReady(
-    uint32_t roomId,
-    uint32_t playerId,
-    Room& outRoom)
+bool RoomManager::SetPickReady(uint32_t roomId,uint32_t playerId,Room& outRoom)
 {
     std::lock_guard<std::mutex> lock(roomManagerMutex_);
 
@@ -875,9 +821,7 @@ bool RoomManager::IsAllPickReady(uint32_t roomId)
     return playMemberCount == 6 && readyCount == 6;
 }
 
-bool RoomManager::TryStartPickTimer(
-    uint32_t roomId,
-    Room& outRoom)
+bool RoomManager::TryStartPickTimer(uint32_t roomId,Room& outRoom)
 {
     std::lock_guard<std::mutex> lock(roomManagerMutex_);
 
@@ -920,6 +864,97 @@ bool RoomManager::TryStartPickTimer(
     return true;
 }
 
+bool RoomManager::SetGameLoadReady(uint32_t roomId, uint32_t playerId, Room& outRoom)
+{
+	std::lock_guard<std::mutex> lock(roomManagerMutex_);
+
+	auto it = rooms_.find(roomId);
+	if (it == rooms_.end())
+		return false;
+
+	Room& room = it->second;
+
+	if (room.state != RoomState::PLAYING)
+		return false;
+
+    for (RoomMember& member : room.members)
+    {
+		if (member.playerId != playerId)
+			continue;
+
+		if (member.team == RoomTeam::OBSERVER)
+			return false;
+
+		member.isGameLoadReady = true;
+		outRoom = room;
+		return true;
+    }
+
+    return false;
+}
+
+bool RoomManager::TryStartGamePrepare(uint32_t roomId, Room& outRoom)
+{
+	std::lock_guard<std::mutex> lock(roomManagerMutex_);
+
+	auto it = rooms_.find(roomId);
+	if (it == rooms_.end())
+		return false;
+
+	Room& room = it->second;
+
+	if (room.state != RoomState::PLAYING)
+		return false;
+
+	if (room.gamePrepareTimerStarted)
+		return false;
+
+	int readyCount = 0;
+	int playMemberCount = 0;
+
+	for (const RoomMember& member : room.members)
+	{
+		if (member.team == RoomTeam::OBSERVER)
+			continue;
+
+		playMemberCount++;
+
+		if (member.isGameLoadReady)
+			readyCount++;
+	}
+
+	if (playMemberCount != 6 || readyCount != 6)
+		return false;
+
+	room.gamePrepareTimerStarted = true;
+	room.gamePrepareRemainingSeconds = 20;
+
+	outRoom = room;
+	return true;
+}
+
+bool RoomManager::SetGamePrepareRemainingSeconds(uint32_t roomId, uint16_t remainingSeconds, Room& outRoom)
+{
+    std::lock_guard<std::mutex> lock(roomManagerMutex_);
+
+    auto it = rooms_.find(roomId);
+    if (it == rooms_.end())
+        return false;
+
+    Room& room = it->second;
+
+    if (room.state != RoomState::PLAYING)
+        return false;
+
+    if (!room.gamePrepareTimerStarted)
+        return false;
+
+    room.gamePrepareRemainingSeconds = remainingSeconds;
+
+    outRoom = room;
+    return true;
+}
+
 int RoomManager::CountTeamMemberUnlocked(const Room& room, RoomTeam team)
 {
     int count = 0;
@@ -944,10 +979,7 @@ bool RoomManager::IsPlayerInRoomUnlocked(const Room& room, uint32_t playerId)
     return false;
 }
 
-bool RoomManager::FindNextSlotUnlocked(
-    const Room& room,
-    RoomTeam& outTeam,
-    uint8_t& outSlotIndex)
+bool RoomManager::FindNextSlotUnlocked(const Room& room,RoomTeam& outTeam,uint8_t& outSlotIndex)
 {
     for (const RoomSlotPosition& pos : ENTER_SLOT_ORDER)
     {
@@ -1007,10 +1039,7 @@ bool RoomManager::IsValidCharacterIdUnlocked(int characterId)
         characterId <= PICK_CHARACTER_MAX_ID;
 }
 
-bool RoomManager::IsCharacterLockedByTeamUnlocked(
-    const Room& room,
-    RoomTeam team,
-    int characterId)
+bool RoomManager::IsCharacterLockedByTeamUnlocked(const Room& room,RoomTeam team,int characterId)
 {
     for (const RoomMember& member : room.members)
     {
@@ -1027,11 +1056,7 @@ bool RoomManager::IsCharacterLockedByTeamUnlocked(
     return false;
 }
 
-void RoomManager::ClearSameHoverCharacterUnlocked(
-    Room& room,
-    RoomTeam team,
-    int characterId,
-    uint32_t exceptPlayerId)
+void RoomManager::ClearSameHoverCharacterUnlocked(Room& room,RoomTeam team,int characterId,uint32_t exceptPlayerId)
 {
     for (RoomMember& member : room.members)
     {
@@ -1049,8 +1074,7 @@ void RoomManager::ClearSameHoverCharacterUnlocked(
     }
 }
 
-int RoomManager::FindLowestAvailableCharacterUnlocked(
-    const bool usedCharacters[4])
+int RoomManager::FindLowestAvailableCharacterUnlocked(const bool usedCharacters[4])
 {
     for (int i = 0; i < PICK_CHARACTER_COUNT; ++i)
     {

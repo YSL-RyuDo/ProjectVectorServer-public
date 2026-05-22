@@ -79,6 +79,10 @@ enum class PacketType : uint16_t
     PKT_SC_MATCH_LOADING_INFO = 46,
     PKT_SC_MATCH_START = 47,
 
+    PKT_CS_GAME_LOAD_READY = 48,
+    PKT_SC_GAME_ALL_READY = 49,
+    PKT_SC_GAME_PREPARE_TIMER = 50,
+
     // ¿Œ∞‘¿”
     PKT_SC_HELLO = 100,
     PKT_SC_SPAWN_PLAYER = 101,
@@ -90,4 +94,10 @@ enum class PacketType : uint16_t
     PKT_CS_HIT = 120,
     PKT_SC_HP_UPDATE = 121,
     PKT_SC_DIE = 122,
+    PKT_SC_AMMO_UPDATE = 123,
+    PKT_CS_WEAPON_SWITCH = 124,
+
+    PKT_SC_ROUND_RESULT = 130,
+    PKT_SC_ROUND_RESET = 131,
+    PKT_SC_MATCH_RESULT = 132,
 };

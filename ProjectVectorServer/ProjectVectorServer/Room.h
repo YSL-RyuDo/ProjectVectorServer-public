@@ -37,6 +37,8 @@ struct RoomMember
     int lockedCharacterId = -1;
     bool isPickLocked = false;
     bool isPickReady = false;
+
+	bool isGameLoadReady = false;
 };
 
 struct Room
@@ -58,4 +60,7 @@ struct Room
     uint16_t pickRemainingSeconds = 20;
     bool pickFinished = false;
     bool pickTimerStarted = false;
+
+    uint16_t gamePrepareRemainingSeconds = 20;
+    bool gamePrepareTimerStarted = false;
 };

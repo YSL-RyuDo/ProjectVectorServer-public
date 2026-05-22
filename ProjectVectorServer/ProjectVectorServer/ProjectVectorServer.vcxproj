@@ -27,6 +27,7 @@
     <ClInclude Include="Room.h" />
     <ClInclude Include="RoomManager.h" />
     <ClInclude Include="Server.h" />
+    <ClInclude Include="ServerWeaponData.h" />
     <ClInclude Include="Session.h" />
     <ClInclude Include="SessionManager.h" />
     <ClInclude Include="UserManager.h" />
@@ -41,6 +42,7 @@
     <ClCompile Include="PacketType.h" />
     <ClCompile Include="RoomManager.cpp" />
     <ClCompile Include="Server.cpp" />
+    <ClCompile Include="ServerWeaponData.cpp" />
     <ClCompile Include="Session.cpp" />
     <ClCompile Include="SessionManager.cpp" />
     <ClCompile Include="UserManager.cpp" />

@@ -188,6 +188,82 @@ void Session::Spawn(float x, float y, float z, float yaw)
     rotationYaw_ = yaw;
 }
 
+void Session::SetHP(int hp)
+{
+    hp_ = hp;
+
+    if (hp_ < 0)
+        hp_ = 0;
+
+    if (hp_ > maxHp_)
+        hp_ = maxHp_;
+}
+
+void Session::SetBarrier(int barrier)
+{
+    barrier_ = barrier;
+
+    if (barrier_ < 0)
+        barrier_ = 0;
+
+    if (barrier_ > maxBarrier_)
+        barrier_ = maxBarrier_;
+}
+
+void Session::InitRoundState()
+{
+    maxHp_ = 100;
+    hp_ = maxHp_;
+
+    maxBarrier_ = 0;
+    barrier_ = 0;
+
+    isDead_ = false;
+
+    weapons_.clear();
+
+    // 권총 지급
+    GiveWeapon(4, 12, 24);
+
+    // 나이프 지급
+    GiveWeapon(3, 0, 0);
+
+    // 시작 장비는 권총
+    currentWeaponId_ = 4;
+}
+
+void Session::GiveWeapon(int weaponId, int magAmmo, int reserveAmmo)
+{
+    PlayerWeaponState state{};
+    state.weaponId = weaponId;
+    state.magAmmo = magAmmo;
+    state.reserveAmmo = reserveAmmo;
+    state.owned = true;
+    state.isReloading = false;
+
+    weapons_[weaponId] = state;
+}
+
+bool Session::HasWeapon(int weaponId) const
+{
+    auto it = weapons_.find(weaponId);
+
+    if (it == weapons_.end())
+        return false;
+
+    return it->second.owned;
+}
+
+PlayerWeaponState* Session::GetWeaponState(int weaponId)
+{
+    auto it = weapons_.find(weaponId);
+
+    if (it == weapons_.end())
+        return nullptr;
+
+    return &it->second;
+}
+
 void Session::SendHello(uint32_t myId)
 {
     SC_Hello pkt{};
@@ -217,16 +293,34 @@ void Session::Damage(int amount)
     if (hp_ <= 0)
         return;
 
-    hp_ -= amount;
+    if (amount <= 0)
+        return;
 
-    if (hp_ < 0)
+    if (barrier_ > 0)
+    {
+        int absorbed = std::min(barrier_, amount);
+        barrier_ -= absorbed;
+        amount -= absorbed;
+    }
+
+    if (amount > 0)
+    {
+        hp_ -= amount;
+
+        if (hp_ < 0)
+            hp_ = 0;
+    }
+
+    if (hp_ <= 0)
+    {
         hp_ = 0;
+        isDead_ = true;
+    }
 }
 
 void Session::Respawn()
 {
-    hp_ = 100;
-    isDead_ = false;
+    InitRoundState();
 
     position_.x = 0.f;
     position_.y = 1.f;

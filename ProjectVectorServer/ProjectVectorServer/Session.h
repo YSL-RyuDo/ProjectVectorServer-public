@@ -16,6 +16,16 @@ enum class SessionState
     IN_GAME
 };
 
+struct PlayerWeaponState
+{
+    int weaponId = 0;
+    int magAmmo = 0;
+    int reserveAmmo = 0;
+
+    bool owned = false;
+    bool isReloading = false;
+};
+
 class Session
 {
 public:
@@ -65,11 +75,24 @@ public:
     void Spawn(float x, float y, float z, float yaw);
 
     int GetHP() const { return hp_; }
-    void SetHP(int hp) { hp_ = hp; }
+    int GetMaxHP() const { return maxHp_; }
+
+    int GetBarrier() const { return barrier_; }
+    int GetMaxBarrier() const { return maxBarrier_; }
+
+    void SetHP(int hp);
+    void SetBarrier(int barrier);
+
     void Damage(int amount);
 
     bool IsDead() const { return hp_ <= 0; }
+    void InitRoundState();
+    int GetCurrentWeaponId() const { return currentWeaponId_; }
+    void SetCurrentWeaponId(int weaponId) { currentWeaponId_ = weaponId; }
 
+    bool HasWeapon(int weaponId) const;
+    PlayerWeaponState* GetWeaponState(int weaponId);
+    void GiveWeapon(int weaponId, int magAmmo, int reserveAmmo);
 
     void Respawn();
 private:
@@ -89,6 +112,14 @@ private:
     Vector3 position_{ 0.f, 1.f, 0.f };
     float rotationYaw_ = 0.f;
 
+    int maxHp_ = 100;
     int hp_ = 100;
+
+    int maxBarrier_ = 0;
+    int barrier_ = 0;
+
     bool isDead_ = false;
+
+    int currentWeaponId_ = 4; // ±âº» ±ÇÃÑ
+    std::unordered_map<int, PlayerWeaponState> weapons_;
 };

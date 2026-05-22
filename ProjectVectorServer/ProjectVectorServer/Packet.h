@@ -19,6 +19,11 @@ ROOM_A_TEAM_COUNT + ROOM_B_TEAM_COUNT + ROOM_OBSERVER_COUNT;
 constexpr int MATCH_MEMBER_NICKNAME_LEN = 20;
 constexpr int MATCH_TEAM_MEMBER_COUNT = 3;
 
+constexpr int GAME_MEMBER_NICKNAME_LEN = 20;
+constexpr int USER_ID_LEN = 20;
+constexpr int GAME_MEMBER_COUNT = 6;
+constexpr int GAME_READY_MEMBER_COUNT = 6;
+constexpr int GAME_READY_NICKNAME_LEN = 20;
 #pragma pack(push, 1)
 
 struct PacketHeader
@@ -542,6 +547,41 @@ struct SC_MatchStart
     uint32_t roomId;
 };
 
+struct CS_GameLoadReady
+{
+    PacketHeader header;
+};
+
+struct GameReadyMemberInfo
+{
+    uint32_t playerId;
+    char userId[USER_ID_LEN];
+    char nickname[GAME_MEMBER_NICKNAME_LEN];
+
+    uint8_t team;       // 0 = A, 1 = B
+    uint8_t slotIndex;  // 0, 1, 2
+
+    int32_t characterId;
+	int32_t rankImageId;
+};
+
+struct SC_GameAllReady
+{
+    PacketHeader header;
+
+    uint32_t roomId;
+    uint16_t prepareSeconds;
+
+    uint8_t memberCount;
+    GameReadyMemberInfo members[GAME_MEMBER_COUNT];
+};
+
+struct SC_GamePrepareTimer
+{
+    PacketHeader header;
+    uint16_t remainingSeconds;
+};
+
 struct SC_Hello
 {
     PacketHeader header;
@@ -587,14 +627,18 @@ struct CS_Hit
 {
     PacketHeader header;
     uint32_t targetId;
-    int damage;
 };
 
 struct SC_HPUpdate
 {
     PacketHeader header;
     uint32_t playerId;
+
     int hp;
+    int barrier;
+
+    int maxHp;
+    int maxBarrier;
 };
 
 struct SC_Die
@@ -603,4 +647,68 @@ struct SC_Die
     uint32_t playerId;
 };
 
+struct SC_AmmoUpdate
+{
+    PacketHeader header;
+    int weaponId;
+    int magAmmo;
+    int reserveAmmo;
+};
+
+struct CS_WeaponSwitch
+{
+    PacketHeader header;
+    int weaponId;
+};
+
+struct SC_RoundResult
+{
+    PacketHeader header;
+
+    uint8_t winnerTeam;     // 0 = A, 1 = B
+    uint8_t scoreA;
+    uint8_t scoreB;
+    uint8_t currentRound;
+
+    uint8_t matchEnd;       // 0 = 다음 라운드 있음, 1 = 매치 종료
+    uint16_t delaySeconds;  // 예: 10초
+};
+
+struct RoundResetMemberInfo
+{
+    uint32_t playerId;
+
+    uint8_t team;       // 0 = A, 1 = B
+    uint8_t slotIndex;  // 0, 1, 2
+
+    int hp;
+    int barrier;
+    int maxHp;
+    int maxBarrier;
+
+    int currentWeaponId;
+    int magAmmo;
+    int reserveAmmo;
+};
+
+struct SC_RoundReset
+{
+    PacketHeader header;
+
+    uint8_t currentRound;
+    uint8_t scoreA;
+    uint8_t scoreB;
+
+    uint8_t memberCount;
+    RoundResetMemberInfo members[GAME_MEMBER_COUNT];
+};
+
+struct SC_MatchResult
+{
+    PacketHeader header;
+
+    uint8_t winnerTeam; // 0 = A, 1 = B
+    uint8_t scoreA;
+    uint8_t scoreB;
+};
 #pragma pack(pop)

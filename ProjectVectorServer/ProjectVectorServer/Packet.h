@@ -678,7 +678,8 @@ struct RoundResetMemberInfo
 {
     uint32_t playerId;
 
-    uint8_t team;       // 0 = A, 1 = B
+    uint8_t actualTeam; // 실제 팀: A=0, B=1
+    uint8_t spawnTeam;  // 스폰 팀: 공격스폰=0, 수비스폰=1
     uint8_t slotIndex;  // 0, 1, 2
 
     int hp;
@@ -710,5 +711,68 @@ struct SC_MatchResult
     uint8_t winnerTeam; // 0 = A, 1 = B
     uint8_t scoreA;
     uint8_t scoreB;
+};
+
+struct CS_Reload
+{
+    PacketHeader header;
+};
+
+struct CS_Fire
+{
+    PacketHeader header;
+};
+
+struct MatchResultMemberInfo
+{
+    uint32_t playerId;
+
+    uint8_t team;
+    uint8_t slotIndex;
+    int characterId;
+
+    char nickname[20];
+
+    int kills;
+    int deaths;
+    int assists;
+
+    int firstHalfKills;
+    int firstHalfDeaths;
+    int firstHalfAssists;
+
+    int secondHalfKills;
+    int secondHalfDeaths;
+    int secondHalfAssists;
+
+    int overtimeKills;
+    int overtimeDeaths;
+    int overtimeAssists;
+
+    uint8_t isMvp;
+};
+
+struct SC_MatchResultDetail
+{
+    PacketHeader header;
+
+    uint8_t winnerTeam;
+    uint8_t scoreA;
+    uint8_t scoreB;
+
+    uint8_t memberCount;
+    MatchResultMemberInfo members[6];
+};
+
+struct SC_ResultLeaveDone
+{
+    PacketHeader header;
+    uint32_t roomId;
+};
+
+struct CS_RoomStateRequest
+{
+    PacketHeader header;
+    uint32_t roomId;
 };
 #pragma pack(pop)

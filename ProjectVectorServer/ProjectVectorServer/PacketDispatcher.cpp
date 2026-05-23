@@ -23,9 +23,15 @@ namespace
     constexpr uint16_t PREPARE_TIME_SECONDS = 10;
     constexpr uint16_t GAME_PREPARE_SECONDS = 20;
     constexpr uint16_t ROUND_END_DELAY_SECONDS = 10;
-    // 지금은 2점 선승.
-    // 나중에 17라운드 승리 조건으로 바꾸고 싶으면 17로 바꾸기
-    constexpr uint8_t MATCH_WIN_ROUND_COUNT = 2;
+
+    // 정규전 기준 3선승
+    constexpr uint8_t MATCH_WIN_ROUND_COUNT = 3;
+
+    // 1~2라운드 후 공수 전환
+    constexpr uint8_t SIDE_SWAP_AFTER_ROUND = 2;
+
+    // 2:2 이후 5라운드부터 듀스
+    constexpr uint8_t OVERTIME_START_ROUND = 5;
 
     struct MatchRuntimeState
     {
@@ -33,6 +39,7 @@ namespace
         uint8_t scoreA = 0;
         uint8_t scoreB = 0;
 
+        bool isOvertime = false;
         bool roundResolving = false;
         bool matchEnded = false;
     };
@@ -43,6 +50,9 @@ namespace
     std::mutex g_gameLoadReadyMutex;
     std::unordered_map<uint32_t, std::unordered_set<uint32_t>> g_gameLoadReadyPlayers;
     std::unordered_set<uint32_t> g_gamePrepareStartedRooms;
+
+    std::mutex g_resultLeaveMutex;
+    std::unordered_map<uint32_t, std::unordered_set<uint32_t>> g_resultLeavePlayers;
 
     void TryResolveRoundByElimination(uint32_t roomId);
     void StartRoundEndThread(uint32_t roomId, RoomTeam winnerTeam, bool matchEnd);
@@ -56,6 +66,7 @@ namespace
         state.currentRound = 1;
         state.scoreA = 0;
         state.scoreB = 0;
+        state.isOvertime = false;
         state.roundResolving = false;
         state.matchEnded = false;
 
@@ -911,6 +922,9 @@ namespace
             if (playerSession == nullptr)
                 continue;
 
+            playerSession->ResetMatchStats();
+            playerSession->ClearLastDamager();
+            playerSession->ClearAssistDamageRecords();
             playerSession->InitRoundState();
             playerSession->SetState(SessionState::IN_GAME);
         }
@@ -1076,29 +1090,154 @@ namespace
             << std::endl;
     }
 
-    void BroadcastMatchResult(
+    int GetKdaScore(const PlayerMatchStats& stats)
+    {
+        return stats.kills * 100 + stats.assists * 50 - stats.deaths * 20;
+    }
+
+    void BroadcastMatchResultDetail(
         uint32_t roomId,
         RoomTeam winnerTeam,
         uint8_t scoreA,
         uint8_t scoreB)
     {
-        SC_MatchResult out{};
+        Room room{};
+
+        if (!RoomManager::Instance().GetRoom(roomId, room))
+            return;
+
+        SC_MatchResultDetail out{};
 
         out.header.size = sizeof(out);
-        out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_MATCH_RESULT);
+        out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_MATCH_RESULT_DETAIL);
 
         out.winnerTeam = static_cast<uint8_t>(winnerTeam);
         out.scoreA = scoreA;
         out.scoreB = scoreB;
 
+        int bestScore = -999999;
+        uint32_t mvpPlayerId = 0;
+
+        for (const RoomMember& member : room.members)
+        {
+            if (member.team == RoomTeam::OBSERVER)
+                continue;
+
+            if (member.team != winnerTeam)
+                continue;
+
+            Session* s = SessionManager::Instance().Find(member.playerId);
+            if (s == nullptr)
+                continue;
+
+            int score = GetKdaScore(s->GetMatchStats());
+
+            if (score > bestScore)
+            {
+                bestScore = score;
+                mvpPlayerId = member.playerId;
+            }
+        }
+
+        uint8_t count = 0;
+
+        for (const RoomMember& member : room.members)
+        {
+            if (member.team == RoomTeam::OBSERVER)
+                continue;
+
+            if (count >= GAME_MEMBER_COUNT)
+                break;
+
+            Session* s = SessionManager::Instance().Find(member.playerId);
+            if (s == nullptr)
+                continue;
+
+            const PlayerMatchStats& stats = s->GetMatchStats();
+
+            MatchResultMemberInfo& info = out.members[count];
+
+            info.playerId = member.playerId;
+            info.team = static_cast<uint8_t>(member.team);
+            info.slotIndex = member.slotIndex;
+            info.characterId = member.lockedCharacterId;
+
+            memset(info.nickname, 0, sizeof(info.nickname));
+            strncpy_s(info.nickname, sizeof(info.nickname), member.nickname.c_str(), _TRUNCATE);
+
+            info.kills = stats.kills;
+            info.deaths = stats.deaths;
+            info.assists = stats.assists;
+
+            info.firstHalfKills = stats.firstHalfKills;
+            info.firstHalfDeaths = stats.firstHalfDeaths;
+            info.firstHalfAssists = stats.firstHalfAssists;
+
+            info.secondHalfKills = stats.secondHalfKills;
+            info.secondHalfDeaths = stats.secondHalfDeaths;
+            info.secondHalfAssists = stats.secondHalfAssists;
+
+            info.overtimeKills = stats.overtimeKills;
+            info.overtimeDeaths = stats.overtimeDeaths;
+            info.overtimeAssists = stats.overtimeAssists;
+
+            info.isMvp = member.playerId == mvpPlayerId ? 1 : 0;
+
+            count++;
+        }
+
+        out.memberCount = count;
+
         BroadcastToRoom(roomId, &out);
 
-        std::cout << "[MATCH RESULT] roomId="
+        std::cout << "[MATCH RESULT DETAIL] roomId="
             << roomId
-            << " winnerTeam=" << static_cast<int>(winnerTeam)
-            << " scoreA=" << static_cast<int>(scoreA)
-            << " scoreB=" << static_cast<int>(scoreB)
+            << " winnerTeam=" << static_cast<int>(out.winnerTeam)
+            << " scoreA=" << static_cast<int>(out.scoreA)
+            << " scoreB=" << static_cast<int>(out.scoreB)
+            << " memberCount=" << static_cast<int>(out.memberCount)
+            << " mvpPlayerId=" << mvpPlayerId
             << std::endl;
+    }
+
+    
+
+    bool IsATeamAttackRound(uint8_t currentRound)
+    {
+        // 1~2라운드: A팀 공격
+        if (currentRound <= SIDE_SWAP_AFTER_ROUND)
+            return true;
+
+        // 3~4라운드: A팀 수비
+        if (currentRound < OVERTIME_START_ROUND)
+            return false;
+
+        // 5라운드부터 듀스
+        // 5R A공격, 6R A수비, 7R A공격, 8R A수비 ...
+        return ((currentRound - OVERTIME_START_ROUND) % 2) == 0;
+    }
+
+    RoomTeam GetSpawnRoleTeam(RoomTeam originalTeam, uint8_t currentRound)
+    {
+        bool aTeamAttack = IsATeamAttackRound(currentRound);
+
+        // 주의:
+        // 여기서 반환하는 team은 실제 팀 변경이 아니다.
+        // 클라이언트 MapInfo에서 어떤 스폰 포인트를 쓸지 알려주는 "스폰 역할 team"이다.
+        // 0 = AttackSpawnPoints
+        // 1 = DefendSpawnPoints
+
+        if (originalTeam == RoomTeam::A)
+        {
+            return aTeamAttack ? RoomTeam::A : RoomTeam::B;
+        }
+
+        if (originalTeam == RoomTeam::B)
+        {
+            return aTeamAttack ? RoomTeam::B : RoomTeam::A;
+        }
+
+        return originalTeam;
     }
 
     void ResetRound(uint32_t roomId)
@@ -1146,12 +1285,25 @@ namespace
                 continue;
 
             playerSession->InitRoundState();
+            playerSession->ClearLastDamager();
+            playerSession->ClearAssistDamageRecords();
 
             RoundResetMemberInfo& info = out.members[count];
 
             info.playerId = playerSession->GetPlayerId();
 
-            info.team = static_cast<uint8_t>(member.team);
+            RoomTeam spawnRoleTeam = GetSpawnRoleTeam(
+                member.team,
+                out.currentRound
+            );
+
+            // 실제 팀은 절대 바꾸지 않는다.
+            // A팀은 항상 블루, B팀은 항상 레드.
+            info.actualTeam = static_cast<uint8_t>(member.team);
+
+            // 이번 라운드에 어디서 스폰할지만 따로 보낸다.
+            info.spawnTeam = static_cast<uint8_t>(spawnRoleTeam);
+
             info.slotIndex = member.slotIndex;
 
             info.hp = playerSession->GetHP();
@@ -1217,7 +1369,7 @@ namespace
 
                 if (matchEnd)
                 {
-                    BroadcastMatchResult(
+                    BroadcastMatchResultDetail(
                         roomId,
                         winnerTeam,
                         scoreA,
@@ -1260,6 +1412,22 @@ namespace
         return teamPlayerCount > 0 && aliveCount == 0;
     }
 
+    bool ShouldEndMatch(uint8_t scoreA, uint8_t scoreB, bool isOvertime)
+    {
+        uint8_t highScore = scoreA > scoreB ? scoreA : scoreB;
+        uint8_t lowScore = scoreA > scoreB ? scoreB : scoreA;
+
+        if (!isOvertime)
+        {
+            // 정규전에서는 3:0 또는 3:1이면 종료
+            return highScore >= MATCH_WIN_ROUND_COUNT;
+        }
+
+        // 듀스에서는 2점 차가 나야 종료
+        return highScore >= MATCH_WIN_ROUND_COUNT &&
+            (highScore - lowScore) >= 2;
+    }
+
     void TryResolveRoundByElimination(uint32_t roomId)
     {
         Room room{};
@@ -1287,6 +1455,7 @@ namespace
         uint8_t scoreB = 0;
         uint8_t currentRound = 1;
         bool matchEnd = false;
+        bool isOvertime = false;
 
         {
             std::lock_guard<std::mutex> lock(g_matchStateMutex);
@@ -1303,15 +1472,23 @@ namespace
             else
                 state.scoreB++;
 
+            // 2:2가 되는 순간부터 듀스 상태
+            if (state.scoreA == 2 && state.scoreB == 2)
+            {
+                state.isOvertime = true;
+                std::cout << "[OVERTIME START] roomId=" << roomId << std::endl;
+            }
+
             currentRound = state.currentRound;
             scoreA = state.scoreA;
             scoreB = state.scoreB;
+            isOvertime = state.isOvertime;
 
-            if (state.scoreA >= MATCH_WIN_ROUND_COUNT ||
-                state.scoreB >= MATCH_WIN_ROUND_COUNT)
+            matchEnd = ShouldEndMatch(scoreA, scoreB, isOvertime);
+
+            if (matchEnd)
             {
                 state.matchEnded = true;
-                matchEnd = true;
             }
         }
 
@@ -1330,6 +1507,8 @@ namespace
             matchEnd
         );
     }
+
+    
 }
 
 void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
@@ -1991,6 +2170,44 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             break;
         }
 
+        {
+            std::lock_guard<std::mutex> lock(g_resultLeaveMutex);
+
+            auto it = g_resultLeavePlayers.find(roomId);
+            if (it != g_resultLeavePlayers.end())
+            {
+                int playMemberCount = 0;
+
+                for (const RoomMember& member : room.members)
+                {
+                    if (member.team == RoomTeam::OBSERVER)
+                        continue;
+
+                    if (member.slotIndex >= 3)
+                        continue;
+
+                    playMemberCount++;
+
+                    if (it->second.count(member.playerId) == 0)
+                    {
+                        std::cout << "[ROOM GAME START BLOCK] not all returned from result. "
+                            << "roomId=" << roomId
+                            << " missingPlayerId=" << member.playerId
+                            << std::endl;
+
+                        SendRoomGameStartResult(session, RoomGameStartResult::NOT_ENOUGH_PLAYERS);
+                        return;
+                    }
+                }
+
+                if (playMemberCount != 6)
+                {
+                    SendRoomGameStartResult(session, RoomGameStartResult::NOT_ENOUGH_PLAYERS);
+                    return;
+                }
+            }
+        }
+
         if (!RoomManager::Instance().CanStartGame(roomId))
         {
             SendRoomGameStartResult(session, RoomGameStartResult::NOT_ENOUGH_PLAYERS);
@@ -2008,6 +2225,11 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         {
             SendRoomGameStartResult(session, RoomGameStartResult::FAILED);
             break;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(g_resultLeaveMutex);
+            g_resultLeavePlayers.erase(roomId);
         }
 
         BroadcastRoomGameStartResult(updatedRoom, RoomGameStartResult::SUCCESS);
@@ -2891,20 +3113,18 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
         if (weaponData->weaponType != ServerWeaponType::Knife)
         {
-            if (weaponState->magAmmo <= 0)
+            if (weaponState->magAmmo < 0)
             {
-                std::cout << "[HIT BLOCK] no ammo. playerId="
-                    << session->GetPlayerId()
-                    << " weaponId=" << weaponId
-                    << std::endl;
-
                 SendAmmoUpdate(session, *weaponState);
                 break;
             }
-
-            weaponState->magAmmo -= 1;
-            SendAmmoUpdate(session, *weaponState);
         }
+        target->SetLastDamager(session->GetPlayerId());
+
+        target->AddAssistDamageRecord(
+            session->GetPlayerId(),
+            weaponData->damage
+        );
 
         target->Damage(weaponData->damage);
 
@@ -2967,6 +3187,236 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         break;
     }
 
+    case PacketType::PKT_CS_RELOAD:
+    {
+        int weaponId = session->GetCurrentWeaponId();
+
+        PlayerWeaponState* weaponState = session->GetWeaponState(weaponId);
+        if (weaponState == nullptr)
+        {
+            std::cout << "[RELOAD BLOCK] weapon state null. playerId="
+                << session->GetPlayerId()
+                << " weaponId=" << weaponId
+                << std::endl;
+            break;
+        }
+
+        const ServerWeaponData* weaponData = ServerWeaponTable::Find(weaponId);
+        if (weaponData == nullptr)
+        {
+            std::cout << "[RELOAD BLOCK] weapon data null. weaponId="
+                << weaponId
+                << std::endl;
+            break;
+        }
+
+        if (weaponData->weaponType == ServerWeaponType::Knife)
+        {
+            std::cout << "[RELOAD BLOCK] knife cannot reload. playerId="
+                << session->GetPlayerId()
+                << std::endl;
+            break;
+        }
+
+        if (weaponState->magAmmo >= weaponData->magSize)
+        {
+            SendAmmoUpdate(session, *weaponState);
+            break;
+        }
+
+        if (weaponState->reserveAmmo <= 0)
+        {
+            SendAmmoUpdate(session, *weaponState);
+            break;
+        }
+
+        int needAmmo = weaponData->magSize - weaponState->magAmmo;
+        int reloadAmount = std::min(needAmmo, weaponState->reserveAmmo);
+
+        weaponState->magAmmo += reloadAmount;
+        weaponState->reserveAmmo -= reloadAmount;
+
+        SendAmmoUpdate(session, *weaponState);
+
+        std::cout << "[RELOAD APPLY] playerId="
+            << session->GetPlayerId()
+            << " weaponId=" << weaponId
+            << " ammo=" << weaponState->magAmmo
+            << "/" << weaponState->reserveAmmo
+            << std::endl;
+
+        break;
+    }
+
+    case PacketType::PKT_CS_FIRE:
+    {
+        if (session->GetState() != SessionState::IN_GAME)
+        {
+            std::cout << "[FIRE BLOCK] not in game. playerId="
+                << session->GetPlayerId()
+                << std::endl;
+            break;
+        }
+
+        int weaponId = session->GetCurrentWeaponId();
+
+        if (!session->HasWeapon(weaponId))
+        {
+            std::cout << "[FIRE BLOCK] weapon not owned. playerId="
+                << session->GetPlayerId()
+                << " weaponId=" << weaponId
+                << std::endl;
+            break;
+        }
+
+        PlayerWeaponState* weaponState = session->GetWeaponState(weaponId);
+        if (weaponState == nullptr)
+        {
+            std::cout << "[FIRE BLOCK] weapon state null. playerId="
+                << session->GetPlayerId()
+                << " weaponId=" << weaponId
+                << std::endl;
+            break;
+        }
+
+        const ServerWeaponData* weaponData = ServerWeaponTable::Find(weaponId);
+        if (weaponData == nullptr)
+        {
+            std::cout << "[FIRE BLOCK] weapon data null. weaponId="
+                << weaponId
+                << std::endl;
+            break;
+        }
+
+        if (weaponData->weaponType == ServerWeaponType::Knife)
+        {
+            SendAmmoUpdate(session, *weaponState);
+            break;
+        }
+
+        if (weaponState->magAmmo <= 0)
+        {
+            std::cout << "[FIRE BLOCK] no ammo. playerId="
+                << session->GetPlayerId()
+                << " weaponId=" << weaponId
+                << std::endl;
+
+            SendAmmoUpdate(session, *weaponState);
+            break;
+        }
+
+        weaponState->magAmmo -= 1;
+
+        SendAmmoUpdate(session, *weaponState);
+
+        std::cout << "[FIRE APPLY] playerId="
+            << session->GetPlayerId()
+            << " weaponId=" << weaponId
+            << " ammo=" << weaponState->magAmmo
+            << "/" << weaponState->reserveAmmo
+            << std::endl;
+
+        break;
+    }
+
+    case PacketType::PKT_CS_RESULT_LEAVE:
+    {
+        uint32_t roomId = session->GetCurrentRoomId();
+
+        if (roomId == 0)
+        {
+            std::cout << "[RESULT LEAVE BLOCK] roomId is 0 playerId="
+                << session->GetPlayerId()
+                << std::endl;
+            break;
+        }
+
+        Room updatedRoom{};
+
+        bool ok = RoomManager::Instance().FinishGameAndReturnRoom(
+            roomId,
+            updatedRoom
+        );
+
+        if (!ok)
+        {
+            std::cout << "[RESULT LEAVE BLOCK] room not found roomId="
+                << roomId
+                << std::endl;
+            break;
+        }
+
+        session->SetState(SessionState::IN_ROOM);
+
+        SC_ResultLeaveDone out{};
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_RESULT_LEAVE_DONE);
+        out.roomId = roomId;
+
+        session->Send(&out);
+
+        BroadcastRoomState(updatedRoom);
+
+        std::cout << "[RESULT LEAVE] playerId="
+            << session->GetPlayerId()
+            << " roomId=" << roomId
+            << " returnRoomState=WAITING"
+            << std::endl;
+
+        break;
+    }
+
+    case PacketType::PKT_CS_ROOM_STATE_REQUEST:
+    {
+        auto* pkt = reinterpret_cast<CS_RoomStateRequest*>(header);
+
+        uint32_t roomId = pkt->roomId;
+
+        Room room{};
+        if (!RoomManager::Instance().GetRoom(roomId, room))
+        {
+            std::cout << "[ROOM STATE REQUEST FAIL] room not found roomId="
+                << roomId
+                << std::endl;
+            break;
+        }
+
+        bool foundMember = false;
+
+        for (const RoomMember& member : room.members)
+        {
+            if (member.playerId == session->GetPlayerId())
+            {
+                foundMember = true;
+                break;
+            }
+        }
+
+        if (!foundMember)
+        {
+            std::cout << "[ROOM STATE REQUEST FAIL] player not in room playerId="
+                << session->GetPlayerId()
+                << " roomId=" << roomId
+                << std::endl;
+            break;
+        }
+
+        session->SetState(SessionState::IN_ROOM);
+        session->SetCurrentRoomId(roomId);
+
+        SC_RoomState out{};
+        FillRoomStatePacket(out, room);
+
+        session->Send(&out);
+
+        std::cout << "[ROOM STATE REQUEST OK] playerId="
+            << session->GetPlayerId()
+            << " roomId=" << roomId
+            << std::endl;
+
+        break;
+    }
+
     default:
     {
         std::cout << "[UNHANDLED PACKET] type=" << (uint16_t)type
@@ -2975,6 +3425,84 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         break;
     }
     }
+}
+
+void AddKillStatByRound(Session* player, uint32_t roomId)
+{
+    if (player == nullptr)
+        return;
+
+    PlayerMatchStats& stats = player->GetMatchStats();
+
+    stats.kills++;
+
+    uint8_t currentRound = 1;
+
+    {
+        std::lock_guard<std::mutex> lock(g_matchStateMutex);
+        auto it = g_matchStates.find(roomId);
+        if (it != g_matchStates.end())
+            currentRound = it->second.currentRound;
+    }
+
+    if (currentRound <= 2)
+        stats.firstHalfKills++;
+    else if (currentRound <= 4)
+        stats.secondHalfKills++;
+    else
+        stats.overtimeKills++;
+}
+
+void AddDeathStatByRound(Session* player, uint32_t roomId)
+{
+    if (player == nullptr)
+        return;
+
+    PlayerMatchStats& stats = player->GetMatchStats();
+
+    stats.deaths++;
+
+    uint8_t currentRound = 1;
+
+    {
+        std::lock_guard<std::mutex> lock(g_matchStateMutex);
+        auto it = g_matchStates.find(roomId);
+        if (it != g_matchStates.end())
+            currentRound = it->second.currentRound;
+    }
+
+    if (currentRound <= 2)
+        stats.firstHalfDeaths++;
+    else if (currentRound <= 4)
+        stats.secondHalfDeaths++;
+    else
+        stats.overtimeDeaths++;
+}
+
+void AddAssistStatByRound(Session* player, uint32_t roomId)
+{
+    if (player == nullptr)
+        return;
+
+    PlayerMatchStats& stats = player->GetMatchStats();
+
+    stats.assists++;
+
+    uint8_t currentRound = 1;
+
+    {
+        std::lock_guard<std::mutex> lock(g_matchStateMutex);
+        auto it = g_matchStates.find(roomId);
+        if (it != g_matchStates.end())
+            currentRound = it->second.currentRound;
+    }
+
+    if (currentRound <= 2)
+        stats.firstHalfAssists++;
+    else if (currentRound <= 4)
+        stats.secondHalfAssists++;
+    else
+        stats.overtimeAssists++;
 }
 
 void PacketDispatcher::HandleDeath(Session* target)
@@ -2988,6 +3516,53 @@ void PacketDispatcher::HandleDeath(Session* target)
     diePkt.header.size = sizeof(diePkt);
     diePkt.header.type = static_cast<uint16_t>(PacketType::PKT_SC_DIE);
     diePkt.playerId = target->GetPlayerId();
+
+    constexpr int ASSIST_VALID_SECONDS = 10;
+
+    uint32_t killerId = target->GetLastDamager();
+
+    Session* killer = SessionManager::Instance().Find(killerId);
+
+    if (killer != nullptr && killer != target)
+    {
+        AddKillStatByRound(killer, roomId);
+        AddDeathStatByRound(target, roomId);
+
+        std::vector<uint32_t> assistPlayerIds =
+            target->GetAssistPlayerIds(killerId, ASSIST_VALID_SECONDS);
+
+        for (uint32_t assistPlayerId : assistPlayerIds)
+        {
+            Session* assister = SessionManager::Instance().Find(assistPlayerId);
+
+            if (assister == nullptr)
+                continue;
+
+            if (assister == killer)
+                continue;
+
+            if (assister == target)
+                continue;
+
+            AddAssistStatByRound(assister, roomId);
+
+            std::cout << "[ASSIST UPDATE] assister="
+                << assister->GetPlayerId()
+                << " target=" << target->GetPlayerId()
+                << std::endl;
+        }
+
+        std::cout << "[KDA UPDATE] killer="
+            << killer->GetPlayerId()
+            << " target=" << target->GetPlayerId()
+            << std::endl;
+    }
+    else
+    {
+        AddDeathStatByRound(target, roomId);
+    }
+
+    target->ClearAssistDamageRecords();
 
     BroadcastToRoom(roomId, &diePkt);
 

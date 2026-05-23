@@ -26,6 +26,32 @@ struct PlayerWeaponState
     bool isReloading = false;
 };
 
+struct PlayerMatchStats
+{
+    int kills = 0;
+    int deaths = 0;
+    int assists = 0;
+
+    int firstHalfKills = 0;
+    int firstHalfDeaths = 0;
+    int firstHalfAssists = 0;
+
+    int secondHalfKills = 0;
+    int secondHalfDeaths = 0;
+    int secondHalfAssists = 0;
+
+    int overtimeKills = 0;
+    int overtimeDeaths = 0;
+    int overtimeAssists = 0;
+};
+
+struct AssistDamageRecord
+{
+    uint32_t attackerPlayerId = 0;
+    int damage = 0;
+    std::chrono::steady_clock::time_point lastHitTime;
+};
+
 class Session
 {
 public:
@@ -95,6 +121,17 @@ public:
     void GiveWeapon(int weaponId, int magAmmo, int reserveAmmo);
 
     void Respawn();
+
+    PlayerMatchStats& GetMatchStats() { return matchStats_; }
+    void ResetMatchStats() { matchStats_ = PlayerMatchStats{}; }
+
+    void SetLastDamager(uint32_t playerId) { lastDamagerPlayerId_ = playerId; }
+    uint32_t GetLastDamager() const { return lastDamagerPlayerId_; }
+    void ClearLastDamager() { lastDamagerPlayerId_ = 0; }
+
+    void AddAssistDamageRecord(uint32_t attackerPlayerId, int damage);
+    std::vector<uint32_t> GetAssistPlayerIds(uint32_t killerPlayerId, int validSeconds) const;
+    void ClearAssistDamageRecords();
 private:
     void ProcessPackets();
 
@@ -122,4 +159,8 @@ private:
 
     int currentWeaponId_ = 4; // ±âº» ±ÇÃÑ
     std::unordered_map<int, PlayerWeaponState> weapons_;
+
+    PlayerMatchStats matchStats_;
+    uint32_t lastDamagerPlayerId_ = 0;
+    std::unordered_map<uint32_t, AssistDamageRecord> assistDamageRecords_;
 };

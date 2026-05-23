@@ -1084,3 +1084,35 @@ int RoomManager::FindLowestAvailableCharacterUnlocked(const bool usedCharacters[
 
     return -1;
 }
+
+bool RoomManager::FinishGameAndReturnRoom(uint32_t roomId, Room& outRoom)
+{
+    std::lock_guard<std::mutex> lock(roomManagerMutex_);
+
+    auto it = rooms_.find(roomId);
+    if (it == rooms_.end())
+        return false;
+
+    Room& room = it->second;
+
+    room.state = RoomState::WAITING;
+
+    room.pickRemainingSeconds = 20;
+    room.pickFinished = false;
+    room.pickTimerStarted = false;
+
+    room.gamePrepareRemainingSeconds = 20;
+    room.gamePrepareTimerStarted = false;
+
+    for (RoomMember& member : room.members)
+    {
+        member.hoverCharacterId = -1;
+        member.lockedCharacterId = -1;
+        member.isPickLocked = false;
+        member.isPickReady = false;
+        member.isGameLoadReady = false;
+    }
+
+    outRoom = room;
+    return true;
+}

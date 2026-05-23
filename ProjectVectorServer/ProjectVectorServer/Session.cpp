@@ -327,3 +327,58 @@ void Session::Respawn()
     position_.z = 0.f;
     rotationYaw_ = 0.f;
 }
+
+void Session::AddAssistDamageRecord(uint32_t attackerPlayerId, int damage)
+{
+    if (attackerPlayerId == 0)
+        return;
+
+    if (attackerPlayerId == playerId_)
+        return;
+
+    AssistDamageRecord& record = assistDamageRecords_[attackerPlayerId];
+
+    record.attackerPlayerId = attackerPlayerId;
+    record.damage += damage;
+    record.lastHitTime = std::chrono::steady_clock::now();
+}
+
+std::vector<uint32_t> Session::GetAssistPlayerIds(
+    uint32_t killerPlayerId,
+    int validSeconds) const
+{
+    std::vector<uint32_t> result;
+
+    auto now = std::chrono::steady_clock::now();
+
+    for (const auto& pair : assistDamageRecords_)
+    {
+        const AssistDamageRecord& record = pair.second;
+
+        if (record.attackerPlayerId == 0)
+            continue;
+
+        if (record.attackerPlayerId == killerPlayerId)
+            continue;
+
+        auto elapsed =
+            std::chrono::duration_cast<std::chrono::seconds>(
+                now - record.lastHitTime
+            ).count();
+
+        if (elapsed > validSeconds)
+            continue;
+
+        if (record.damage <= 0)
+            continue;
+
+        result.push_back(record.attackerPlayerId);
+    }
+
+    return result;
+}
+
+void Session::ClearAssistDamageRecords()
+{
+    assistDamageRecords_.clear();
+}

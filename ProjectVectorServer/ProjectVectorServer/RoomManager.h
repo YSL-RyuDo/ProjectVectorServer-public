@@ -58,6 +58,9 @@ public:
 	bool TryStartGamePrepare(uint32_t roomId, Room& outRoom);
 	bool SetGamePrepareRemainingSeconds(uint32_t roomId, uint16_t remainingSeconds, Room& outRoom);
 
+    bool FinishGameAndReturnRoom(uint32_t roomId, Room& outRoom);
+
+    bool AllMembersReturnedFromResult(uint32_t roomId) const;
 private:
     int CountTeamMemberUnlocked(const Room& room, RoomTeam team);
 

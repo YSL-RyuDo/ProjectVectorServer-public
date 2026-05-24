@@ -23,6 +23,8 @@ namespace
     constexpr uint16_t PREPARE_TIME_SECONDS = 10;
     constexpr uint16_t GAME_PREPARE_SECONDS = 20;
     constexpr uint16_t ROUND_END_DELAY_SECONDS = 10;
+    constexpr uint16_t ROUND_PLAY_SECONDS = 120;
+    constexpr uint16_t SPIKE_EXPLODE_SECONDS = 45;
 
     // 정규전 기준 3선승
     constexpr uint8_t MATCH_WIN_ROUND_COUNT = 3;
@@ -38,6 +40,9 @@ namespace
         uint8_t currentRound = 1;
         uint8_t scoreA = 0;
         uint8_t scoreB = 0;
+        
+        uint32_t spikeCarrierPlayerId = 0;
+        bool spikePlanted = false;
 
         bool isOvertime = false;
         bool roundResolving = false;
@@ -58,6 +63,18 @@ namespace
     void StartRoundEndThread(uint32_t roomId, RoomTeam winnerTeam, bool matchEnd);
     void ResetRound(uint32_t roomId);
 
+    void StartRoundTimerThread(uint32_t roomId);
+    void ResolveRoundByTimeOut(uint32_t roomId);
+    RoomTeam GetDefenseTeam(uint8_t currentRound);
+
+    RoomTeam GetAttackTeam(uint8_t currentRound);
+
+    void BroadcastSpikePickupNotify(uint32_t roomId, uint32_t carrierPlayerId);
+    void BroadcastSpikePlanted(uint32_t roomId, float x, float y, float z);
+
+    void StartSpikeTimerThread(uint32_t roomId);
+    void ResolveRoundBySpikeExplode(uint32_t roomId);
+
     void ResetMatchRuntimeState(uint32_t roomId)
     {
         std::lock_guard<std::mutex> lock(g_matchStateMutex);
@@ -66,6 +83,10 @@ namespace
         state.currentRound = 1;
         state.scoreA = 0;
         state.scoreB = 0;
+
+        state.spikeCarrierPlayerId = 0;
+        state.spikePlanted = false;
+
         state.isOvertime = false;
         state.roundResolving = false;
         state.matchEnded = false;
@@ -1071,34 +1092,6 @@ namespace
             << std::endl;
     }
 
-    void StartGamePrepareTimerThread(uint32_t roomId)
-    {
-        std::thread([roomId]()
-            {
-                for (int remain = GAME_PREPARE_SECONDS; remain >= 0; --remain)
-                {
-                    Room room{};
-                    if (!RoomManager::Instance().GetRoom(roomId, room))
-                        return;
-
-                    BroadcastGamePrepareTimer(
-                        room,
-                        static_cast<uint16_t>(remain)
-                    );
-
-                    if (remain == 0)
-                        break;
-
-                    std::this_thread::sleep_for(std::chrono::seconds(1));
-                }
-
-                std::cout << "[GAME PREPARE DONE] roomId="
-                    << roomId
-                    << std::endl;
-            }
-        ).detach();
-    }
-
     void BroadcastToRoom(uint32_t roomId, void* packet)
     {
         if (roomId == 0)
@@ -1124,6 +1117,51 @@ namespace
 
             target->Send(packet);
         }
+    }
+
+    void BroadcastRoundTimer(uint32_t roomId, uint16_t remainingSeconds)
+    {
+        SC_RoundTimer out{};
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_ROUND_TIMER);
+        out.remainingSeconds = remainingSeconds;
+
+        BroadcastToRoom(roomId, &out);
+
+        std::cout << "[ROUND TIMER BROADCAST] roomId="
+            << roomId
+            << " remaining=" << remainingSeconds
+            << std::endl;
+    }
+
+    void StartGamePrepareTimerThread(uint32_t roomId)
+    {
+        std::thread([roomId]()
+            {
+                for (int remain = GAME_PREPARE_SECONDS; remain >= 0; --remain)
+                {
+                    Room room{};
+                    if (!RoomManager::Instance().GetRoom(roomId, room))
+                        return;
+
+                    BroadcastGamePrepareTimer(
+                        room,
+                        static_cast<uint16_t>(remain)
+                    );
+
+                    if (remain == 0)
+                        break;
+
+                    std::this_thread::sleep_for(std::chrono::seconds(1));
+                }
+
+                std::cout << "[GAME PREPARE DONE] roomId="
+                    << roomId
+                    << std::endl;
+
+                StartRoundTimerThread(roomId);
+            }
+        ).detach();
     }
 
     void SendAmmoUpdate(Session* session, const PlayerWeaponState& weaponState)
@@ -1359,6 +1397,9 @@ namespace
 
             state.currentRound++;
             state.roundResolving = false;
+
+            state.spikeCarrierPlayerId = 0;
+            state.spikePlanted = false;
 
             out.currentRound = state.currentRound;
             out.scoreA = state.scoreA;
@@ -1647,7 +1688,302 @@ namespace
         return playMemberCount == 6;
     }
 
-    
+    RoomTeam GetDefenseTeam(uint8_t currentRound)
+    {
+        bool aTeamAttack = IsATeamAttackRound(currentRound);
+
+        return aTeamAttack ? RoomTeam::B : RoomTeam::A;
+    }
+
+    RoomTeam GetAttackTeam(uint8_t currentRound)
+    {
+        bool aTeamAttack = IsATeamAttackRound(currentRound);
+        return aTeamAttack ? RoomTeam::A : RoomTeam::B;
+    }
+
+    void BroadcastSpikePickupNotify(uint32_t roomId, uint32_t carrierPlayerId)
+    {
+        Room room{};
+
+        if (!RoomManager::Instance().GetRoom(roomId, room))
+            return;
+
+        RoomMember carrierMember{};
+        if (!RoomManager::Instance().GetMember(roomId, carrierPlayerId, carrierMember))
+            return;
+
+        for (const RoomMember& receiver : room.members)
+        {
+            if (receiver.team == RoomTeam::OBSERVER)
+                continue;
+
+            Session* target = SessionManager::Instance().Find(receiver.playerId);
+            if (target == nullptr)
+                continue;
+
+            SC_SpikePickupNotify out{};
+            out.header.size = sizeof(out);
+            out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_SPIKE_PICKUP_NOTIFY);
+
+            out.carrierPlayerId = carrierPlayerId;
+
+            // 같은 공격팀에게만 누가 먹었는지 공개
+            out.showCarrierInfo = receiver.team == carrierMember.team ? 1 : 0;
+
+            memset(out.carrierNickname, 0, sizeof(out.carrierNickname));
+
+            if (out.showCarrierInfo != 0)
+            {
+                strncpy_s(
+                    out.carrierNickname,
+                    sizeof(out.carrierNickname),
+                    carrierMember.nickname.c_str(),
+                    _TRUNCATE
+                );
+            }
+
+            target->Send(&out);
+        }
+
+        std::cout << "[SPIKE PICKUP NOTIFY] roomId="
+            << roomId
+            << " carrier=" << carrierPlayerId
+            << std::endl;
+    }
+
+    void BroadcastSpikePlanted(uint32_t roomId, float x, float y, float z)
+    {
+        SC_SpikePlanted out{};
+
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_SPIKE_PLANTED);
+
+        out.x = x;
+        out.y = y;
+        out.z = z;
+
+        BroadcastToRoom(roomId, &out);
+
+        std::cout << "[SPIKE PLANTED] roomId="
+            << roomId
+            << " pos=(" << x << ", " << y << ", " << z << ")"
+            << std::endl;
+    }
+
+    void ResolveRoundBySpikeExplode(uint32_t roomId)
+    {
+        RoomTeam winnerTeam = RoomTeam::A;
+
+        uint8_t scoreA = 0;
+        uint8_t scoreB = 0;
+        uint8_t currentRound = 1;
+        bool matchEnd = false;
+        bool isOvertime = false;
+
+        {
+            std::lock_guard<std::mutex> lock(g_matchStateMutex);
+
+            auto it = g_matchStates.find(roomId);
+            if (it == g_matchStates.end())
+                return;
+
+            MatchRuntimeState& state = it->second;
+
+            if (state.roundResolving || state.matchEnded)
+                return;
+
+            if (!state.spikePlanted)
+                return;
+
+            state.roundResolving = true;
+
+            winnerTeam = GetAttackTeam(state.currentRound);
+
+            if (winnerTeam == RoomTeam::A)
+                state.scoreA++;
+            else
+                state.scoreB++;
+
+            if (state.scoreA == 2 && state.scoreB == 2)
+                state.isOvertime = true;
+
+            currentRound = state.currentRound;
+            scoreA = state.scoreA;
+            scoreB = state.scoreB;
+            isOvertime = state.isOvertime;
+
+            matchEnd = ShouldEndMatch(scoreA, scoreB, isOvertime);
+
+            if (matchEnd)
+                state.matchEnded = true;
+        }
+
+        BroadcastRoundResult(
+            roomId,
+            winnerTeam,
+            scoreA,
+            scoreB,
+            currentRound,
+            matchEnd,
+            RoundWinReason::ATTACK_SPIKE_EXPLODE
+        );
+
+        StartRoundEndThread(
+            roomId,
+            winnerTeam,
+            matchEnd
+        );
+
+        std::cout << "[SPIKE EXPLODE ROUND WIN] roomId="
+            << roomId
+            << " winnerTeam=" << static_cast<int>(winnerTeam)
+            << std::endl;
+    }
+
+    void StartSpikeTimerThread(uint32_t roomId)
+    {
+        std::thread([roomId]()
+            {
+                std::this_thread::sleep_for(
+                    std::chrono::seconds(SPIKE_EXPLODE_SECONDS)
+                );
+
+                ResolveRoundBySpikeExplode(roomId);
+            }
+        ).detach();
+
+        std::cout << "[SPIKE TIMER START] roomId="
+            << roomId
+            << " seconds=" << SPIKE_EXPLODE_SECONDS
+            << std::endl;
+    }
+
+    void ResolveRoundByTimeOut(uint32_t roomId)
+    {
+        RoomTeam winnerTeam = RoomTeam::B;
+
+        uint8_t scoreA = 0;
+        uint8_t scoreB = 0;
+        uint8_t currentRound = 1;
+        bool matchEnd = false;
+        bool isOvertime = false;
+
+        {
+            std::lock_guard<std::mutex> lock(g_matchStateMutex);
+
+            auto it = g_matchStates.find(roomId);
+            if (it == g_matchStates.end())
+                return;
+
+            MatchRuntimeState& state = it->second;
+
+            if (state.roundResolving || state.matchEnded)
+                return;
+
+            state.roundResolving = true;
+
+            winnerTeam = GetDefenseTeam(state.currentRound);
+
+            if (winnerTeam == RoomTeam::A)
+                state.scoreA++;
+            else
+                state.scoreB++;
+
+            if (state.scoreA == 2 && state.scoreB == 2)
+                state.isOvertime = true;
+
+            currentRound = state.currentRound;
+            scoreA = state.scoreA;
+            scoreB = state.scoreB;
+            isOvertime = state.isOvertime;
+
+            matchEnd = ShouldEndMatch(scoreA, scoreB, isOvertime);
+
+            if (matchEnd)
+                state.matchEnded = true;
+        }
+
+        BroadcastRoundResult(
+            roomId,
+            winnerTeam,
+            scoreA,
+            scoreB,
+            currentRound,
+            matchEnd,
+            RoundWinReason::DEFENSE_TIME_OUT
+        );
+
+        StartRoundEndThread(
+            roomId,
+            winnerTeam,
+            matchEnd
+        );
+
+        std::cout << "[ROUND TIME OUT] roomId="
+            << roomId
+            << " winnerTeam=" << static_cast<int>(winnerTeam)
+            << " scoreA=" << static_cast<int>(scoreA)
+            << " scoreB=" << static_cast<int>(scoreB)
+            << " currentRound=" << static_cast<int>(currentRound)
+            << std::endl;
+    }
+
+    void StartRoundTimerThread(uint32_t roomId)
+    {
+        std::thread([roomId]()
+            {
+                for (int remain = ROUND_PLAY_SECONDS; remain >= 0; --remain)
+                {
+                    {
+                        std::lock_guard<std::mutex> lock(g_matchStateMutex);
+
+                        auto it = g_matchStates.find(roomId);
+                        if (it == g_matchStates.end())
+                            return;
+
+                        if (it->second.roundResolving || it->second.matchEnded || it->second.spikePlanted)
+                            return;
+                    }
+
+                    BroadcastRoundTimer(
+                        roomId,
+                        static_cast<uint16_t>(remain)
+                    );
+
+                    if (remain == 0)
+                        break;
+
+                    std::this_thread::sleep_for(std::chrono::seconds(1));
+                }
+
+                ResolveRoundByTimeOut(roomId);
+            }
+        ).detach();
+
+        std::cout << "[ROUND TIMER START] roomId="
+            << roomId
+            << " seconds=" << ROUND_PLAY_SECONDS
+            << std::endl;
+    }
+
+    void BroadcastSpikeDropped(uint32_t roomId, float x, float y, float z)
+    {
+        SC_SpikeDropped out{};
+
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_SPIKE_DROPPED);
+
+        out.x = x;
+        out.y = y;
+        out.z = z;
+
+        BroadcastToRoom(roomId, &out);
+
+        std::cout << "[SPIKE DROPPED] roomId="
+            << roomId
+            << " pos=(" << x << ", " << y << ", " << z << ")"
+            << std::endl;
+    }
 }
 
 void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
@@ -3540,6 +3876,115 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         break;
     }
 
+    case PacketType::PKT_CS_SPIKE_PICKUP_REQUEST:
+    {
+        uint32_t roomId = session->GetCurrentRoomId();
+
+        if (session->GetState() != SessionState::IN_GAME || roomId == 0)
+            break;
+
+        RoomMember member{};
+        if (!RoomManager::Instance().GetMember(roomId, session->GetPlayerId(), member))
+            break;
+
+        bool pickupOk = false;
+
+        {
+            std::lock_guard<std::mutex> lock(g_matchStateMutex);
+
+            auto it = g_matchStates.find(roomId);
+            if (it == g_matchStates.end())
+                break;
+
+            MatchRuntimeState& state = it->second;
+
+            if (state.roundResolving || state.matchEnded)
+                break;
+
+            if (state.spikePlanted)
+                break;
+
+            RoomTeam attackTeam = GetAttackTeam(state.currentRound);
+
+            if (member.team != attackTeam)
+                break;
+
+            if (state.spikeCarrierPlayerId != 0)
+                break;
+
+            state.spikeCarrierPlayerId = session->GetPlayerId();
+            pickupOk = true;
+        }
+
+        if (pickupOk)
+        {
+            BroadcastSpikePickupNotify(
+                roomId,
+                session->GetPlayerId()
+            );
+        }
+
+        break;
+    }
+    case PacketType::PKT_CS_SPIKE_PLANT_COMPLETE:
+    {
+        auto* pkt = reinterpret_cast<CS_SpikePlantComplete*>(header);
+
+        uint32_t roomId = session->GetCurrentRoomId();
+
+        if (session->GetState() != SessionState::IN_GAME || roomId == 0)
+            break;
+
+        RoomMember member{};
+        if (!RoomManager::Instance().GetMember(roomId, session->GetPlayerId(), member))
+            break;
+
+        bool plantOk = false;
+
+        {
+            std::lock_guard<std::mutex> lock(g_matchStateMutex);
+
+            auto it = g_matchStates.find(roomId);
+            if (it == g_matchStates.end())
+                break;
+
+            MatchRuntimeState& state = it->second;
+
+            if (state.roundResolving || state.matchEnded)
+                break;
+
+            if (state.spikePlanted)
+                break;
+
+            RoomTeam attackTeam = GetAttackTeam(state.currentRound);
+
+            if (member.team != attackTeam)
+                break;
+
+            if (state.spikeCarrierPlayerId != session->GetPlayerId())
+                break;
+
+            state.spikeCarrierPlayerId = 0;
+            state.spikePlanted = true;
+
+            plantOk = true;
+        }
+
+        if (plantOk)
+        {
+            BroadcastSpikePlanted(
+                roomId,
+                pkt->x,
+                pkt->y,
+                pkt->z
+            );
+
+            StartSpikeTimerThread(roomId);
+        }
+
+        break;
+    }
+
     default:
     {
         std::cout << "[UNHANDLED PACKET] type=" << (uint16_t)type
@@ -3686,6 +4131,42 @@ void PacketDispatcher::HandleDeath(Session* target)
     }
 
     target->ClearAssistDamageRecords();
+
+    bool shouldDropSpike = false;
+    Vector3 dropPos{};
+
+    {
+        std::lock_guard<std::mutex> lock(g_matchStateMutex);
+
+        auto it = g_matchStates.find(roomId);
+        if (it != g_matchStates.end())
+        {
+            MatchRuntimeState& state = it->second;
+
+            if (!state.spikePlanted &&
+                state.spikeCarrierPlayerId == target->GetPlayerId())
+            {
+                dropPos = target->GetPosition();
+                state.spikeCarrierPlayerId = 0;
+                shouldDropSpike = true;
+            }
+        }
+    }
+
+    if (shouldDropSpike)
+    {
+        BroadcastSpikeDropped(
+            roomId,
+            dropPos.x,
+            dropPos.y,
+            dropPos.z
+        );
+
+        std::cout << "[SPIKE DROP BY DEATH] playerId="
+            << target->GetPlayerId()
+            << " roomId=" << roomId
+            << std::endl;
+    }
 
     BroadcastToRoom(roomId, &diePkt);
 

@@ -817,5 +817,46 @@ enum class RoundWinReason : uint8_t
     DEFENSE_SPIKE_DEFUSE = 5    // ¼öºñÆÀ ½Â¸®: ½ºÆÄÀÌÅ© ÇØÃ¼
 };
 
+struct SC_RoundTimer
+{
+    PacketHeader header;
+    uint16_t remainingSeconds;
+};
 
+struct CS_SpikePickupRequest
+{
+    PacketHeader header;
+};
+
+struct SC_SpikePickupNotify
+{
+    PacketHeader header;
+    uint32_t carrierPlayerId;
+    uint8_t showCarrierInfo; // °ø°ÝÆÀ=1, ¼öºñÆÀ=0
+    char carrierNickname[20];
+};
+
+struct CS_SpikePlantComplete
+{
+    PacketHeader header;
+    float x;
+    float y;
+    float z;
+};
+
+struct SC_SpikePlanted
+{
+    PacketHeader header;
+    float x;
+    float y;
+    float z;
+};
+
+struct SC_SpikeDropped
+{
+    PacketHeader header;
+    float x;
+    float y;
+    float z;
+};
 #pragma pack(pop)

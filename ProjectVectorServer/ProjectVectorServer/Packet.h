@@ -312,7 +312,8 @@ enum class RoomGameStartResult : uint8_t
     NOT_LEADER = 3,
     NOT_ENOUGH_PLAYERS = 4,
     ALREADY_PLAYING = 5,
-    FAILED = 6
+    FAILED = 6,
+    NOT_ALL_RETURNED_FROM_RESULT = 7
 };
 
 struct CS_RoomGameStart
@@ -671,7 +672,35 @@ struct SC_RoundResult
     uint8_t currentRound;
 
     uint8_t matchEnd;       // 0 = 다음 라운드 있음, 1 = 매치 종료
+    uint8_t winReason;
     uint16_t delaySeconds;  // 예: 10초
+};
+
+struct ScoreboardMemberInfo
+{
+    uint32_t playerId;
+
+    uint8_t team;
+    uint8_t slotIndex;
+
+    int32_t characterId;
+
+    char nickname[20];
+
+    int32_t kills;
+    int32_t deaths;
+    int32_t assists;
+};
+
+struct SC_ScoreboardUpdate
+{
+    PacketHeader header;
+
+    uint32_t roomId;
+    uint8_t myTeam;
+    uint8_t memberCount;
+
+    ScoreboardMemberInfo members[GAME_MEMBER_COUNT];
 };
 
 struct RoundResetMemberInfo
@@ -775,4 +804,18 @@ struct CS_RoomStateRequest
     PacketHeader header;
     uint32_t roomId;
 };
+
+enum class RoundWinReason : uint8_t
+{
+    NONE = 0,
+
+    ATTACK_ELIMINATION = 1,     // 공격팀 승리: 수비팀 전멸
+    ATTACK_SPIKE_EXPLODE = 2,   // 공격팀 승리: 스파이크 폭파
+
+    DEFENSE_ELIMINATION = 3,    // 수비팀 승리: 공격팀 전멸
+    DEFENSE_TIME_OUT = 4,       // 수비팀 승리: 시간 초과
+    DEFENSE_SPIKE_DEFUSE = 5    // 수비팀 승리: 스파이크 해체
+};
+
+
 #pragma pack(pop)

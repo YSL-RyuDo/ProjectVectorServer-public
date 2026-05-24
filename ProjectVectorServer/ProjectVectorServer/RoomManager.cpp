@@ -267,8 +267,13 @@ bool RoomManager::StartGame(uint32_t roomId,uint32_t leaderPlayerId,Room& outRoo
         return false;
 
     room.state = RoomState::PLAYING;
+
     room.pickRemainingSeconds = 20;
     room.pickFinished = false;
+    room.pickTimerStarted = false;
+
+    room.gamePrepareRemainingSeconds = 20;
+    room.gamePrepareTimerStarted = false;
 
     for (RoomMember& member : room.members)
     {
@@ -276,10 +281,8 @@ bool RoomManager::StartGame(uint32_t roomId,uint32_t leaderPlayerId,Room& outRoo
         member.lockedCharacterId = -1;
         member.isPickLocked = false;
         member.isPickReady = false;
+        member.isGameLoadReady = false;
     }
-
-	room.gamePrepareRemainingSeconds = 20;
-	room.gamePrepareTimerStarted = false;
 
     outRoom = room;
     return true;

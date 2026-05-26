@@ -22,18 +22,42 @@ namespace
     constexpr uint16_t PICK_TIME_SECONDS = 20;
     constexpr uint16_t PREPARE_TIME_SECONDS = 10;
     constexpr uint16_t GAME_PREPARE_SECONDS = 20;
-    constexpr uint16_t ROUND_END_DELAY_SECONDS = 10;
-    constexpr uint16_t ROUND_PLAY_SECONDS = 120;
-    constexpr uint16_t SPIKE_EXPLODE_SECONDS = 45;
 
-    // 정규전 기준 3선승
-    constexpr uint8_t MATCH_WIN_ROUND_COUNT = 3;
+    constexpr uint16_t ROUND_END_DELAY_SECONDS = 6;
+    constexpr uint16_t ROUND_PLAY_SECONDS = 100;
+    constexpr uint16_t SPIKE_EXPLODE_SECONDS = 35;
 
-    // 1~2라운드 후 공수 전환
-    constexpr uint8_t SIDE_SWAP_AFTER_ROUND = 2;
+    // 정규전 기준 6선승
+    constexpr uint8_t MATCH_WIN_ROUND_COUNT = 6;
+    // 5라운드 종료 후 공수 전환
+    constexpr uint8_t SIDE_SWAP_AFTER_ROUND = 5;
+    //5:5 이후 11라운드부터 듀스
+    constexpr uint8_t OVERTIME_START_ROUND = 11;
 
-    // 2:2 이후 5라운드부터 듀스
-    constexpr uint8_t OVERTIME_START_ROUND = 5;
+    constexpr uint8_t OVERTIME_TRIGGER_SCORE = MATCH_WIN_ROUND_COUNT - 1;
+    constexpr uint8_t SECOND_HALF_END_ROUND = OVERTIME_START_ROUND - 1;
+
+    bool IsOvertimeScore(uint8_t scoreA, uint8_t scoreB)
+    {
+        return scoreA == OVERTIME_TRIGGER_SCORE &&
+            scoreB == OVERTIME_TRIGGER_SCORE;
+    }
+
+    bool IsFirstHalfRound(uint8_t currentRound)
+    {
+        return currentRound <= SIDE_SWAP_AFTER_ROUND;
+    }
+
+    bool IsSecondHalfRound(uint8_t currentRound)
+    {
+        return currentRound > SIDE_SWAP_AFTER_ROUND &&
+            currentRound < OVERTIME_START_ROUND;
+    }
+
+    bool IsOvertimeRound(uint8_t currentRound)
+    {
+        return currentRound >= OVERTIME_START_ROUND;
+    }
 
     struct MatchRuntimeState
     {
@@ -43,6 +67,10 @@ namespace
         
         uint32_t spikeCarrierPlayerId = 0;
         bool spikePlanted = false;
+
+        uint32_t spikeDefuserPlayerId = 0;
+        bool spikeHalfDefused = false;
+        
 
         bool isOvertime = false;
         bool roundResolving = false;
@@ -75,6 +103,8 @@ namespace
     void StartSpikeTimerThread(uint32_t roomId);
     void ResolveRoundBySpikeExplode(uint32_t roomId);
 
+    void BroadcastSpikeDefuseState(uint32_t roomId, bool halfDefused, uint32_t defuserPlayerId);
+
     void ResetMatchRuntimeState(uint32_t roomId)
     {
         std::lock_guard<std::mutex> lock(g_matchStateMutex);
@@ -86,6 +116,9 @@ namespace
 
         state.spikeCarrierPlayerId = 0;
         state.spikePlanted = false;
+
+        state.spikeDefuserPlayerId = 0;
+        state.spikeHalfDefused = false;
 
         state.isOvertime = false;
         state.roundResolving = false;
@@ -1180,14 +1213,7 @@ namespace
         session->Send(&out);
     }
 
-    void BroadcastRoundResult(
-        uint32_t roomId,
-        RoomTeam winnerTeam,
-        uint8_t scoreA,
-        uint8_t scoreB,
-        uint8_t currentRound,
-        bool matchEnd,
-        RoundWinReason winReason)
+    void BroadcastRoundResult(uint32_t roomId,RoomTeam winnerTeam,uint8_t scoreA,uint8_t scoreB,uint8_t currentRound,bool matchEnd,RoundWinReason winReason)
     {
         SC_RoundResult out{};
 
@@ -1219,11 +1245,7 @@ namespace
         return stats.kills * 100 + stats.assists * 50 - stats.deaths * 20;
     }
 
-    void BroadcastMatchResultDetail(
-        uint32_t roomId,
-        RoomTeam winnerTeam,
-        uint8_t scoreA,
-        uint8_t scoreB)
+    void BroadcastMatchResultDetail(uint32_t roomId,RoomTeam winnerTeam,uint8_t scoreA,uint8_t scoreB)
     {
         Room room{};
 
@@ -1326,16 +1348,15 @@ namespace
 
     bool IsATeamAttackRound(uint8_t currentRound)
     {
-        // 1~2라운드: A팀 공격
+        // 1 ~ SIDE_SWAP_AFTER_ROUND 라운드: A팀 공격
         if (currentRound <= SIDE_SWAP_AFTER_ROUND)
             return true;
 
-        // 3~4라운드: A팀 수비
+        // SIDE_SWAP_AFTER_ROUND + 1 ~ OVERTIME_START_ROUND - 1 라운드: A팀 수비
         if (currentRound < OVERTIME_START_ROUND)
             return false;
 
-        // 5라운드부터 듀스
-        // 5R A공격, 6R A수비, 7R A공격, 8R A수비 ...
+        // OVERTIME_START_ROUND 라운드부터 듀스, 매 라운드 공수 교대
         return ((currentRound - OVERTIME_START_ROUND) % 2) == 0;
     }
 
@@ -1400,6 +1421,9 @@ namespace
 
             state.spikeCarrierPlayerId = 0;
             state.spikePlanted = false;
+
+            state.spikeDefuserPlayerId = 0;
+            state.spikeHalfDefused = false;
 
             out.currentRound = state.currentRound;
             out.scoreA = state.scoreA;
@@ -1571,6 +1595,23 @@ namespace
 
     void TryResolveRoundByElimination(uint32_t roomId)
     {
+        bool spikePlanted = false;
+        uint8_t ruleRound = 1;
+
+        {
+            std::lock_guard<std::mutex> lock(g_matchStateMutex);
+
+            auto it = g_matchStates.find(roomId);
+            if (it == g_matchStates.end())
+                return;
+
+            if (it->second.roundResolving || it->second.matchEnded)
+                return;
+
+            spikePlanted = it->second.spikePlanted;
+            ruleRound = it->second.currentRound;
+        }
+
         Room room{};
 
         if (!RoomManager::Instance().GetRoom(roomId, room))
@@ -1582,15 +1623,50 @@ namespace
         if (!teamADead && !teamBDead)
             return;
 
-        if (teamADead && teamBDead)
-        {
-            std::cout << "[ROUND RESULT BLOCK] both teams dead roomId="
-                << roomId
-                << std::endl;
-            return;
-        }
+        RoomTeam attackTeam = GetAttackTeam(ruleRound);
+        RoomTeam defenseTeam = GetDefenseTeam(ruleRound);
 
-        RoomTeam winnerTeam = teamADead ? RoomTeam::B : RoomTeam::A;
+        RoomTeam winnerTeam = RoomTeam::A;
+
+        if (spikePlanted)
+        {
+            bool attackDead =
+                attackTeam == RoomTeam::A ? teamADead : teamBDead;
+
+            bool defenseDead =
+                defenseTeam == RoomTeam::A ? teamADead : teamBDead;
+
+            if (defenseDead)
+            {
+                // 스파이크 설치 후 수비팀 전멸 = 공격팀 승리
+                winnerTeam = attackTeam;
+            }
+            else if (attackDead)
+            {
+                // 스파이크 설치 후 공격팀 전멸 = 아직 라운드 종료 아님
+                // 수비팀은 반드시 해체해야 승리
+                std::cout << "[ELIMINATION BLOCK] attack team dead but spike planted. need defuse. roomId="
+                    << roomId
+                    << std::endl;
+                return;
+            }
+            else
+            {
+                return;
+            }
+        }
+        else
+        {
+            if (teamADead && teamBDead)
+            {
+                std::cout << "[ROUND RESULT BLOCK] both teams dead roomId="
+                    << roomId
+                    << std::endl;
+                return;
+            }
+
+            winnerTeam = teamADead ? RoomTeam::B : RoomTeam::A;
+        }
 
         uint8_t scoreA = 0;
         uint8_t scoreB = 0;
@@ -1613,8 +1689,7 @@ namespace
             else
                 state.scoreB++;
 
-            // 2:2가 되는 순간부터 듀스 상태
-            if (state.scoreA == 2 && state.scoreB == 2)
+            if (IsOvertimeScore(state.scoreA, state.scoreB))
             {
                 state.isOvertime = true;
                 std::cout << "[OVERTIME START] roomId=" << roomId << std::endl;
@@ -1628,9 +1703,7 @@ namespace
             matchEnd = ShouldEndMatch(scoreA, scoreB, isOvertime);
 
             if (matchEnd)
-            {
                 state.matchEnded = true;
-            }
         }
 
         RoundWinReason winReason =
@@ -1804,7 +1877,7 @@ namespace
             else
                 state.scoreB++;
 
-            if (state.scoreA == 2 && state.scoreB == 2)
+            if (IsOvertimeScore(state.scoreA, state.scoreB))
                 state.isOvertime = true;
 
             currentRound = state.currentRound;
@@ -1889,7 +1962,7 @@ namespace
             else
                 state.scoreB++;
 
-            if (state.scoreA == 2 && state.scoreB == 2)
+            if (IsOvertimeScore(state.scoreA, state.scoreB))
                 state.isOvertime = true;
 
             currentRound = state.currentRound;
@@ -1966,7 +2039,15 @@ namespace
             << std::endl;
     }
 
-    void BroadcastSpikeDropped(uint32_t roomId, float x, float y, float z)
+    void BroadcastSpikeDropped(
+        uint32_t roomId,
+        float x,
+        float y,
+        float z,
+        float dirX,
+        float dirY,
+        float dirZ,
+        uint32_t dropperPlayerId)
     {
         SC_SpikeDropped out{};
 
@@ -1977,11 +2058,121 @@ namespace
         out.y = y;
         out.z = z;
 
+        out.dirX = dirX;
+        out.dirY = dirY;
+        out.dirZ = dirZ;
+
+        out.dropperPlayerId = dropperPlayerId;
+
+        BroadcastToRoom(roomId, &out);
+    }
+
+    void BroadcastSpikeDefused(uint32_t roomId, uint32_t defuserPlayerId)
+    {
+        SC_SpikeDefused out{};
+
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_SPIKE_DEFUSED);
+        out.defuserPlayerId = defuserPlayerId;
+
         BroadcastToRoom(roomId, &out);
 
-        std::cout << "[SPIKE DROPPED] roomId="
+        std::cout << "[SPIKE DEFUSED] roomId="
             << roomId
-            << " pos=(" << x << ", " << y << ", " << z << ")"
+            << " defuser=" << defuserPlayerId
+            << std::endl;
+    }
+
+    void ResolveRoundBySpikeDefuse(uint32_t roomId, uint32_t defuserPlayerId)
+    {
+        RoomTeam winnerTeam = RoomTeam::B;
+
+        uint8_t scoreA = 0;
+        uint8_t scoreB = 0;
+        uint8_t currentRound = 1;
+        bool matchEnd = false;
+        bool isOvertime = false;
+
+        {
+            std::lock_guard<std::mutex> lock(g_matchStateMutex);
+
+            auto it = g_matchStates.find(roomId);
+            if (it == g_matchStates.end())
+                return;
+
+            MatchRuntimeState& state = it->second;
+
+            if (state.roundResolving || state.matchEnded)
+                return;
+
+            if (!state.spikePlanted)
+                return;
+
+            state.roundResolving = true;
+            state.spikePlanted = false;
+            state.spikeCarrierPlayerId = 0;
+            
+            state.spikeDefuserPlayerId = 0;
+            state.spikeHalfDefused = false;
+
+            winnerTeam = GetDefenseTeam(state.currentRound);
+
+            if (winnerTeam == RoomTeam::A)
+                state.scoreA++;
+            else
+                state.scoreB++;
+
+            if (IsOvertimeScore(state.scoreA, state.scoreB))
+                state.isOvertime = true;
+
+            currentRound = state.currentRound;
+            scoreA = state.scoreA;
+            scoreB = state.scoreB;
+            isOvertime = state.isOvertime;
+
+            matchEnd = ShouldEndMatch(scoreA, scoreB, isOvertime);
+
+            if (matchEnd)
+                state.matchEnded = true;
+        }
+
+        BroadcastSpikeDefused(roomId, defuserPlayerId);
+
+        BroadcastRoundResult(
+            roomId,
+            winnerTeam,
+            scoreA,
+            scoreB,
+            currentRound,
+            matchEnd,
+            RoundWinReason::DEFENSE_SPIKE_DEFUSE
+        );
+
+        StartRoundEndThread(roomId, winnerTeam, matchEnd);
+    }
+
+    void BroadcastSpikeDefuseState(
+        uint32_t roomId,
+        uint8_t state,
+        bool halfDefused,
+        uint32_t defuserPlayerId)
+    {
+        SC_SpikeDefuseState out{};
+
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_SPIKE_DEFUSE_STATE);
+
+        out.state = state;
+        out.halfDefused = halfDefused ? 1 : 0;
+        out.defuserPlayerId = defuserPlayerId;
+
+        BroadcastToRoom(roomId, &out);
+
+        std::cout << "[SPIKE DEFUSE STATE] roomId="
+            << roomId
+            << " state=" << static_cast<int>(state)
+            << " half=" << static_cast<int>(out.halfDefused)
+            << " defuser=" << defuserPlayerId
             << std::endl;
     }
 }
@@ -3880,8 +4071,23 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
     {
         uint32_t roomId = session->GetCurrentRoomId();
 
+        std::cout << "[SPIKE PICKUP REQUEST] playerId="
+            << session->GetPlayerId()
+            << " roomId=" << roomId
+            << " state=" << static_cast<int>(session->GetState())
+            << std::endl;
+
         if (session->GetState() != SessionState::IN_GAME || roomId == 0)
             break;
+
+        // 추가
+        if (session->IsDead())
+        {
+            std::cout << "[SPIKE PICKUP BLOCK] player is dead. playerId="
+                << session->GetPlayerId()
+                << std::endl;
+            break;
+        }
 
         RoomMember member{};
         if (!RoomManager::Instance().GetMember(roomId, session->GetPlayerId(), member))
@@ -3898,13 +4104,23 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
             MatchRuntimeState& state = it->second;
 
+            RoomTeam attackTeam = GetAttackTeam(state.currentRound);
+
+            std::cout << "[SPIKE PICKUP CHECK] "
+                << "playerId=" << session->GetPlayerId()
+                << " memberTeam=" << static_cast<int>(member.team)
+                << " attackTeam=" << static_cast<int>(attackTeam)
+                << " planted=" << state.spikePlanted
+                << " carrier=" << state.spikeCarrierPlayerId
+                << " resolving=" << state.roundResolving
+                << " matchEnded=" << state.matchEnded
+                << std::endl;
+
             if (state.roundResolving || state.matchEnded)
                 break;
 
             if (state.spikePlanted)
                 break;
-
-            RoomTeam attackTeam = GetAttackTeam(state.currentRound);
 
             if (member.team != attackTeam)
                 break;
@@ -3918,10 +4134,80 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
         if (pickupOk)
         {
-            BroadcastSpikePickupNotify(
+            std::cout << "[SPIKE PICKUP SUCCESS] carrier="
+                << session->GetPlayerId()
+                << std::endl;
+
+            BroadcastSpikePickupNotify(roomId, session->GetPlayerId());
+        }
+
+        break;
+    }
+
+    case PacketType::PKT_CS_SPIKE_DROP_REQUEST:
+    {
+        auto* pkt = reinterpret_cast<CS_SpikeDropRequest*>(header);
+
+        uint32_t roomId = session->GetCurrentRoomId();
+
+        if (session->GetState() != SessionState::IN_GAME || roomId == 0)
+            break;
+
+        if (session->IsDead())
+            break;
+
+        bool dropOk = false;
+
+        Vector3 dropPos{};
+        dropPos.x = pkt->x;
+        dropPos.y = pkt->y;
+        dropPos.z = pkt->z;
+
+        Vector3 dropDir{};
+        dropDir.x = pkt->dirX;
+        dropDir.y = pkt->dirY;
+        dropDir.z = pkt->dirZ;
+
+        {
+            std::lock_guard<std::mutex> lock(g_matchStateMutex);
+
+            auto it = g_matchStates.find(roomId);
+            if (it == g_matchStates.end())
+                break;
+
+            MatchRuntimeState& state = it->second;
+
+            if (state.roundResolving || state.matchEnded)
+                break;
+
+            if (state.spikePlanted)
+                break;
+
+            if (state.spikeCarrierPlayerId != session->GetPlayerId())
+                break;
+
+            state.spikeCarrierPlayerId = 0;
+            dropOk = true;
+        }
+
+        if (dropOk)
+        {
+            BroadcastSpikeDropped(
                 roomId,
+                dropPos.x,
+                dropPos.y,
+                dropPos.z,
+                dropDir.x,
+                dropDir.y,
+                dropDir.z,
                 session->GetPlayerId()
             );
+
+            std::cout << "[SPIKE DROP REQUEST OK] playerId="
+                << session->GetPlayerId()
+                << " pos=(" << dropPos.x << ", " << dropPos.y << ", " << dropPos.z << ")"
+                << " dir=(" << dropDir.x << ", " << dropDir.y << ", " << dropDir.z << ")"
+                << std::endl;
         }
 
         break;
@@ -3967,6 +4253,9 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             state.spikeCarrierPlayerId = 0;
             state.spikePlanted = true;
 
+            state.spikeDefuserPlayerId = 0;
+            state.spikeHalfDefused = false;
+
             plantOk = true;
         }
 
@@ -3980,6 +4269,192 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             );
 
             StartSpikeTimerThread(roomId);
+        }
+
+        break;
+    }
+
+    case PacketType::PKT_CS_SPIKE_DEFUSE_COMPLETE:
+    {
+        uint32_t roomId = session->GetCurrentRoomId();
+
+        if (session->GetState() != SessionState::IN_GAME || roomId == 0)
+            break;
+
+        RoomMember member{};
+        if (!RoomManager::Instance().GetMember(roomId, session->GetPlayerId(), member))
+            break;
+
+        bool defuseOk = false;
+
+        {
+            std::lock_guard<std::mutex> lock(g_matchStateMutex);
+
+            auto it = g_matchStates.find(roomId);
+            if (it == g_matchStates.end())
+                break;
+
+            MatchRuntimeState& state = it->second;
+
+            if (state.roundResolving || state.matchEnded)
+                break;
+
+            if (!state.spikePlanted)
+                break;
+
+            RoomTeam defenseTeam = GetDefenseTeam(state.currentRound);
+
+            if (member.team != defenseTeam)
+                break;
+
+            if (state.spikeDefuserPlayerId != session->GetPlayerId())
+                break;
+
+            defuseOk = true;
+        }
+
+        if (defuseOk)
+        {
+            ResolveRoundBySpikeDefuse(
+                roomId,
+                session->GetPlayerId()
+            );
+        }
+
+        break;
+    }
+
+    case PacketType::PKT_CS_SPIKE_DEFUSE_START:
+    {
+        uint32_t roomId = session->GetCurrentRoomId();
+
+        if (session->GetState() != SessionState::IN_GAME || roomId == 0)
+            break;
+
+        RoomMember member{};
+        if (!RoomManager::Instance().GetMember(roomId, session->GetPlayerId(), member))
+            break;
+
+        bool startOk = false;
+        bool halfDefused = false;
+
+        {
+            std::lock_guard<std::mutex> lock(g_matchStateMutex);
+
+            auto it = g_matchStates.find(roomId);
+            if (it == g_matchStates.end())
+                break;
+
+            MatchRuntimeState& state = it->second;
+
+            if (!state.spikePlanted || state.roundResolving || state.matchEnded)
+                break;
+
+            RoomTeam defenseTeam = GetDefenseTeam(state.currentRound);
+
+            if (member.team != defenseTeam)
+                break;
+
+            if (state.spikeDefuserPlayerId != 0)
+                break;
+
+            state.spikeDefuserPlayerId = session->GetPlayerId();
+            halfDefused = state.spikeHalfDefused;
+            startOk = true;
+        }
+
+        if (startOk)
+        {
+            BroadcastSpikeDefuseState(
+                roomId,
+                1,
+                halfDefused,
+                session->GetPlayerId()
+            );
+        }
+
+        break;
+    }
+
+    case PacketType::PKT_CS_SPIKE_DEFUSE_CANCEL:
+    {
+        uint32_t roomId = session->GetCurrentRoomId();
+
+        if (session->GetState() != SessionState::IN_GAME || roomId == 0)
+            break;
+
+        bool cancelOk = false;
+        bool halfDefused = false;
+
+        {
+            std::lock_guard<std::mutex> lock(g_matchStateMutex);
+
+            auto it = g_matchStates.find(roomId);
+            if (it == g_matchStates.end())
+                break;
+
+            MatchRuntimeState& state = it->second;
+
+            if (state.spikeDefuserPlayerId != session->GetPlayerId())
+                break;
+
+            state.spikeDefuserPlayerId = 0;
+            halfDefused = state.spikeHalfDefused;
+            cancelOk = true;
+        }
+
+        if (cancelOk)
+        {
+            BroadcastSpikeDefuseState(
+                roomId,
+                0,
+                halfDefused,
+                0
+            );
+        }
+
+        break;
+    }
+
+    case PacketType::PKT_CS_SPIKE_DEFUSE_HALF:
+    {
+        uint32_t roomId = session->GetCurrentRoomId();
+
+        if (session->GetState() != SessionState::IN_GAME || roomId == 0)
+            break;
+
+        bool halfOk = false;
+
+        {
+            std::lock_guard<std::mutex> lock(g_matchStateMutex);
+
+            auto it = g_matchStates.find(roomId);
+            if (it == g_matchStates.end())
+                break;
+
+            MatchRuntimeState& state = it->second;
+
+            if (!state.spikePlanted || state.roundResolving || state.matchEnded)
+                break;
+
+            if (state.spikeDefuserPlayerId != session->GetPlayerId())
+                break;
+
+            if (!state.spikeHalfDefused)
+            {
+                state.spikeHalfDefused = true;
+                halfOk = true;
+            }
+        }
+
+        if (halfOk)
+        {
+            BroadcastSpikeDefuseState(
+                roomId,
+                2,
+                true,
+                session->GetPlayerId()
+            );
         }
 
         break;
@@ -4013,9 +4488,9 @@ void AddKillStatByRound(Session* player, uint32_t roomId)
             currentRound = it->second.currentRound;
     }
 
-    if (currentRound <= 2)
+    if (IsFirstHalfRound(currentRound))
         stats.firstHalfKills++;
-    else if (currentRound <= 4)
+    else if (IsSecondHalfRound(currentRound))
         stats.secondHalfKills++;
     else
         stats.overtimeKills++;
@@ -4039,9 +4514,9 @@ void AddDeathStatByRound(Session* player, uint32_t roomId)
             currentRound = it->second.currentRound;
     }
 
-    if (currentRound <= 2)
+    if (IsFirstHalfRound(currentRound))
         stats.firstHalfDeaths++;
-    else if (currentRound <= 4)
+    else if (IsSecondHalfRound(currentRound))
         stats.secondHalfDeaths++;
     else
         stats.overtimeDeaths++;
@@ -4065,9 +4540,9 @@ void AddAssistStatByRound(Session* player, uint32_t roomId)
             currentRound = it->second.currentRound;
     }
 
-    if (currentRound <= 2)
+    if (IsFirstHalfRound(currentRound))
         stats.firstHalfAssists++;
-    else if (currentRound <= 4)
+    else if (IsSecondHalfRound(currentRound))
         stats.secondHalfAssists++;
     else
         stats.overtimeAssists++;
@@ -4159,7 +4634,11 @@ void PacketDispatcher::HandleDeath(Session* target)
             roomId,
             dropPos.x,
             dropPos.y,
-            dropPos.z
+            dropPos.z,
+            0.0f,
+            0.2f,
+            0.0f,
+            target->GetPlayerId()
         );
 
         std::cout << "[SPIKE DROP BY DEATH] playerId="
@@ -4180,6 +4659,57 @@ void PacketDispatcher::HandleDeath(Session* target)
         << " hp=" << target->GetHP()
         << std::endl;
 
+    bool shouldCancelDefuse = false;
+    bool halfDefused = false;
+
+    {
+        std::lock_guard<std::mutex> lock(g_matchStateMutex);
+
+        auto it = g_matchStates.find(roomId);
+        if (it != g_matchStates.end())
+        {
+            MatchRuntimeState& state = it->second;
+
+            if (state.spikeDefuserPlayerId == target->GetPlayerId())
+            {
+                state.spikeDefuserPlayerId = 0;
+                halfDefused = state.spikeHalfDefused;
+                shouldCancelDefuse = true;
+            }
+        }
+    }
+
+    if (shouldCancelDefuse)
+    {
+        BroadcastSpikeDefuseState(
+            roomId,
+            0,
+            halfDefused,
+            0
+        );
+    }
+
     BroadcastScoreboardUpdate(roomId);
+
+    bool spikePlanted = false;
+
+    {
+        std::lock_guard<std::mutex> lock(g_matchStateMutex);
+
+        auto it = g_matchStates.find(roomId);
+        if (it != g_matchStates.end())
+        {
+            MatchRuntimeState& state = it->second;
+
+            spikePlanted = state.spikePlanted;
+
+            std::cout << "[SPIKE DEATH CHECK] deadPlayerId="
+                << target->GetPlayerId()
+                << " carrier=" << state.spikeCarrierPlayerId
+                << " planted=" << state.spikePlanted
+                << std::endl;
+        }
+    }
+
     TryResolveRoundByElimination(roomId);
 }

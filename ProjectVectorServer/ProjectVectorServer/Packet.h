@@ -855,8 +855,67 @@ struct SC_SpikePlanted
 struct SC_SpikeDropped
 {
     PacketHeader header;
+
     float x;
     float y;
     float z;
+
+    float dirX;
+    float dirY;
+    float dirZ;
+
+    uint32_t dropperPlayerId;
+};
+
+struct CS_SpikeDefuseStart
+{
+    PacketHeader header;
+};
+
+struct CS_SpikeDefuseCancel
+{
+    PacketHeader header;
+};
+
+struct CS_SpikeDefuseHalf
+{
+    PacketHeader header;
+};
+
+struct SC_SpikeDefuseState
+{
+    PacketHeader header;
+
+    uint8_t state;
+    // 0 = cancel/idle
+    // 1 = start
+    // 2 = half
+
+    uint8_t halfDefused;
+    uint32_t defuserPlayerId;
+};
+
+struct CS_SpikeDefuseComplete
+{
+    PacketHeader header;
+};
+
+struct SC_SpikeDefused
+{
+    PacketHeader header;
+    uint32_t defuserPlayerId;
+};
+
+struct CS_SpikeDropRequest
+{
+    PacketHeader header;
+
+    float x;
+    float y;
+    float z;
+
+    float dirX;
+    float dirY;
+    float dirZ;
 };
 #pragma pack(pop)

@@ -94,6 +94,8 @@ public:
 
     void SetYaw(float yaw) { rotationYaw_ = yaw; }
     float GetYaw() const { return rotationYaw_; }
+    void SetPitch(float pitch) { rotationPitch_ = pitch; }
+    float GetPitch() const { return rotationPitch_; }
 
     void SendHello(uint32_t myId);
     void SendSpawn(uint32_t playerId, float x, float y, float z);
@@ -148,6 +150,7 @@ private:
     uint32_t playerId_ = 0;
     Vector3 position_{ 0.f, 1.f, 0.f };
     float rotationYaw_ = 0.f;
+    float rotationPitch_ = 0.0f;
 
     int maxHp_ = 100;
     int hp_ = 100;

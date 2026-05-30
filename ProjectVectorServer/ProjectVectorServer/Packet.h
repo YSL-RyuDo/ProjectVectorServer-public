@@ -612,6 +612,7 @@ struct CS_MoveState
     float y;
     float z;
     float yaw;
+    float pitch;
 };
 
 struct SC_MoveState
@@ -622,6 +623,7 @@ struct SC_MoveState
     float y;
     float z;
     float yaw;
+    float pitch;
 };
 
 struct CS_Hit
@@ -917,5 +919,28 @@ struct CS_SpikeDropRequest
     float dirX;
     float dirY;
     float dirZ;
+};
+
+struct SC_WeaponSwitchNotify
+{
+    PacketHeader header;
+
+    uint32_t playerId;
+    int weaponId;
+};
+
+struct CS_ADSState
+{
+    PacketHeader header;
+
+    uint8_t isADS;
+};
+
+struct SC_ADSState
+{
+    PacketHeader header;
+
+    uint32_t playerId;
+    uint8_t isADS;
 };
 #pragma pack(pop)

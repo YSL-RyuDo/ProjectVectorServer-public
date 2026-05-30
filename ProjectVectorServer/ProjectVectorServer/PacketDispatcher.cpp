@@ -28,11 +28,11 @@ namespace
     constexpr uint16_t SPIKE_EXPLODE_SECONDS = 35;
 
     // 정규전 기준 6선승
-    constexpr uint8_t MATCH_WIN_ROUND_COUNT = 6;
+    constexpr uint8_t MATCH_WIN_ROUND_COUNT = 3;
     // 5라운드 종료 후 공수 전환
-    constexpr uint8_t SIDE_SWAP_AFTER_ROUND = 5;
+    constexpr uint8_t SIDE_SWAP_AFTER_ROUND = 2;
     //5:5 이후 11라운드부터 듀스
-    constexpr uint8_t OVERTIME_START_ROUND = 11;
+    constexpr uint8_t OVERTIME_START_ROUND = 4;
 
     constexpr uint8_t OVERTIME_TRIGGER_SCORE = MATCH_WIN_ROUND_COUNT - 1;
     constexpr uint8_t SECOND_HALF_END_ROUND = OVERTIME_START_ROUND - 1;
@@ -3675,6 +3675,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
         session->SetPosition(pkt->x, pkt->y, pkt->z);
         session->SetYaw(pkt->yaw);
+        session->SetPitch(pkt->pitch);
 
         SC_MoveState out{};
         out.header.size = sizeof(out);
@@ -3685,6 +3686,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         out.y = pkt->y;
         out.z = pkt->z;
         out.yaw = pkt->yaw;
+        out.pitch = pkt->pitch;
 
         BroadcastToRoom(roomId, &out);
 
@@ -3723,6 +3725,43 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             std::cout << "[HIT BLOCK] different room. attacker="
                 << session->GetPlayerId()
                 << " target=" << target->GetPlayerId()
+                << std::endl;
+            break;
+        }
+
+        RoomMember attackerMember{};
+        RoomMember targetMember{};
+
+        if (!RoomManager::Instance().GetMember(
+            roomId,
+            session->GetPlayerId(),
+            attackerMember))
+        {
+            std::cout << "[HIT BLOCK] attacker member not found. attacker="
+                << session->GetPlayerId()
+                << " roomId=" << roomId
+                << std::endl;
+            break;
+        }
+
+        if (!RoomManager::Instance().GetMember(
+            roomId,
+            target->GetPlayerId(),
+            targetMember))
+        {
+            std::cout << "[HIT BLOCK] target member not found. target="
+                << target->GetPlayerId()
+                << " roomId=" << roomId
+                << std::endl;
+            break;
+        }
+
+        if (attackerMember.team == targetMember.team)
+        {
+            std::cout << "[HIT BLOCK] friendly fire blocked. attacker="
+                << session->GetPlayerId()
+                << " target=" << target->GetPlayerId()
+                << " team=" << static_cast<int>(attackerMember.team)
                 << std::endl;
             break;
         }
@@ -3809,6 +3848,16 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             break;
         }
 
+        uint32_t roomId = session->GetCurrentRoomId();
+
+        if (roomId == 0)
+        {
+            std::cout << "[WEAPON SWITCH BLOCK] roomId is 0 playerId="
+                << session->GetPlayerId()
+                << std::endl;
+            break;
+        }
+
         if (!session->HasWeapon(pkt->weaponId))
         {
             std::cout << "[WEAPON SWITCH BLOCK] not owned playerId="
@@ -3824,9 +3873,59 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         if (weaponState != nullptr)
             SendAmmoUpdate(session, *weaponState);
 
-        std::cout << "[WEAPON SWITCH] playerId="
+        SC_WeaponSwitchNotify out{};
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_WEAPON_SWITCH_NOTIFY);
+
+        out.playerId = session->GetPlayerId();
+        out.weaponId = pkt->weaponId;
+
+        BroadcastToRoom(roomId, &out);
+
+        std::cout << "[WEAPON SWITCH BROADCAST] playerId="
             << session->GetPlayerId()
             << " weaponId=" << pkt->weaponId
+            << " roomId=" << roomId
+            << std::endl;
+
+        break;
+    }
+
+    case PacketType::PKT_CS_ADS_STATE:
+    {
+        auto* pkt = reinterpret_cast<CS_ADSState*>(header);
+
+        if (session->GetState() != SessionState::IN_GAME)
+        {
+            std::cout << "[ADS BLOCK] not in game playerId="
+                << session->GetPlayerId()
+                << std::endl;
+            break;
+        }
+
+        uint32_t roomId = session->GetCurrentRoomId();
+
+        if (roomId == 0)
+        {
+            std::cout << "[ADS BLOCK] roomId is 0 playerId="
+                << session->GetPlayerId()
+                << std::endl;
+            break;
+        }
+
+        SC_ADSState out{};
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_ADS_STATE);
+
+        out.playerId = session->GetPlayerId();
+        out.isADS = pkt->isADS != 0 ? 1 : 0;
+
+        BroadcastToRoom(roomId, &out);
+
+        std::cout << "[ADS STATE BROADCAST] playerId="
+            << session->GetPlayerId()
+            << " isADS=" << static_cast<int>(out.isADS)
+            << " roomId=" << roomId
             << std::endl;
 
         break;

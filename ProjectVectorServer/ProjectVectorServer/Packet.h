@@ -692,6 +692,8 @@ struct ScoreboardMemberInfo
     int32_t kills;
     int32_t deaths;
     int32_t assists;
+
+    int32_t credits;
 };
 
 struct SC_ScoreboardUpdate

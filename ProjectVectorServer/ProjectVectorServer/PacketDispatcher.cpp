@@ -7,6 +7,8 @@
 #include "RoomManager.h"
 #include "ServerWeaponData.h"
 
+#include<fstream>
+#include<sstream>
 #include <cstring>
 #include <windows.h>
 #include <unordered_map>
@@ -65,6 +67,9 @@ namespace
         uint8_t scoreA = 0;
         uint8_t scoreB = 0;
         
+        uint8_t loseStreakA = 0;
+        uint8_t loseStreakB = 0;
+
         uint32_t spikeCarrierPlayerId = 0;
         bool spikePlanted = false;
 
@@ -87,6 +92,95 @@ namespace
     std::mutex g_resultLeaveMutex;
     std::unordered_map<uint32_t, std::unordered_set<uint32_t>> g_resultLeavePlayers;
 
+    std::unordered_map<std::string, int> g_creditRewards;
+    std::once_flag g_creditRewardLoadOnce;
+
+    constexpr const char* CREDIT_REWARD_CSV_PATH = "CreditRewardTable.csv";
+
+    void CreateDefaultCreditRewardCsvIfMissing()
+    {
+        std::ifstream check(CREDIT_REWARD_CSV_PATH);
+
+		if (check.good())
+			return;
+
+        std::ofstream out(CREDIT_REWARD_CSV_PATH);
+
+        out << "key,credit\n";
+        out << "ROUND_START_HALF,800\n";
+        out << "KILL,300\n";
+        out << "SPIKE_PLANT,300\n";
+        out << "ROUND_WIN,2500\n";
+        out << "LOSE_STREAK_1,1800\n";
+        out << "LOSE_STREAK_2,2100\n";
+        out << "LOSE_STREAK_3_PLUS,2400\n";
+        out << "SURVIVE_DEFEAT,1000\n";
+        out << "OVERTIME,5000\n";
+
+        std::cout << "[CREDIT CSV CREATED] path="
+            << CREDIT_REWARD_CSV_PATH
+            << std::endl;
+    }
+
+    void LoadCreditRewardTable()
+    {
+        CreateDefaultCreditRewardCsvIfMissing();
+
+		std::ifstream file(CREDIT_REWARD_CSV_PATH);
+
+        if (!file.is_open())
+        {
+			std::cout << "[CREDIT CSV LOAD FAILED] path="
+				<< CREDIT_REWARD_CSV_PATH
+				<< std::endl;
+            return;
+        }
+
+        std::string line;
+
+        std::getline(file, line);
+        while (std::getline(file, line))
+        {
+			if (line.empty())
+				continue;
+
+			std::stringstream ss(line);
+
+            std::string key;
+            std::string creditText;
+
+			std::getline(ss, key, ',');
+			std::getline(ss, creditText, ',');
+			
+			if (key.empty() || creditText.empty())
+				continue;
+
+			int credit = std::stoi(creditText);
+			g_creditRewards[key] = credit;
+
+			std::cout << "[CREDIT REWARD LOADED] key="
+				<< key
+				<< " credit=" << credit
+				<< std::endl;
+        }
+    }
+
+    int GetCreditReward(const std::string& key)
+    {
+        std::call_once(g_creditRewardLoadOnce, LoadCreditRewardTable);
+
+        auto it = g_creditRewards.find(key);
+
+        if (it != g_creditRewards.end())
+            return it->second;
+
+        std::cout << "[CREDIT REWARD MISSING] key="
+            << key
+            << std::endl;
+
+        return 0;
+    }
+
     void TryResolveRoundByElimination(uint32_t roomId);
     void StartRoundEndThread(uint32_t roomId, RoomTeam winnerTeam, bool matchEnd);
     void ResetRound(uint32_t roomId);
@@ -103,6 +197,10 @@ namespace
     void StartSpikeTimerThread(uint32_t roomId);
     void ResolveRoundBySpikeExplode(uint32_t roomId);
 
+    void ApplyRoundEndCredits(uint32_t roomId,RoomTeam winnerTeam,RoundWinReason winReason);
+
+    void SetAllPlayerCreditsInRoom(uint32_t roomId,int credit);
+
     void BroadcastSpikeDefuseState(uint32_t roomId, bool halfDefused, uint32_t defuserPlayerId);
 
     void ResetMatchRuntimeState(uint32_t roomId)
@@ -113,6 +211,9 @@ namespace
         state.currentRound = 1;
         state.scoreA = 0;
         state.scoreB = 0;
+
+		state.loseStreakA = 0;
+		state.loseStreakB = 0;
 
         state.spikeCarrierPlayerId = 0;
         state.spikePlanted = false;
@@ -1031,6 +1132,7 @@ namespace
                 info.kills = stats.kills;
                 info.deaths = stats.deaths;
                 info.assists = stats.assists;
+                info.credits = memberSession->GetCredits();
 
                 count++;
             }
@@ -1060,6 +1162,9 @@ namespace
                 continue;
 
             playerSession->ResetMatchStats();
+            playerSession->ResetCredits();
+            playerSession->SetCredits(GetCreditReward("ROUND_START_HALF"));
+
             playerSession->ClearLastDamager();
             playerSession->ClearAssistDamageRecords();
             playerSession->InitRoundState();
@@ -1408,6 +1513,9 @@ namespace
 
         SC_RoundReset out{};
 
+        bool isSideSwapStartRound = false;
+        bool isOvertimeStartRound = false;
+
         out.header.size = sizeof(out);
         out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_ROUND_RESET);
 
@@ -1418,6 +1526,20 @@ namespace
 
             state.currentRound++;
             state.roundResolving = false;
+
+            if (state.currentRound == SIDE_SWAP_AFTER_ROUND + 1)
+            {
+                state.loseStreakA = 0;
+                state.loseStreakB = 0;
+                isSideSwapStartRound = true;
+            }
+
+            if (state.currentRound == OVERTIME_START_ROUND)
+            {
+                state.loseStreakA = 0;
+                state.loseStreakB = 0;
+                isOvertimeStartRound = true;
+            }
 
             state.spikeCarrierPlayerId = 0;
             state.spikePlanted = false;
@@ -1462,11 +1584,7 @@ namespace
                 out.currentRound
             );
 
-            // 실제 팀은 절대 바꾸지 않는다.
-            // A팀은 항상 블루, B팀은 항상 레드.
             info.actualTeam = static_cast<uint8_t>(member.team);
-
-            // 이번 라운드에 어디서 스폰할지만 따로 보낸다.
             info.spawnTeam = static_cast<uint8_t>(spawnRoleTeam);
 
             info.slotIndex = member.slotIndex;
@@ -1506,6 +1624,32 @@ namespace
             << " scoreB=" << static_cast<int>(out.scoreB)
             << " memberCount=" << static_cast<int>(out.memberCount)
             << std::endl;
+
+        if (isSideSwapStartRound)
+        {
+            int halfStartCredit = GetCreditReward("ROUND_START_HALF");
+
+            SetAllPlayerCreditsInRoom(roomId, halfStartCredit);
+            BroadcastScoreboardUpdate(roomId);
+
+            std::cout << "[CREDIT HALF START] roomId="
+                << roomId
+                << " credit=" << halfStartCredit
+                << std::endl;
+        }
+
+        if (isOvertimeStartRound)
+        {
+            int overtimeCredit = GetCreditReward("OVERTIME");
+
+            SetAllPlayerCreditsInRoom(roomId, overtimeCredit);
+            BroadcastScoreboardUpdate(roomId);
+
+            std::cout << "[CREDIT OVERTIME START] roomId="
+                << roomId
+                << " credit=" << overtimeCredit
+                << std::endl;
+        }
 
         StartGamePrepareTimerThread(roomId);
     }
@@ -1719,6 +1863,10 @@ namespace
             winReason
         );
 
+		ApplyRoundEndCredits(roomId, winnerTeam, winReason);
+
+        BroadcastScoreboardUpdate(roomId);
+
         StartRoundEndThread(
             roomId,
             winnerTeam,
@@ -1901,6 +2049,14 @@ namespace
             RoundWinReason::ATTACK_SPIKE_EXPLODE
         );
 
+        ApplyRoundEndCredits(
+            roomId,
+            winnerTeam,
+            RoundWinReason::ATTACK_SPIKE_EXPLODE
+        );
+
+        BroadcastScoreboardUpdate(roomId);
+
         StartRoundEndThread(
             roomId,
             winnerTeam,
@@ -1985,6 +2141,14 @@ namespace
             matchEnd,
             RoundWinReason::DEFENSE_TIME_OUT
         );
+
+        ApplyRoundEndCredits(
+            roomId,
+            winnerTeam,
+            RoundWinReason::DEFENSE_TIME_OUT
+        );
+
+        BroadcastScoreboardUpdate(roomId);
 
         StartRoundEndThread(
             roomId,
@@ -2174,6 +2338,134 @@ namespace
             << " half=" << static_cast<int>(out.halfDefused)
             << " defuser=" << defuserPlayerId
             << std::endl;
+    }
+
+    void SetAllPlayerCreditsInRoom(uint32_t roomId, int credit)
+    {
+        Room room{};
+
+        if (!RoomManager::Instance().GetRoom(roomId, room))
+            return;
+
+        for (const RoomMember& member : room.members)
+        {
+            if (member.team == RoomTeam::OBSERVER)
+                continue;
+
+            Session* s = SessionManager::Instance().Find(member.playerId);
+
+            if (s == nullptr)
+                continue;
+
+            s->SetCredits(credit);
+        }
+        std::cout << "[CREDITS SET] roomId="
+            << roomId
+            << " credits=" << credit
+            << std::endl;
+    }
+
+    std::string GetLoseStreakRewardKey(uint8_t loseStreak)
+    {
+        if (loseStreak <= 1)
+            return "LOSE_STREAK_1";
+
+        if (loseStreak == 2)
+            return "LOSE_STREAK_2";
+
+        return "LOSE_STREAK_3_PLUS";
+    }
+
+    void ApplyRoundEndCredits(uint32_t roomId, RoomTeam winnerTeam, RoundWinReason winReason)
+    {
+        Room room{};
+
+		if (!RoomManager::Instance().GetRoom(roomId, room))
+			return;
+
+		RoomTeam loserTeam = winnerTeam == RoomTeam::A ? RoomTeam::B : RoomTeam::A;
+
+        uint8_t loserStreak = 1;
+
+        {
+            std::lock_guard<std::mutex> lock(g_matchStateMutex);
+
+			MatchRuntimeState& state = g_matchStates[roomId];
+
+			if (winnerTeam == RoomTeam::A)
+			{
+				state.loseStreakA = 0;
+
+                if (state.loseStreakB < 3)
+                    state.loseStreakB++;
+
+                loserStreak = state.loseStreakB;
+			}
+			else
+			{
+                state.loseStreakB = 0;
+
+				if (state.loseStreakA < 3)
+					state.loseStreakA++;
+
+				loserStreak = state.loseStreakA;
+			}
+        }
+
+        int winCredit = GetCreditReward("ROUND_WIN");
+        int loseCredit = GetCreditReward(GetLoseStreakRewardKey(loserStreak));
+        int surviveDefeatCredit = GetCreditReward("SURVIVE_DEFEAT");
+
+        for (const RoomMember& member : room.members)
+        {
+			if (member.team == RoomTeam::OBSERVER)
+				continue;
+			
+            Session* s = SessionManager::Instance().Find(member.playerId);
+		    
+            if (s == nullptr)
+				continue;
+
+            if (member.team == winnerTeam)
+            {
+                s->AddCredits(winCredit);
+                
+                std::cout << "[CREDIT ROUND WIN] playerId="
+                    << s->GetPlayerId()
+                    << " add=" << winCredit
+                    << " total=" << s->GetCredits()
+                    << std::endl;
+
+                continue;
+            }
+
+            bool isSurviveDefeat =
+                member.team == loserTeam &&
+                winReason == RoundWinReason::DEFENSE_TIME_OUT &&
+                !s->IsDead();
+
+            if (isSurviveDefeat)
+            {
+                s->AddCredits(surviveDefeatCredit);
+
+                std::cout << "[CREDIT SURVIVE DEFEAT] playerId="
+                    << s->GetPlayerId()
+                    << " add=" << surviveDefeatCredit
+                    << " total=" << s->GetCredits()
+                    << std::endl;
+            }
+            else
+            {
+                s->AddCredits(loseCredit);
+
+                std::cout << "[CREDIT ROUND LOSE] playerId="
+                    << s->GetPlayerId()
+                    << " streak=" << static_cast<int>(loserStreak)
+                    << " add=" << loseCredit
+                    << " total=" << s->GetCredits()
+                    << std::endl;
+            }
+        }
     }
 }
 
@@ -4311,6 +4603,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
         break;
     }
+
     case PacketType::PKT_CS_SPIKE_PLANT_COMPLETE:
     {
         auto* pkt = reinterpret_cast<CS_SpikePlantComplete*>(header);
@@ -4366,6 +4659,18 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
                 pkt->y,
                 pkt->z
             );
+
+            int plantCredit = GetCreditReward("SPIKE_PLANT");
+
+            session->AddCredits(plantCredit);
+
+            std::cout << "[CREDIT SPIKE PLANT] playerId="
+                << session->GetPlayerId()
+                << " add=" << plantCredit
+                << " total=" << session->GetCredits()
+                << std::endl;
+
+            BroadcastScoreboardUpdate(roomId);
 
             StartSpikeTimerThread(roomId);
         }
@@ -4668,7 +4973,15 @@ void PacketDispatcher::HandleDeath(Session* target)
     if (killer != nullptr && killer != target)
     {
         AddKillStatByRound(killer, roomId);
+        killer->AddCredits(GetCreditReward("KILL"));
+
         AddDeathStatByRound(target, roomId);
+
+        std::cout << "[CREDIT KILL] killer="
+            << killer->GetPlayerId()
+            << " add=" << GetCreditReward("KILL")
+            << " total=" << killer->GetCredits()
+            << std::endl;
 
         std::vector<uint32_t> assistPlayerIds =
             target->GetAssistPlayerIds(killerId, ASSIST_VALID_SECONDS);

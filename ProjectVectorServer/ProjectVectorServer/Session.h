@@ -134,6 +134,27 @@ public:
     void AddAssistDamageRecord(uint32_t attackerPlayerId, int damage);
     std::vector<uint32_t> GetAssistPlayerIds(uint32_t killerPlayerId, int validSeconds) const;
     void ClearAssistDamageRecords();
+
+    int GetCredits() const { return credits_; }
+
+    void SetCredits(int credits)
+    {
+		credits_ = credits;
+
+		if (credits_ < 0)
+			credits_ = 0;
+
+        if (credits_>9000)
+			credits_ = 9000;
+    }
+
+	void AddCredits(int amount)
+	{
+		SetCredits(credits_ + amount);
+	}
+
+	void ResetCredits() { credits_ = 0; }
+
 private:
     void ProcessPackets();
 
@@ -157,6 +178,7 @@ private:
 
     int maxBarrier_ = 0;
     int barrier_ = 0;
+    int credits_ = 0;
 
     bool isDead_ = false;
 

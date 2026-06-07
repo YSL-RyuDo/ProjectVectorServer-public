@@ -155,6 +155,16 @@ public:
 
 	void ResetCredits() { credits_ = 0; }
 
+    void SetAnimIndex(uint8_t animIndex)
+    {
+        animIndex_ = animIndex;
+    }
+
+    uint8_t GetAnimIndex() const
+    {
+        return animIndex_;
+    }
+
 private:
     void ProcessPackets();
 
@@ -188,4 +198,6 @@ private:
     PlayerMatchStats matchStats_;
     uint32_t lastDamagerPlayerId_ = 0;
     std::unordered_map<uint32_t, AssistDamageRecord> assistDamageRecords_;
+
+    uint8_t animIndex_ = 0;
 };

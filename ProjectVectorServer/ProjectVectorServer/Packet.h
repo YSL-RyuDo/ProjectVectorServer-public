@@ -608,22 +608,31 @@ struct SC_DespawnPlayer
 struct CS_MoveState
 {
     PacketHeader header;
+
     float x;
     float y;
     float z;
+
     float yaw;
     float pitch;
+
+    uint8_t animIndex;
 };
 
 struct SC_MoveState
 {
     PacketHeader header;
+
     uint32_t playerId;
+
     float x;
     float y;
     float z;
+
     float yaw;
     float pitch;
+
+    uint8_t animIndex;
 };
 
 struct CS_Hit

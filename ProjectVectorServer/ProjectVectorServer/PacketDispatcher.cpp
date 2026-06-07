@@ -3969,6 +3969,15 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         session->SetYaw(pkt->yaw);
         session->SetPitch(pkt->pitch);
 
+        uint8_t animIndex = pkt->animIndex;
+
+        // 서버 방어 코드
+        // 0 = Idle, 1 = Walk, 2 = Crouch
+        if (animIndex > 2)
+            animIndex = 0;
+
+        session->SetAnimIndex(animIndex);
+
         SC_MoveState out{};
         out.header.size = sizeof(out);
         out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_MOVE_STATE);
@@ -3979,6 +3988,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         out.z = pkt->z;
         out.yaw = pkt->yaw;
         out.pitch = pkt->pitch;
+        out.animIndex = animIndex;
 
         BroadcastToRoom(roomId, &out);
 

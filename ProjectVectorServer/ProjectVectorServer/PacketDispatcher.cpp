@@ -30,14 +30,15 @@ namespace
     constexpr uint16_t SPIKE_EXPLODE_SECONDS = 35;
 
     // 정규전 기준 6선승
-    constexpr uint8_t MATCH_WIN_ROUND_COUNT = 3;
+    constexpr uint8_t MATCH_WIN_ROUND_COUNT = 6;
     // 5라운드 종료 후 공수 전환
-    constexpr uint8_t SIDE_SWAP_AFTER_ROUND = 2;
+    constexpr uint8_t SIDE_SWAP_AFTER_ROUND = 5;
     //5:5 이후 11라운드부터 듀스
-    constexpr uint8_t OVERTIME_START_ROUND = 4;
+    constexpr uint8_t OVERTIME_START_ROUND = 11;
 
     constexpr uint8_t OVERTIME_TRIGGER_SCORE = MATCH_WIN_ROUND_COUNT - 1;
     constexpr uint8_t SECOND_HALF_END_ROUND = OVERTIME_START_ROUND - 1;
+    constexpr int OVERTIME_ROUND_CREDIT = 6000;
 
     bool IsOvertimeScore(uint8_t scoreA, uint8_t scoreB)
     {
@@ -66,7 +67,7 @@ namespace
         uint8_t currentRound = 1;
         uint8_t scoreA = 0;
         uint8_t scoreB = 0;
-        
+
         uint8_t loseStreakA = 0;
         uint8_t loseStreakB = 0;
 
@@ -75,7 +76,8 @@ namespace
 
         uint32_t spikeDefuserPlayerId = 0;
         bool spikeHalfDefused = false;
-        
+
+        bool buyPhase = true;
 
         bool isOvertime = false;
         bool roundResolving = false;
@@ -93,6 +95,62 @@ namespace
     std::unordered_map<uint32_t, std::unordered_set<uint32_t>> g_resultLeavePlayers;
 
     std::unordered_map<std::string, int> g_creditRewards;
+
+    struct StoreWeaponData
+    {
+        int weaponId = 0;
+        int price = 0;
+        bool purchasable = true;
+    };
+
+    struct StoreArmorData
+    {
+        int armorId = 0;
+        int price = 0;
+        int barrier = 0;
+    };
+
+    const std::unordered_map<int, StoreWeaponData> g_storeWeapons =
+    {
+        // 보조무기
+        { 0,  { 0,  0,    true } }, // P92 기본 권총
+        { 1,  { 1,  400,  true } }, // P1911
+        { 2,  { 2,  800,  true } }, // R1895
+
+        // SMG
+        { 3,  { 3,  1000, true } }, // UZI
+        { 4,  { 4,  1500, true } }, // UMP
+
+        // Shotgun
+        { 5,  { 5,  900,  true } }, // S1897
+        { 6,  { 6,  1800, true } }, // AA-12
+
+        // DMR
+        { 7,  { 7,  2000, true } }, // Dragunov
+
+        // AR
+        { 8,  { 8,  2500, true } }, // M416
+        { 9,  { 9,  2500, true } }, // AK47
+
+        // LMG
+        { 10, { 10, 3000, true } }, // M249
+
+        // SR
+        { 11, { 11, 1000, true } }, // Kar98
+        { 12, { 12, 4000, true } }, // AWM
+
+        // Knife는 상점 구매 불가
+        { 13, { 13, 0,    false } }
+    };
+
+    const std::unordered_map<int, StoreArmorData> g_storeArmors =
+    {
+        //{ 0, { 0, 500,  50 } },  // 경량 베리어
+        //{ 1, { 1, 1000, 100 } }  // 중량 베리어
+        { 0, { 0, 5,  50 } },  // 경량 베리어
+        { 1, { 1, 10, 100 } }  // 중량 베리어
+    };
+
     std::once_flag g_creditRewardLoadOnce;
 
     constexpr const char* CREDIT_REWARD_CSV_PATH = "CreditRewardTable.csv";
@@ -185,6 +243,21 @@ namespace
     void StartRoundEndThread(uint32_t roomId, RoomTeam winnerTeam, bool matchEnd);
     void ResetRound(uint32_t roomId);
 
+    bool IsKnifeWeapon(int weaponId);
+    bool IsPistolWeapon(int weaponId);
+    bool IsPrimaryWeapon(int weaponId);
+
+    bool FindOwnedWeaponByPredicate(
+        Session* session,
+        bool (*predicate)(int),
+        PlayerWeaponState& outWeapon);
+
+    void FillRoundResetWeaponSlots(
+        RoundResetMemberInfo& info,
+        Session* session);
+
+    void ClearDroppedWeaponsInRoom(uint32_t roomId);
+
     void StartRoundTimerThread(uint32_t roomId);
     void ResolveRoundByTimeOut(uint32_t roomId);
     RoomTeam GetDefenseTeam(uint8_t currentRound);
@@ -220,6 +293,8 @@ namespace
 
         state.spikeDefuserPlayerId = 0;
         state.spikeHalfDefused = false;
+
+        state.buyPhase = true;
 
         state.isOvertime = false;
         state.roundResolving = false;
@@ -1151,6 +1226,7 @@ namespace
     void BroadcastGameAllReady(const Room& room)
     {
         ResetMatchRuntimeState(room.roomId);
+        ClearDroppedWeaponsInRoom(room.roomId);
 
         for (const RoomMember& member : room.members)
         {
@@ -1203,6 +1279,37 @@ namespace
 
         BroadcastInitialHPToRoom(room);
         BroadcastScoreboardUpdate(room.roomId);
+    }
+
+    bool IsBuyPhase(uint32_t roomId)
+    {
+        std::lock_guard<std::mutex> lock(g_matchStateMutex);
+
+        auto it = g_matchStates.find(roomId);
+
+        if (it == g_matchStates.end())
+            return false;
+
+        return it->second.buyPhase &&
+            !it->second.roundResolving &&
+            !it->second.matchEnded;
+    }
+
+    void SetBuyPhase(uint32_t roomId, bool value)
+    {
+        std::lock_guard<std::mutex> lock(g_matchStateMutex);
+
+        auto it = g_matchStates.find(roomId);
+
+        if (it == g_matchStates.end())
+            return;
+
+        it->second.buyPhase = value;
+
+        std::cout << "[BUY PHASE SET] roomId="
+            << roomId
+            << " value=" << value
+            << std::endl;
     }
 
     void BroadcastGamePrepareTimer(const Room& room, uint16_t remainingSeconds)
@@ -1296,6 +1403,8 @@ namespace
                 std::cout << "[GAME PREPARE DONE] roomId="
                     << roomId
                     << std::endl;
+
+                SetBuyPhase(roomId, false);
 
                 StartRoundTimerThread(roomId);
             }
@@ -1511,10 +1620,14 @@ namespace
         if (!RoomManager::Instance().GetRoom(roomId, room))
             return;
 
+        ClearDroppedWeaponsInRoom(roomId);
+
         SC_RoundReset out{};
 
         bool isSideSwapStartRound = false;
         bool isOvertimeStartRound = false;
+        bool isOvertimeRound = false;
+        bool forceDefaultInventoryReset = false;
 
         out.header.size = sizeof(out);
         out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_ROUND_RESET);
@@ -1534,6 +1647,7 @@ namespace
                 isSideSwapStartRound = true;
             }
 
+            // 연장전 시작
             if (state.currentRound == OVERTIME_START_ROUND)
             {
                 state.loseStreakA = 0;
@@ -1541,11 +1655,24 @@ namespace
                 isOvertimeStartRound = true;
             }
 
+            // 연장전은 매 라운드 공수 교대 + 6000 크레딧
+            if (state.currentRound >= OVERTIME_START_ROUND)
+            {
+                isOvertimeRound = true;
+            }
+
+            // 공수 변경 시점, 연장전 라운드는 기본 상태로 초기화
+            forceDefaultInventoryReset =
+                isSideSwapStartRound ||
+                isOvertimeRound;
+
             state.spikeCarrierPlayerId = 0;
             state.spikePlanted = false;
 
             state.spikeDefuserPlayerId = 0;
             state.spikeHalfDefused = false;
+
+            state.buyPhase = true;
 
             out.currentRound = state.currentRound;
             out.scoreA = state.scoreA;
@@ -1571,7 +1698,19 @@ namespace
             if (playerSession == nullptr)
                 continue;
 
-            playerSession->InitRoundState();
+            bool wasDead = playerSession->IsDead();
+
+            if (forceDefaultInventoryReset || wasDead)
+            {
+                // 죽은 플레이어, 공수 변경, 연장전은 기본 장비로 초기화
+                playerSession->InitRoundState();
+            }
+            else
+            {
+                // 생존자는 들고 있던 무기 유지
+                playerSession->ResetRoundStateKeepInventory();
+            }
+
             playerSession->ClearLastDamager();
             playerSession->ClearAssistDamageRecords();
 
@@ -1609,7 +1748,7 @@ namespace
                 info.magAmmo = 0;
                 info.reserveAmmo = 0;
             }
-
+            FillRoundResetWeaponSlots(info, playerSession);
             count++;
         }
 
@@ -1625,7 +1764,7 @@ namespace
             << " memberCount=" << static_cast<int>(out.memberCount)
             << std::endl;
 
-        if (isSideSwapStartRound)
+        if (isSideSwapStartRound && !isOvertimeRound)
         {
             int halfStartCredit = GetCreditReward("ROUND_START_HALF");
 
@@ -1638,20 +1777,90 @@ namespace
                 << std::endl;
         }
 
-        if (isOvertimeStartRound)
+        if (isOvertimeRound)
         {
-            int overtimeCredit = GetCreditReward("OVERTIME");
-
-            SetAllPlayerCreditsInRoom(roomId, overtimeCredit);
+            SetAllPlayerCreditsInRoom(roomId, OVERTIME_ROUND_CREDIT);
             BroadcastScoreboardUpdate(roomId);
 
-            std::cout << "[CREDIT OVERTIME START] roomId="
+            std::cout << "[CREDIT OVERTIME ROUND] roomId="
                 << roomId
-                << " credit=" << overtimeCredit
+                << " credit=" << OVERTIME_ROUND_CREDIT
                 << std::endl;
         }
 
         StartGamePrepareTimerThread(roomId);
+    }
+
+    bool FindOwnedWeaponByPredicate(
+        Session* session,
+        bool (*predicate)(int),
+        PlayerWeaponState& outWeapon)
+    {
+        if (session == nullptr)
+            return false;
+
+        std::vector<PlayerWeaponState> ownedWeapons =
+            session->GetOwnedWeapons();
+
+        for (const PlayerWeaponState& weapon : ownedWeapons)
+        {
+            if (!weapon.owned)
+                continue;
+
+            if (predicate == nullptr)
+                continue;
+
+            if (!predicate(weapon.weaponId))
+                continue;
+
+            outWeapon = weapon;
+            return true;
+        }
+
+        return false;
+    }
+
+    void FillRoundResetWeaponSlots(
+        RoundResetMemberInfo& info,
+        Session* session)
+    {
+        info.primaryWeaponId = -1;
+        info.primaryMagAmmo = 0;
+        info.primaryReserveAmmo = 0;
+
+        info.pistolWeaponId = -1;
+        info.pistolMagAmmo = 0;
+        info.pistolReserveAmmo = 0;
+
+        info.knifeWeaponId = -1;
+        info.knifeMagAmmo = 0;
+        info.knifeReserveAmmo = 0;
+
+        if (session == nullptr)
+            return;
+
+        PlayerWeaponState weapon{};
+
+        if (FindOwnedWeaponByPredicate(session, IsPrimaryWeapon, weapon))
+        {
+            info.primaryWeaponId = weapon.weaponId;
+            info.primaryMagAmmo = weapon.magAmmo;
+            info.primaryReserveAmmo = weapon.reserveAmmo;
+        }
+
+        if (FindOwnedWeaponByPredicate(session, IsPistolWeapon, weapon))
+        {
+            info.pistolWeaponId = weapon.weaponId;
+            info.pistolMagAmmo = weapon.magAmmo;
+            info.pistolReserveAmmo = weapon.reserveAmmo;
+        }
+
+        if (FindOwnedWeaponByPredicate(session, IsKnifeWeapon, weapon))
+        {
+            info.knifeWeaponId = weapon.weaponId;
+            info.knifeMagAmmo = weapon.magAmmo;
+            info.knifeReserveAmmo = weapon.reserveAmmo;
+        }
     }
 
     void StartRoundEndThread(uint32_t roomId, RoomTeam winnerTeam, bool matchEnd)
@@ -2466,6 +2675,277 @@ namespace
                     << std::endl;
             }
         }
+    }
+
+    struct DroppedWeaponState
+    {
+        uint32_t dropId = 0;
+        uint32_t roomId = 0;
+
+        int weaponId = 0;
+        int magAmmo = 0;
+        int reserveAmmo = 0;
+
+        float x = 0.f;
+        float y = 0.f;
+        float z = 0.f;
+
+        float dirX = 0.f;
+        float dirY = 0.f;
+        float dirZ = 0.f;
+    };
+
+    std::mutex g_droppedWeaponMutex;
+    std::unordered_map<uint32_t, DroppedWeaponState> g_droppedWeapons;
+    uint32_t g_nextDroppedWeaponId = 1;
+
+    void ClearDroppedWeaponsInRoom(uint32_t roomId)
+    {
+        std::lock_guard<std::mutex> lock(g_droppedWeaponMutex);
+
+        int removedCount = 0;
+
+        for (auto it = g_droppedWeapons.begin(); it != g_droppedWeapons.end();)
+        {
+            if (it->second.roomId == roomId)
+            {
+                it = g_droppedWeapons.erase(it);
+                removedCount++;
+            }
+            else
+            {
+                ++it;
+            }
+        }
+
+        std::cout << "[DROPPED WEAPONS CLEAR] roomId="
+            << roomId
+            << " removedCount=" << removedCount
+            << std::endl;
+    }
+
+    bool IsKnifeWeapon(int weaponId)
+    {
+        const ServerWeaponData* data = ServerWeaponTable::Find(weaponId);
+
+        if (data == nullptr)
+            return false;
+
+        return data->weaponType == ServerWeaponType::Knife;
+    }
+
+    bool IsPistolWeapon(int weaponId)
+    {
+        const ServerWeaponData* data = ServerWeaponTable::Find(weaponId);
+
+        if (data == nullptr)
+            return false;
+
+        return data->weaponType == ServerWeaponType::Pistol;
+    }
+
+    bool IsPrimaryWeapon(int weaponId)
+    {
+        const ServerWeaponData* data = ServerWeaponTable::Find(weaponId);
+
+        if (data == nullptr)
+            return false;
+
+        return data->weaponType == ServerWeaponType::AR ||
+            data->weaponType == ServerWeaponType::SMG ||
+            data->weaponType == ServerWeaponType::Shotgun ||
+            data->weaponType == ServerWeaponType::DMR ||
+            data->weaponType == ServerWeaponType::LMG ||
+            data->weaponType == ServerWeaponType::SR;
+    }
+
+    int FindReplaceWeaponIdForPickup(Session* session, int pickedWeaponId)
+    {
+        if (session == nullptr)
+            return 0;
+
+        std::vector<PlayerWeaponState> ownedWeapons =
+            session->GetOwnedWeapons();
+
+        if (IsKnifeWeapon(pickedWeaponId))
+        {
+            for (const PlayerWeaponState& weapon : ownedWeapons)
+            {
+                if (IsKnifeWeapon(weapon.weaponId))
+                    return weapon.weaponId;
+            }
+
+            return 0;
+        }
+
+        if (IsPistolWeapon(pickedWeaponId))
+        {
+            for (const PlayerWeaponState& weapon : ownedWeapons)
+            {
+                if (IsPistolWeapon(weapon.weaponId))
+                    return weapon.weaponId;
+            }
+
+            return 0;
+        }
+
+        if (IsPrimaryWeapon(pickedWeaponId))
+        {
+            for (const PlayerWeaponState& weapon : ownedWeapons)
+            {
+                if (IsPrimaryWeapon(weapon.weaponId))
+                    return weapon.weaponId;
+            }
+
+            return 0;
+        }
+
+        return 0;
+    }
+
+    uint32_t CreateDroppedWeapon(
+        uint32_t roomId,
+        uint32_t dropperPlayerId,
+        int weaponId,
+        int magAmmo,
+        int reserveAmmo,
+        float x,
+        float y,
+        float z,
+        float dirX,
+        float dirY,
+        float dirZ)
+    {
+        uint32_t dropId = 0;
+
+        {
+            std::lock_guard<std::mutex> lock(g_droppedWeaponMutex);
+
+            dropId = g_nextDroppedWeaponId++;
+
+            DroppedWeaponState state{};
+            state.dropId = dropId;
+            state.roomId = roomId;
+            state.weaponId = weaponId;
+            state.magAmmo = magAmmo;
+            state.reserveAmmo = reserveAmmo;
+            state.x = x;
+            state.y = y;
+            state.z = z;
+            state.dirX = dirX;
+            state.dirY = dirY;
+            state.dirZ = dirZ;
+
+            g_droppedWeapons[dropId] = state;
+        }
+
+        SC_WeaponDropped out{};
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_WEAPON_DROPPED);
+
+        out.dropId = dropId;
+        out.dropperPlayerId = dropperPlayerId;
+        out.weaponId = weaponId;
+        out.magAmmo = magAmmo;
+        out.reserveAmmo = reserveAmmo;
+
+        out.x = x;
+        out.y = y;
+        out.z = z;
+
+        out.dirX = dirX;
+        out.dirY = dirY;
+        out.dirZ = dirZ;
+
+        BroadcastToRoom(roomId, &out);
+
+        std::cout << "[WEAPON DROPPED] roomId="
+            << roomId
+            << " dropId=" << dropId
+            << " weaponId=" << weaponId
+            << " ammo=" << magAmmo << "/" << reserveAmmo
+            << std::endl;
+
+        return dropId;
+    }
+
+    void BroadcastWeaponPickupNotify(
+        uint32_t roomId,
+        uint32_t dropId,
+        uint32_t pickerPlayerId,
+        int weaponId,
+        int magAmmo,
+        int reserveAmmo)
+    {
+        SC_WeaponPickupNotify out{};
+
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(
+            PacketType::PKT_SC_WEAPON_PICKUP_NOTIFY
+            );
+
+        out.dropId = dropId;
+        out.pickerPlayerId = pickerPlayerId;
+        out.weaponId = weaponId;
+        out.magAmmo = magAmmo;
+        out.reserveAmmo = reserveAmmo;
+
+        BroadcastToRoom(roomId, &out);
+    }
+
+    void BroadcastWeaponSwitchNotify(
+        uint32_t roomId,
+        uint32_t playerId,
+        int weaponId)
+    {
+        SC_WeaponSwitchNotify out{};
+
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(
+            PacketType::PKT_SC_WEAPON_SWITCH_NOTIFY
+            );
+
+        out.playerId = playerId;
+        out.weaponId = weaponId;
+
+        BroadcastToRoom(roomId, &out);
+    }
+
+    void SendStoreBuyResult(
+        Session* session,
+        StoreBuyResult result,
+        StoreItemType itemType,
+        int itemId,
+        int price,
+        int weaponId,
+        int magAmmo,
+        int reserveAmmo)
+    {
+        if (session == nullptr)
+            return;
+
+        SC_StoreBuyResult out{};
+
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(
+            PacketType::PKT_SC_STORE_BUY_RESULT
+            );
+
+        out.result = static_cast<uint8_t>(result);
+        out.itemType = static_cast<uint8_t>(itemType);
+
+        out.itemId = itemId;
+        out.price = price;
+        out.remainCredits = session->GetCredits();
+
+        out.weaponId = weaponId;
+        out.magAmmo = magAmmo;
+        out.reserveAmmo = reserveAmmo;
+
+        out.barrier = session->GetBarrier();
+        out.maxBarrier = session->GetMaxBarrier();
+
+        session->Send(&out);
     }
 }
 
@@ -4874,6 +5354,504 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         break;
     }
 
+    case PacketType::PKT_CS_WEAPON_DROP_REQUEST:
+    {
+        auto* pkt = reinterpret_cast<CS_WeaponDropRequest*>(header);
+
+        if (session->GetState() != SessionState::IN_GAME)
+            break;
+
+        uint32_t roomId = session->GetCurrentRoomId();
+
+        if (roomId == 0)
+            break;
+
+        int weaponId = pkt->weaponId;
+
+        if (!session->HasWeapon(weaponId))
+        {
+            std::cout << "[WEAPON DROP BLOCK] not owned. playerId="
+                << session->GetPlayerId()
+                << " weaponId=" << weaponId
+                << std::endl;
+            break;
+        }
+
+        PlayerWeaponState* weaponState = session->GetWeaponState(weaponId);
+
+        if (weaponState == nullptr)
+            break;
+
+        int magAmmo = weaponState->magAmmo;
+        int reserveAmmo = weaponState->reserveAmmo;
+
+        session->RemoveWeapon(weaponId);
+
+        CreateDroppedWeapon(
+            roomId,
+            session->GetPlayerId(),
+            weaponId,
+            magAmmo,
+            reserveAmmo,
+            pkt->x,
+            pkt->y,
+            pkt->z,
+            pkt->dirX,
+            pkt->dirY,
+            pkt->dirZ
+        );
+
+        int currentWeaponId = session->GetCurrentWeaponId();
+
+        PlayerWeaponState* currentState = session->GetWeaponState(currentWeaponId);
+
+        if (currentState != nullptr)
+            SendAmmoUpdate(session, *currentState);
+
+        std::cout << "[WEAPON DROP APPLY] playerId="
+            << session->GetPlayerId()
+            << " droppedWeaponId=" << weaponId
+            << " currentWeaponId=" << currentWeaponId
+            << std::endl;
+
+        break;
+    }
+
+    case PacketType::PKT_CS_WEAPON_PICKUP_REQUEST:
+    {
+        auto* pkt = reinterpret_cast<CS_WeaponPickupRequest*>(header);
+
+        if (session->GetState() != SessionState::IN_GAME)
+            break;
+
+        uint32_t roomId = session->GetCurrentRoomId();
+
+        if (roomId == 0)
+            break;
+
+        DroppedWeaponState dropped{};
+
+        {
+            std::lock_guard<std::mutex> lock(g_droppedWeaponMutex);
+
+            auto it = g_droppedWeapons.find(pkt->dropId);
+
+            if (it == g_droppedWeapons.end())
+            {
+                std::cout << "[WEAPON PICKUP BLOCK] drop not found. dropId="
+                    << pkt->dropId
+                    << std::endl;
+                break;
+            }
+
+            if (it->second.roomId != roomId)
+            {
+                std::cout << "[WEAPON PICKUP BLOCK] different room. dropId="
+                    << pkt->dropId
+                    << std::endl;
+                break;
+            }
+
+            dropped = it->second;
+            g_droppedWeapons.erase(it);
+        }
+
+        int replaceWeaponId =
+            FindReplaceWeaponIdForPickup(session, dropped.weaponId);
+
+        if (replaceWeaponId != 0)
+        {
+            PlayerWeaponState* replaceState =
+                session->GetWeaponState(replaceWeaponId);
+
+            if (replaceState != nullptr)
+            {
+                int oldMag = replaceState->magAmmo;
+                int oldReserve = replaceState->reserveAmmo;
+
+                session->RemoveWeapon(replaceWeaponId);
+
+                Vector3 pos = session->GetPosition();
+
+                float yawRad = session->GetYaw() * 3.14159265f / 180.0f;
+
+                float dirX = sinf(yawRad);
+                float dirZ = cosf(yawRad);
+
+                float dropX = pos.x + dirX * 1.0f;
+                float dropY = pos.y + 0.6f;
+                float dropZ = pos.z + dirZ * 1.0f;
+
+                CreateDroppedWeapon(
+                    roomId,
+                    session->GetPlayerId(),
+                    replaceWeaponId,
+                    oldMag,
+                    oldReserve,
+                    dropX,
+                    dropY,
+                    dropZ,
+                    dirX,
+                    0.f,
+                    dirZ
+                );
+            }
+        }
+
+        session->GiveWeapon(
+            dropped.weaponId,
+            dropped.magAmmo,
+            dropped.reserveAmmo
+        );
+
+        session->SetCurrentWeaponId(dropped.weaponId);
+
+        PlayerWeaponState* newWeaponState =
+            session->GetWeaponState(dropped.weaponId);
+
+        if (newWeaponState != nullptr)
+            SendAmmoUpdate(session, *newWeaponState);
+
+        SC_WeaponPickupNotify out{};
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_WEAPON_PICKUP_NOTIFY);
+
+        out.dropId = dropped.dropId;
+        out.pickerPlayerId = session->GetPlayerId();
+        out.weaponId = dropped.weaponId;
+        out.magAmmo = dropped.magAmmo;
+        out.reserveAmmo = dropped.reserveAmmo;
+
+        BroadcastToRoom(roomId, &out);
+
+        std::cout << "[WEAPON PICKUP APPLY] playerId="
+            << session->GetPlayerId()
+            << " weaponId=" << dropped.weaponId
+            << " ammo=" << dropped.magAmmo << "/" << dropped.reserveAmmo
+            << std::endl;
+
+        break;
+    }
+
+    case PacketType::PKT_CS_STORE_BUY_REQUEST:
+    {
+        auto* pkt = reinterpret_cast<CS_StoreBuyRequest*>(header);
+
+        StoreItemType itemType =
+            static_cast<StoreItemType>(pkt->itemType);
+
+        if (session->GetState() != SessionState::IN_GAME)
+        {
+            SendStoreBuyResult(
+                session,
+                StoreBuyResult::NOT_IN_GAME,
+                itemType,
+                pkt->itemId,
+                0,
+                0,
+                0,
+                0
+            );
+            break;
+        }
+
+        uint32_t roomId = session->GetCurrentRoomId();
+
+        if (roomId == 0)
+        {
+            SendStoreBuyResult(
+                session,
+                StoreBuyResult::NOT_IN_GAME,
+                itemType,
+                pkt->itemId,
+                0,
+                0,
+                0,
+                0
+            );
+            break;
+        }
+
+        if (!IsBuyPhase(roomId))
+        {
+            SendStoreBuyResult(
+                session,
+                StoreBuyResult::NOT_BUY_PHASE,
+                itemType,
+                pkt->itemId,
+                0,
+                0,
+                0,
+                0
+            );
+            break;
+        }
+
+        if (itemType == StoreItemType::WEAPON)
+        {
+            auto it = g_storeWeapons.find(pkt->itemId);
+
+            if (it == g_storeWeapons.end() || !it->second.purchasable)
+            {
+                SendStoreBuyResult(
+                    session,
+                    StoreBuyResult::INVALID_ITEM,
+                    itemType,
+                    pkt->itemId,
+                    0,
+                    0,
+                    0,
+                    0
+                );
+                break;
+            }
+
+            StoreWeaponData storeData = it->second;
+
+            const ServerWeaponData* weaponData =
+                ServerWeaponTable::Find(storeData.weaponId);
+
+            if (weaponData == nullptr)
+            {
+                SendStoreBuyResult(
+                    session,
+                    StoreBuyResult::INVALID_ITEM,
+                    itemType,
+                    pkt->itemId,
+                    storeData.price,
+                    storeData.weaponId,
+                    0,
+                    0
+                );
+                break;
+            }
+
+            if (session->GetCredits() < storeData.price)
+            {
+                SendStoreBuyResult(
+                    session,
+                    StoreBuyResult::NOT_ENOUGH_CREDIT,
+                    itemType,
+                    pkt->itemId,
+                    storeData.price,
+                    storeData.weaponId,
+                    0,
+                    0
+                );
+                break;
+            }
+
+            if (session->HasWeapon(storeData.weaponId))
+            {
+                SendStoreBuyResult(
+                    session,
+                    StoreBuyResult::ALREADY_OWNED,
+                    itemType,
+                    pkt->itemId,
+                    storeData.price,
+                    storeData.weaponId,
+                    0,
+                    0
+                );
+                break;
+            }
+
+            int replaceWeaponId =
+                FindReplaceWeaponIdForPickup(session, storeData.weaponId);
+
+            if (replaceWeaponId != 0)
+            {
+                PlayerWeaponState* oldWeaponState =
+                    session->GetWeaponState(replaceWeaponId);
+
+                int oldMagAmmo = 0;
+                int oldReserveAmmo = 0;
+
+                if (oldWeaponState != nullptr)
+                {
+                    oldMagAmmo = oldWeaponState->magAmmo;
+                    oldReserveAmmo = oldWeaponState->reserveAmmo;
+                }
+
+                Vector3 pos = session->GetPosition();
+
+                float yawRad = session->GetYaw() * 3.14159265f / 180.0f;
+
+                float dirX = sinf(yawRad);
+                float dirZ = cosf(yawRad);
+
+                float dropX = pos.x + dirX * 1.0f;
+                float dropY = pos.y + 0.6f;
+                float dropZ = pos.z + dirZ * 1.0f;
+
+                CreateDroppedWeapon(
+                    roomId,
+                    session->GetPlayerId(),
+                    replaceWeaponId,
+                    oldMagAmmo,
+                    oldReserveAmmo,
+                    dropX,
+                    dropY,
+                    dropZ,
+                    dirX,
+                    0.0f,
+                    dirZ
+                );
+
+                session->RemoveWeapon(replaceWeaponId);
+            }
+
+            session->AddCredits(-storeData.price);
+
+            session->GiveWeapon(
+                storeData.weaponId,
+                weaponData->magSize,
+                weaponData->maxReserveAmmo
+            );
+
+            session->SetCurrentWeaponId(storeData.weaponId);
+
+            PlayerWeaponState* newWeaponState =
+                session->GetWeaponState(storeData.weaponId);
+
+            if (newWeaponState != nullptr)
+                SendAmmoUpdate(session, *newWeaponState);
+
+            SendStoreBuyResult(
+                session,
+                StoreBuyResult::SUCCESS,
+                itemType,
+                pkt->itemId,
+                storeData.price,
+                storeData.weaponId,
+                weaponData->magSize,
+                weaponData->maxReserveAmmo
+            );
+
+            // dropId = 0 이면 상점 구매다.
+            // 클라는 바닥 아이템 삭제하지 말고 무기만 적용하면 된다.
+            BroadcastWeaponPickupNotify(
+                roomId,
+                0,
+                session->GetPlayerId(),
+                storeData.weaponId,
+                weaponData->magSize,
+                weaponData->maxReserveAmmo
+            );
+
+            BroadcastWeaponSwitchNotify(
+                roomId,
+                session->GetPlayerId(),
+                storeData.weaponId
+            );
+
+            BroadcastScoreboardUpdate(roomId);
+
+            std::cout << "[STORE BUY WEAPON SUCCESS] playerId="
+                << session->GetPlayerId()
+                << " weaponId=" << storeData.weaponId
+                << " price=" << storeData.price
+                << " credits=" << session->GetCredits()
+                << std::endl;
+
+            break;
+        }
+
+        if (itemType == StoreItemType::ARMOR)
+        {
+            auto it = g_storeArmors.find(pkt->itemId);
+
+            if (it == g_storeArmors.end())
+            {
+                SendStoreBuyResult(
+                    session,
+                    StoreBuyResult::INVALID_ITEM,
+                    itemType,
+                    pkt->itemId,
+                    0,
+                    0,
+                    0,
+                    0
+                );
+                break;
+            }
+
+            StoreArmorData armorData = it->second;
+
+            if (session->GetMaxBarrier() >= armorData.barrier)
+            {
+                SendStoreBuyResult(
+                    session,
+                    StoreBuyResult::ALREADY_OWNED,
+                    itemType,
+                    pkt->itemId,
+                    armorData.price,
+                    0,
+                    0,
+                    0
+                );
+                break;
+            }
+
+            if (session->GetCredits() < armorData.price)
+            {
+                SendStoreBuyResult(
+                    session,
+                    StoreBuyResult::NOT_ENOUGH_CREDIT,
+                    itemType,
+                    pkt->itemId,
+                    armorData.price,
+                    0,
+                    0,
+                    0
+                );
+                break;
+            }
+
+            session->AddCredits(-armorData.price);
+            session->SetArmor(armorData.barrier);
+
+            SC_HPUpdate hpOut{};
+            FillHPUpdatePacket(hpOut, session);
+            BroadcastToRoom(roomId, &hpOut);
+
+            SendStoreBuyResult(
+                session,
+                StoreBuyResult::SUCCESS,
+                itemType,
+                pkt->itemId,
+                armorData.price,
+                0,
+                0,
+                0
+            );
+
+            BroadcastScoreboardUpdate(roomId);
+
+            std::cout << "[STORE BUY ARMOR SUCCESS] playerId="
+                << session->GetPlayerId()
+                << " armor=" << armorData.barrier
+                << " price=" << armorData.price
+                << " credits=" << session->GetCredits()
+                << std::endl;
+
+            break;
+        }
+
+        SendStoreBuyResult(
+            session,
+            StoreBuyResult::INVALID_ITEM,
+            itemType,
+            pkt->itemId,
+            0,
+            0,
+            0,
+            0
+        );
+
+        break;
+    }
+
     default:
     {
         std::cout << "[UNHANDLED PACKET] type=" << (uint16_t)type
@@ -5028,6 +6006,37 @@ void PacketDispatcher::HandleDeath(Session* target)
     }
 
     target->ClearAssistDamageRecords();
+
+    std::vector<PlayerWeaponState> ownedWeapons =
+        target->GetOwnedWeapons();
+
+    Vector3 deathPos = target->GetPosition();
+
+    int dropOffset = 0;
+
+    for (const PlayerWeaponState& weapon : ownedWeapons)
+    {
+        CreateDroppedWeapon(
+            roomId,
+            target->GetPlayerId(),
+            weapon.weaponId,
+            weapon.magAmmo,
+            weapon.reserveAmmo,
+            deathPos.x + 0.3f * dropOffset,
+            deathPos.y + 0.5f,
+            deathPos.z,
+            0.f,
+            0.f,
+            1.f
+        );
+
+        dropOffset++;
+    }
+
+    for (const PlayerWeaponState& weapon : ownedWeapons)
+    {
+        target->RemoveWeapon(weapon.weaponId);
+    }
 
     bool shouldDropSpike = false;
     Vector3 dropPos{};

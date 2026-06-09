@@ -720,9 +720,9 @@ struct RoundResetMemberInfo
 {
     uint32_t playerId;
 
-    uint8_t actualTeam; // 실제 팀: A=0, B=1
-    uint8_t spawnTeam;  // 스폰 팀: 공격스폰=0, 수비스폰=1
-    uint8_t slotIndex;  // 0, 1, 2
+    uint8_t actualTeam;
+    uint8_t spawnTeam;
+    uint8_t slotIndex;
 
     int hp;
     int barrier;
@@ -732,6 +732,19 @@ struct RoundResetMemberInfo
     int currentWeaponId;
     int magAmmo;
     int reserveAmmo;
+
+    // 라운드 리셋 시 클라 인벤토리 복구용
+    int primaryWeaponId;
+    int primaryMagAmmo;
+    int primaryReserveAmmo;
+
+    int pistolWeaponId;
+    int pistolMagAmmo;
+    int pistolReserveAmmo;
+
+    int knifeWeaponId;
+    int knifeMagAmmo;
+    int knifeReserveAmmo;
 };
 
 struct SC_RoundReset
@@ -953,5 +966,103 @@ struct SC_ADSState
 
     uint32_t playerId;
     uint8_t isADS;
+};
+
+struct CS_WeaponDropRequest
+{
+    PacketHeader header;
+
+    int32_t weaponId;
+
+    float x;
+    float y;
+    float z;
+
+    float dirX;
+    float dirY;
+    float dirZ;
+};
+
+struct SC_WeaponDropped
+{
+    PacketHeader header;
+
+    uint32_t dropId;
+    uint32_t dropperPlayerId;
+
+    int32_t weaponId;
+    int32_t magAmmo;
+    int32_t reserveAmmo;
+
+    float x;
+    float y;
+    float z;
+
+    float dirX;
+    float dirY;
+    float dirZ;
+};
+
+struct CS_WeaponPickupRequest
+{
+    PacketHeader header;
+
+    uint32_t dropId;
+};
+
+struct SC_WeaponPickupNotify
+{
+    PacketHeader header;
+
+    uint32_t dropId;
+    uint32_t pickerPlayerId;
+
+    int32_t weaponId;
+    int32_t magAmmo;
+    int32_t reserveAmmo;
+};
+
+enum class StoreItemType : uint8_t
+{
+    WEAPON = 0,
+    ARMOR = 1
+};
+
+enum class StoreBuyResult : uint8_t
+{
+    SUCCESS = 0,
+    NOT_IN_GAME = 1,
+    NOT_BUY_PHASE = 2,
+    INVALID_ITEM = 3,
+    NOT_ENOUGH_CREDIT = 4,
+    ALREADY_OWNED = 5,
+    FAILED = 6
+};
+
+struct CS_StoreBuyRequest
+{
+    PacketHeader header;
+
+    uint8_t itemType;   // 0 = weapon, 1 = armor
+    int32_t itemId;     // weaponId 또는 armorId
+};
+
+struct SC_StoreBuyResult
+{
+    PacketHeader header;
+
+    uint8_t result;
+    uint8_t itemType;
+
+    int32_t itemId;
+    int32_t price;
+    int32_t remainCredits;
+
+    int32_t weaponId;
+    int32_t magAmmo;
+    int32_t reserveAmmo;
+
+    int32_t barrier;
+    int32_t maxBarrier;
 };
 #pragma pack(pop)

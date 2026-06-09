@@ -110,11 +110,23 @@ public:
 
     void SetHP(int hp);
     void SetBarrier(int barrier);
+    void SetArmor(int armor)
+    {
+        maxBarrier_ = armor;
+        barrier_ = armor;
+
+        if (maxBarrier_ < 0)
+            maxBarrier_ = 0;
+
+        if (barrier_ < 0)
+            barrier_ = 0;
+    }
 
     void Damage(int amount);
 
     bool IsDead() const { return hp_ <= 0; }
     void InitRoundState();
+    void ResetRoundStateKeepInventory();
     int GetCurrentWeaponId() const { return currentWeaponId_; }
     void SetCurrentWeaponId(int weaponId) { currentWeaponId_ = weaponId; }
 
@@ -165,6 +177,9 @@ public:
         return animIndex_;
     }
 
+    bool RemoveWeapon(int weaponId);
+    std::vector<PlayerWeaponState> GetOwnedWeapons() const;
+
 private:
     void ProcessPackets();
 
@@ -192,7 +207,7 @@ private:
 
     bool isDead_ = false;
 
-    int currentWeaponId_ = 4; // ±âº» ±ÇÃÑ
+    int currentWeaponId_ = 0; // ±âº» ±ÇÃÑ
     std::unordered_map<int, PlayerWeaponState> weapons_;
 
     PlayerMatchStats matchStats_;

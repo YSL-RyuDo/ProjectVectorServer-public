@@ -9,7 +9,9 @@ enum class ServerWeaponType : uint8_t
     SMG = 2,
     LMG = 3,
     SR = 4,
-    Knife = 5
+    Knife = 5,
+    Shotgun = 6,
+    DMR = 7
 };
 
 struct ServerWeaponData

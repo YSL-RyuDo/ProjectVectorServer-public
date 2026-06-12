@@ -2762,7 +2762,7 @@ namespace
     int FindReplaceWeaponIdForPickup(Session* session, int pickedWeaponId)
     {
         if (session == nullptr)
-            return 0;
+            return -1;
 
         std::vector<PlayerWeaponState> ownedWeapons =
             session->GetOwnedWeapons();
@@ -2775,7 +2775,7 @@ namespace
                     return weapon.weaponId;
             }
 
-            return 0;
+            return -1;
         }
 
         if (IsPistolWeapon(pickedWeaponId))
@@ -2786,7 +2786,7 @@ namespace
                     return weapon.weaponId;
             }
 
-            return 0;
+            return -1;
         }
 
         if (IsPrimaryWeapon(pickedWeaponId))
@@ -2797,10 +2797,10 @@ namespace
                     return weapon.weaponId;
             }
 
-            return 0;
+            return -1;
         }
 
-        return 0;
+        return -1;
     }
 
     uint32_t CreateDroppedWeapon(
@@ -5459,7 +5459,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         int replaceWeaponId =
             FindReplaceWeaponIdForPickup(session, dropped.weaponId);
 
-        if (replaceWeaponId != 0)
+        if (replaceWeaponId >= 0)
         {
             PlayerWeaponState* replaceState =
                 session->GetWeaponState(replaceWeaponId);
@@ -5659,7 +5659,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             int replaceWeaponId =
                 FindReplaceWeaponIdForPickup(session, storeData.weaponId);
 
-            if (replaceWeaponId != 0)
+            if (replaceWeaponId >= 0)
             {
                 PlayerWeaponState* oldWeaponState =
                     session->GetWeaponState(replaceWeaponId);

@@ -477,13 +477,35 @@ bool Session::RemoveWeapon(int weaponId)
     if (it == weapons_.end())
         return false;
 
+    bool wasCurrentWeapon = currentWeaponId_ == weaponId;
+
     weapons_.erase(it);
 
-    if (currentWeaponId_ == weaponId)
-    {
-        int fallbackWeaponId = 0;
+    if (!wasCurrentWeapon)
+        return true;
 
-        // 칼이 아닌 무기를 우선 선택
+    int fallbackWeaponId = -1;
+
+    // 1순위: 권총
+    // P92 = 0, P1911 = 1, R1895 = 2
+    for (const auto& pair : weapons_)
+    {
+        const PlayerWeaponState& weapon = pair.second;
+
+        if (!weapon.owned)
+            continue;
+
+        if (weapon.weaponId >= 0 && weapon.weaponId <= 2)
+        {
+            fallbackWeaponId = weapon.weaponId;
+            break;
+        }
+    }
+
+    // 2순위: 주무기
+    // UZI~AWM = 3~12
+    if (fallbackWeaponId < 0)
+    {
         for (const auto& pair : weapons_)
         {
             const PlayerWeaponState& weapon = pair.second;
@@ -491,23 +513,30 @@ bool Session::RemoveWeapon(int weaponId)
             if (!weapon.owned)
                 continue;
 
-            if (weapon.weaponId == 13)
-                continue;
-
-            fallbackWeaponId = weapon.weaponId;
-            break;
+            if (weapon.weaponId >= 3 && weapon.weaponId <= 12)
+            {
+                fallbackWeaponId = weapon.weaponId;
+                break;
+            }
         }
-
-        // 없으면 Knife
-        if (fallbackWeaponId == 0 && HasWeapon(13))
-            fallbackWeaponId = 13;
-
-        currentWeaponId_ = fallbackWeaponId;
     }
+
+    // 3순위: Knife
+    if (fallbackWeaponId < 0 && HasWeapon(13))
+    {
+        fallbackWeaponId = 13;
+    }
+
+    // 진짜 아무것도 없으면 0으로 방어
+    if (fallbackWeaponId < 0)
+    {
+        fallbackWeaponId = 0;
+    }
+
+    currentWeaponId_ = fallbackWeaponId;
 
     return true;
 }
-
 std::vector<PlayerWeaponState> Session::GetOwnedWeapons() const
 {
     std::vector<PlayerWeaponState> result;

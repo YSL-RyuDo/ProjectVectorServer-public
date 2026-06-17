@@ -1337,17 +1337,22 @@ namespace
             << std::endl;
     }
 
-    void BroadcastToRoom(uint32_t roomId, void* packet)
+    void BroadcastPacketToRoomInternal(
+        uint32_t roomId,
+        void* packet)
     {
-        if (roomId == 0)
+        if (roomId == 0 || packet == nullptr)
             return;
 
         Room room{};
+
         if (!RoomManager::Instance().GetRoom(roomId, room))
         {
-            std::cout << "[BROADCAST ROOM FAIL] room not found roomId="
+            std::cout
+                << "[BROADCAST ROOM FAIL] room not found roomId="
                 << roomId
                 << std::endl;
+
             return;
         }
 
@@ -1356,11 +1361,13 @@ namespace
             if (member.team == RoomTeam::OBSERVER)
                 continue;
 
-            Session* target = SessionManager::Instance().Find(member.playerId);
-            if (target == nullptr)
+            Session* receiver =
+                SessionManager::Instance().Find(member.playerId);
+
+            if (receiver == nullptr)
                 continue;
 
-            target->Send(packet);
+            receiver->Send(packet);
         }
     }
 
@@ -1371,7 +1378,7 @@ namespace
         out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_ROUND_TIMER);
         out.remainingSeconds = remainingSeconds;
 
-        BroadcastToRoom(roomId, &out);
+        BroadcastPacketToRoomInternal(roomId, &out);
 
         std::cout << "[ROUND TIMER BROADCAST] roomId="
             << roomId
@@ -1442,7 +1449,7 @@ namespace
         out.winReason = static_cast<uint8_t>(winReason);
         out.delaySeconds = ROUND_END_DELAY_SECONDS;
 
-        BroadcastToRoom(roomId, &out);
+        BroadcastPacketToRoomInternal(roomId, &out);
 
         std::cout << "[ROUND RESULT] roomId="
             << roomId
@@ -1548,7 +1555,7 @@ namespace
 
         out.memberCount = count;
 
-        BroadcastToRoom(roomId, &out);
+        BroadcastPacketToRoomInternal(roomId, &out);
 
         std::cout << "[MATCH RESULT DETAIL] roomId="
             << roomId
@@ -1754,7 +1761,7 @@ namespace
 
         out.memberCount = count;
 
-        BroadcastToRoom(roomId, &out);
+        BroadcastPacketToRoomInternal(roomId, &out);
 
         std::cout << "[ROUND RESET] roomId="
             << roomId
@@ -2192,7 +2199,7 @@ namespace
         out.y = y;
         out.z = z;
 
-        BroadcastToRoom(roomId, &out);
+        BroadcastPacketToRoomInternal(roomId, &out);
 
         std::cout << "[SPIKE PLANTED] roomId="
             << roomId
@@ -2437,7 +2444,7 @@ namespace
 
         out.dropperPlayerId = dropperPlayerId;
 
-        BroadcastToRoom(roomId, &out);
+        BroadcastPacketToRoomInternal(roomId, &out);
     }
 
     void BroadcastSpikeDefused(uint32_t roomId, uint32_t defuserPlayerId)
@@ -2448,7 +2455,7 @@ namespace
         out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_SPIKE_DEFUSED);
         out.defuserPlayerId = defuserPlayerId;
 
-        BroadcastToRoom(roomId, &out);
+        BroadcastPacketToRoomInternal(roomId, &out);
 
         std::cout << "[SPIKE DEFUSED] roomId="
             << roomId
@@ -2539,7 +2546,7 @@ namespace
         out.halfDefused = halfDefused ? 1 : 0;
         out.defuserPlayerId = defuserPlayerId;
 
-        BroadcastToRoom(roomId, &out);
+        BroadcastPacketToRoomInternal(roomId, &out);
 
         std::cout << "[SPIKE DEFUSE STATE] roomId="
             << roomId
@@ -2857,7 +2864,7 @@ namespace
         out.dirY = dirY;
         out.dirZ = dirZ;
 
-        BroadcastToRoom(roomId, &out);
+        BroadcastPacketToRoomInternal(roomId, &out);
 
         std::cout << "[WEAPON DROPPED] roomId="
             << roomId
@@ -2890,7 +2897,7 @@ namespace
         out.magAmmo = magAmmo;
         out.reserveAmmo = reserveAmmo;
 
-        BroadcastToRoom(roomId, &out);
+        BroadcastPacketToRoomInternal(roomId, &out);
     }
 
     void BroadcastWeaponSwitchNotify(
@@ -2908,7 +2915,7 @@ namespace
         out.playerId = playerId;
         out.weaponId = weaponId;
 
-        BroadcastToRoom(roomId, &out);
+        BroadcastPacketToRoomInternal(roomId, &out);
     }
 
     void SendStoreBuyResult(
@@ -4470,7 +4477,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         out.pitch = pkt->pitch;
         out.animIndex = animIndex;
 
-        BroadcastToRoom(roomId, &out);
+        BroadcastPacketToRoomInternal(roomId, &out);
 
         break;
     }
@@ -4597,7 +4604,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         SC_HPUpdate hpPkt{};
         FillHPUpdatePacket(hpPkt, target);
 
-        BroadcastToRoom(roomId, &hpPkt);
+        BroadcastPacketToRoomInternal(roomId, &hpPkt);
 
         std::cout << "[HIT APPLY] attacker="
             << session->GetPlayerId()
@@ -4662,7 +4669,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         out.playerId = session->GetPlayerId();
         out.weaponId = pkt->weaponId;
 
-        BroadcastToRoom(roomId, &out);
+        BroadcastPacketToRoomInternal(roomId, &out);
 
         std::cout << "[WEAPON SWITCH BROADCAST] playerId="
             << session->GetPlayerId()
@@ -4702,7 +4709,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         out.playerId = session->GetPlayerId();
         out.isADS = pkt->isADS != 0 ? 1 : 0;
 
-        BroadcastToRoom(roomId, &out);
+        BroadcastPacketToRoomInternal(roomId, &out);
 
         std::cout << "[ADS STATE BROADCAST] playerId="
             << session->GetPlayerId()
@@ -5522,7 +5529,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         out.magAmmo = dropped.magAmmo;
         out.reserveAmmo = dropped.reserveAmmo;
 
-        BroadcastToRoom(roomId, &out);
+        BroadcastPacketToRoomInternal(roomId, &out);
 
         std::cout << "[WEAPON PICKUP APPLY] playerId="
             << session->GetPlayerId()
@@ -5813,7 +5820,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
             SC_HPUpdate hpOut{};
             FillHPUpdatePacket(hpOut, session);
-            BroadcastToRoom(roomId, &hpOut);
+            BroadcastPacketToRoomInternal(roomId, &hpOut);
 
             SendStoreBuyResult(
                 session,
@@ -5947,16 +5954,73 @@ void PacketDispatcher::HandleDeath(Session* target)
 
     uint32_t roomId = target->GetCurrentRoomId();
 
-    SC_Die diePkt{};
-    diePkt.header.size = sizeof(diePkt);
-    diePkt.header.type = static_cast<uint16_t>(PacketType::PKT_SC_DIE);
-    diePkt.playerId = target->GetPlayerId();
 
     constexpr int ASSIST_VALID_SECONDS = 10;
 
     uint32_t killerId = target->GetLastDamager();
-
     Session* killer = SessionManager::Instance().Find(killerId);
+
+    SC_Die diePkt{};
+	diePkt.header.size = sizeof(diePkt);
+	diePkt.header.type = static_cast<uint16_t>(PacketType::PKT_SC_DIE);
+
+    diePkt.killerPlayerId = 0;
+	diePkt.deadPlayerId = target->GetPlayerId();
+
+    diePkt.killerTeam = 255;
+	diePkt.deadTeam = 255;
+
+	diePkt.killerCharacterId = -1;
+    diePkt.deadCharacterId = -1;
+
+	memset(diePkt.killerNickname, 0, sizeof(diePkt.killerNickname));
+	memset(diePkt.deadNickname, 0, sizeof(diePkt.deadNickname));
+
+    RoomMember deadMember{};
+
+	if (RoomManager::Instance().GetMember(roomId, target->GetPlayerId(), deadMember))
+	{
+        diePkt.deadTeam =
+            static_cast<uint8_t>(deadMember.team);
+
+        diePkt.deadCharacterId =
+            deadMember.lockedCharacterId;
+
+        strncpy_s(
+            diePkt.deadNickname,
+            sizeof(diePkt.deadNickname),
+            deadMember.nickname.c_str(),
+            _TRUNCATE
+        );
+	}
+
+    // 킬러가 정상적으로 존재할 때만 킬러 정보 입력
+    if (killer != nullptr && killer != target)
+    {
+        diePkt.killerPlayerId =
+            killer->GetPlayerId();
+
+        RoomMember killerMember{};
+
+        if (RoomManager::Instance().GetMember(
+            roomId,
+            killer->GetPlayerId(),
+            killerMember))
+        {
+            diePkt.killerTeam =
+                static_cast<uint8_t>(killerMember.team);
+
+            diePkt.killerCharacterId =
+                killerMember.lockedCharacterId;
+
+            strncpy_s(
+                diePkt.killerNickname,
+                sizeof(diePkt.killerNickname),
+                killerMember.nickname.c_str(),
+                _TRUNCATE
+            );
+        }
+    }
 
     if (killer != nullptr && killer != target)
     {
@@ -6078,11 +6142,11 @@ void PacketDispatcher::HandleDeath(Session* target)
             << std::endl;
     }
 
-    BroadcastToRoom(roomId, &diePkt);
+    BroadcastPacketToRoomInternal(roomId, &diePkt);
 
     SC_HPUpdate hpPkt{};
     FillHPUpdatePacket(hpPkt, target);
-    BroadcastToRoom(roomId, &hpPkt);
+    BroadcastPacketToRoomInternal(roomId, &hpPkt);
 
     std::cout << "[PLAYER DEAD] playerId="
         << target->GetPlayerId()

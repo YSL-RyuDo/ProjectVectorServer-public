@@ -656,7 +656,18 @@ struct SC_HPUpdate
 struct SC_Die
 {
     PacketHeader header;
-    uint32_t playerId;
+
+    uint32_t killerPlayerId;
+	uint32_t deadPlayerId;
+
+    uint8_t killerTeam;
+	uint8_t deadTeam;
+
+    uint32_t killerCharacterId;
+    uint32_t deadCharacterId;
+
+	char killerNickname[20];
+	char deadNickname[20];
 };
 
 struct SC_AmmoUpdate

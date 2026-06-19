@@ -2753,17 +2753,19 @@ namespace
 
     bool IsPrimaryWeapon(int weaponId)
     {
-        const ServerWeaponData* data = ServerWeaponTable::Find(weaponId);
+        const ServerWeaponData* data =
+            ServerWeaponTable::Find(weaponId);
 
         if (data == nullptr)
             return false;
 
-        return data->weaponType == ServerWeaponType::AR ||
+        return
+            data->weaponType == ServerWeaponType::AR ||
             data->weaponType == ServerWeaponType::SMG ||
-            data->weaponType == ServerWeaponType::Shotgun ||
-            data->weaponType == ServerWeaponType::DMR ||
             data->weaponType == ServerWeaponType::LMG ||
-            data->weaponType == ServerWeaponType::SR;
+            data->weaponType == ServerWeaponType::SR ||
+            data->weaponType == ServerWeaponType::Shotgun ||
+            data->weaponType == ServerWeaponType::DMR;
     }
 
     int FindReplaceWeaponIdForPickup(Session* session, int pickedWeaponId)

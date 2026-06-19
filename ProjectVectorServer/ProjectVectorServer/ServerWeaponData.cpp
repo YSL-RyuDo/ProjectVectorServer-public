@@ -4,35 +4,229 @@ namespace
 {
     const std::unordered_map<int, ServerWeaponData> g_weaponTable =
     {
-        // 보조무기
-        { 0,  { 0,  ServerWeaponType::Pistol, 20, 45.0f, 0.20f, 12, 24, 1.4f } }, // P92
-        { 1,  { 1,  ServerWeaponType::Pistol, 25, 45.0f, 0.25f, 7,  21, 1.5f } }, // P1911
-        { 2,  { 2,  ServerWeaponType::Pistol, 35, 45.0f, 0.45f, 6,  18, 1.8f } }, // R1895
+        // 0: P92
+        {
+            static_cast<int>(ServerWeaponId::P92),
+            ServerWeaponData
+            {
+                static_cast<int>(ServerWeaponId::P92),
+                ServerWeaponType::Pistol,
+                20,
+                300.0f,
+                0.2f,
+                12,
+                36,
+                1.4f
+            }
+        },
 
-        // SMG
-        { 3,  { 3,  ServerWeaponType::SMG, 20, 60.0f, 0.08f, 25, 75, 2.0f } }, // UZI
-        { 4,  { 4,  ServerWeaponType::SMG, 22, 65.0f, 0.10f, 30, 90, 2.2f } }, // UMP
+        // 1: P1911
+        {
+            static_cast<int>(ServerWeaponId::P1911),
+            ServerWeaponData
+            {
+                static_cast<int>(ServerWeaponId::P1911),
+                ServerWeaponType::Pistol,
+                25,
+                1000.0f,
+                0.25f,
+                7,
+                21,
+                1.5f
+            }
+        },
 
-        // Shotgun
-        { 5,  { 5,  ServerWeaponType::Shotgun, 80, 25.0f, 0.80f, 5,  15, 2.5f } }, // S1897
-        { 6,  { 6,  ServerWeaponType::Shotgun, 60, 25.0f, 0.25f, 8,  24, 2.8f } }, // AA-12
+        // 2: R1895
+        {
+            static_cast<int>(ServerWeaponId::R1895),
+            ServerWeaponData
+            {
+                static_cast<int>(ServerWeaponId::R1895),
+                ServerWeaponType::Pistol,
+                50,
+                300.0f,
+                0.45f,
+                6,
+                18,
+                1.7f
+            }
+        },
 
-        // DMR
-        { 7,  { 7,  ServerWeaponType::DMR, 55, 90.0f, 0.35f, 10, 30, 2.5f } }, // Dragunov
+        // 3: UZI
+        {
+            static_cast<int>(ServerWeaponId::UZI),
+            ServerWeaponData
+            {
+                static_cast<int>(ServerWeaponId::UZI),
+                ServerWeaponType::SMG,
+                24,
+                200.0f,
+                0.06f,
+                20,
+                60,
+                2.2f
+            }
+        },
 
-        // AR
-        { 8,  { 8,  ServerWeaponType::AR, 25, 80.0f, 0.10f, 25, 50, 2.4f } }, // M416
-        { 9,  { 9,  ServerWeaponType::AR, 30, 80.0f, 0.12f, 30, 60, 2.6f } }, // AK47
+        // 4: UMP
+        {
+            static_cast<int>(ServerWeaponId::UMP),
+            ServerWeaponData
+            {
+                static_cast<int>(ServerWeaponId::UMP),
+                ServerWeaponType::SMG,
+                23,
+                1000.0f,
+                0.075f,
+                30,
+                90,
+                2.2f
+            }
+        },
 
-        // LMG
-        { 10, { 10, ServerWeaponType::LMG, 28, 80.0f, 0.11f, 75, 75, 3.5f } }, // M249
+        // 5: S1897
+        {
+            static_cast<int>(ServerWeaponId::S1897),
+            ServerWeaponData
+            {
+                static_cast<int>(ServerWeaponId::S1897),
+                ServerWeaponType::Shotgun,
+                20,
+                25.0f,
+                1.0f,
+                5,
+                15,
+                2.35f
+            }
+        },
 
-        // SR
-        { 11, { 11, ServerWeaponType::SR, 100, 120.0f, 1.20f, 5,  15, 3.0f } }, // Kar98
-        { 12, { 12, ServerWeaponType::SR, 150, 150.0f, 2.00f, 5,  10, 3.5f } }, // AWM
+        // 6: AA-12
+        {
+            static_cast<int>(ServerWeaponId::AA12),
+            ServerWeaponData
+            {
+                static_cast<int>(ServerWeaponId::AA12),
+                ServerWeaponType::Shotgun,
+                19,
+                100.0f,
+                0.5f,
+                5,
+                15,
+                2.1f
+            }
+        },
 
-        // Knife
-        { 13, { 13, ServerWeaponType::Knife, 50, 2.0f, 0.30f, 0, 0, 0.0f } }
+        // 7: Dragunov
+        {
+            static_cast<int>(ServerWeaponId::Dragunov),
+            ServerWeaponData
+            {
+                static_cast<int>(ServerWeaponId::Dragunov),
+                ServerWeaponType::DMR,
+                75,
+                3800.0f,
+                0.22f,
+                12,
+                36,
+                2.4f
+            }
+        },
+
+        // 8: M416
+        {
+            static_cast<int>(ServerWeaponId::M416),
+            ServerWeaponData
+            {
+                static_cast<int>(ServerWeaponId::M416),
+                ServerWeaponType::AR,
+                35,
+                3600.0f,
+                0.09f,
+                30,
+                90,
+                2.4f
+            }
+        },
+
+        // 9: AK47
+        {
+            static_cast<int>(ServerWeaponId::AK47),
+            ServerWeaponData
+            {
+                static_cast<int>(ServerWeaponId::AK47),
+                ServerWeaponType::AR,
+                40,
+                3000.0f,
+                0.1f,
+                25,
+                75,
+                2.4f
+            }
+        },
+
+        // 10: M249
+        {
+            static_cast<int>(ServerWeaponId::M249),
+            ServerWeaponData
+            {
+                static_cast<int>(ServerWeaponId::M249),
+                ServerWeaponType::LMG,
+                37,
+                3600.0f,
+                0.078f,
+                100,
+                200,
+                4.5f
+            }
+        },
+
+        // 11: Kar98
+        {
+            static_cast<int>(ServerWeaponId::Kar98),
+            ServerWeaponData
+            {
+                static_cast<int>(ServerWeaponId::Kar98),
+                ServerWeaponType::SR,
+                105,
+                4700.0f,
+                0.8f,
+                5,
+                15,
+                2.5f
+            }
+        },
+
+        // 12: AWM
+        {
+            static_cast<int>(ServerWeaponId::AWM),
+            ServerWeaponData
+            {
+                static_cast<int>(ServerWeaponId::AWM),
+                ServerWeaponType::SR,
+                150,
+                3900.0f,
+                2.0f,
+                5,
+                15,
+                3.5f
+            }
+        },
+
+        // 13: Knife
+        {
+            static_cast<int>(ServerWeaponId::Knife),
+            ServerWeaponData
+            {
+                static_cast<int>(ServerWeaponId::Knife),
+                ServerWeaponType::Knife,
+                20,
+                2.0f,
+                0.3f,
+                0,
+                0,
+                0.0f
+            }
+        }
     };
 }
 

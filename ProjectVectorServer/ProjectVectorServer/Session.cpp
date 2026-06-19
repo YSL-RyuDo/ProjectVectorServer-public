@@ -224,13 +224,22 @@ void Session::InitRoundState()
     weapons_.clear();
 
     // 기본 권총 P92
-    GiveWeapon(0, 12, 24);
+    GiveWeapon(
+        static_cast<int>(ServerWeaponId::P92),
+        12,
+        36
+    );
 
     // 기본 나이프
-    GiveWeapon(13, 0, 0);
+    GiveWeapon(
+        static_cast<int>(ServerWeaponId::Knife),
+        0,
+        0
+    );
 
-    // 시작 장비는 P92
-    currentWeaponId_ = 0;
+    // 시작 무기는 P92
+    currentWeaponId_ =
+        static_cast<int>(ServerWeaponId::P92);
 }
 
 void Session::ResetRoundStateKeepInventory()
@@ -477,66 +486,33 @@ bool Session::RemoveWeapon(int weaponId)
     if (it == weapons_.end())
         return false;
 
-    bool wasCurrentWeapon = currentWeaponId_ == weaponId;
-
     weapons_.erase(it);
 
-    if (!wasCurrentWeapon)
-        return true;
-
-    int fallbackWeaponId = -1;
-
-    // 1순위: 권총
-    // P92 = 0, P1911 = 1, R1895 = 2
-    for (const auto& pair : weapons_)
+    if (currentWeaponId_ == weaponId)
     {
-        const PlayerWeaponState& weapon = pair.second;
+        int p92Id =
+            static_cast<int>(ServerWeaponId::P92);
 
-        if (!weapon.owned)
-            continue;
+        int knifeId =
+            static_cast<int>(ServerWeaponId::Knife);
 
-        if (weapon.weaponId >= 0 && weapon.weaponId <= 2)
+        if (HasWeapon(p92Id))
         {
-            fallbackWeaponId = weapon.weaponId;
-            break;
+            currentWeaponId_ = p92Id;
+        }
+        else if (HasWeapon(knifeId))
+        {
+            currentWeaponId_ = knifeId;
+        }
+        else
+        {
+            currentWeaponId_ = -1;
         }
     }
-
-    // 2순위: 주무기
-    // UZI~AWM = 3~12
-    if (fallbackWeaponId < 0)
-    {
-        for (const auto& pair : weapons_)
-        {
-            const PlayerWeaponState& weapon = pair.second;
-
-            if (!weapon.owned)
-                continue;
-
-            if (weapon.weaponId >= 3 && weapon.weaponId <= 12)
-            {
-                fallbackWeaponId = weapon.weaponId;
-                break;
-            }
-        }
-    }
-
-    // 3순위: Knife
-    if (fallbackWeaponId < 0 && HasWeapon(13))
-    {
-        fallbackWeaponId = 13;
-    }
-
-    // 진짜 아무것도 없으면 0으로 방어
-    if (fallbackWeaponId < 0)
-    {
-        fallbackWeaponId = 0;
-    }
-
-    currentWeaponId_ = fallbackWeaponId;
 
     return true;
 }
+
 std::vector<PlayerWeaponState> Session::GetOwnedWeapons() const
 {
     std::vector<PlayerWeaponState> result;

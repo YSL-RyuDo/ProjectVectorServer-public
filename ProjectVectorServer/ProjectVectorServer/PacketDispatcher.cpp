@@ -5417,6 +5417,15 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         if (currentState != nullptr)
             SendAmmoUpdate(session, *currentState);
 
+        if (currentWeaponId > 0)
+        {
+            BroadcastWeaponSwitchNotify(
+                roomId,
+                session->GetPlayerId(),
+                currentWeaponId
+            );
+        }
+
         std::cout << "[WEAPON DROP APPLY] playerId="
             << session->GetPlayerId()
             << " droppedWeaponId=" << weaponId

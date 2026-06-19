@@ -211,6 +211,50 @@ void Session::SetBarrier(int barrier)
         barrier_ = maxBarrier_;
 }
 
+int Session::SelectBestCurrentWeaponId() const
+{
+    int primaryWeaponId = -1;
+    int pistolWeaponId = -1;
+    int knifeWeaponId = -1;
+
+    for (const auto& pair : weapons_)
+    {
+        const PlayerWeaponState& weapon = pair.second;
+
+        if (!weapon.owned)
+            continue;
+
+        const ServerWeaponData* data = ServerWeaponTable::Find(weapon.weaponId);
+        if (data == nullptr)
+            continue;
+
+        if (data->weaponType == ServerWeaponType::Knife)
+        {
+            knifeWeaponId = weapon.weaponId;
+        }
+        else if (data->weaponType == ServerWeaponType::Pistol)
+        {
+            pistolWeaponId = weapon.weaponId;
+        }
+        else
+        {
+            // AR, SMG, Shotgun, DMR, LMG, SR 전부 주무기 취급
+            primaryWeaponId = weapon.weaponId;
+        }
+    }
+
+    if (primaryWeaponId >= 0)
+        return primaryWeaponId;
+
+    if (pistolWeaponId >= 0)
+        return pistolWeaponId;
+
+    if (knifeWeaponId >= 0)
+        return knifeWeaponId;
+
+    return 0;
+}
+
 void Session::InitRoundState()
 {
     maxHp_ = 100;
@@ -237,9 +281,7 @@ void Session::InitRoundState()
         0
     );
 
-    // 시작 무기는 P92
-    currentWeaponId_ =
-        static_cast<int>(ServerWeaponId::P92);
+    currentWeaponId_ = SelectBestCurrentWeaponId();
 }
 
 void Session::ResetRoundStateKeepInventory()
@@ -247,17 +289,11 @@ void Session::ResetRoundStateKeepInventory()
     maxHp_ = 100;
     hp_ = maxHp_;
 
-    // 베리어는 라운드마다 초기화
     maxBarrier_ = 0;
     barrier_ = 0;
 
     isDead_ = false;
 
-    int primaryWeaponId = -1;
-    int pistolWeaponId = -1;
-    int knifeWeaponId = -1;
-
-    // 새 라운드 시작이므로 재장전 상태 해제 + 탄약 회복
     for (auto& pair : weapons_)
     {
         PlayerWeaponState& weapon = pair.second;
@@ -267,65 +303,30 @@ void Session::ResetRoundStateKeepInventory()
 
         weapon.isReloading = false;
 
-        const ServerWeaponData* data =
-            ServerWeaponTable::Find(weapon.weaponId);
-
+        const ServerWeaponData* data = ServerWeaponTable::Find(weapon.weaponId);
         if (data == nullptr)
             continue;
 
         weapon.magAmmo = data->magSize;
         weapon.reserveAmmo = data->maxReserveAmmo;
-
-        if (data->weaponType == ServerWeaponType::Pistol)
-        {
-            pistolWeaponId = weapon.weaponId;
-        }
-        else if (data->weaponType == ServerWeaponType::Knife)
-        {
-            knifeWeaponId = weapon.weaponId;
-        }
-        else
-        {
-            // AR, SMG, Shotgun, DMR, LMG, SR 전부 주무기
-            primaryWeaponId = weapon.weaponId;
-        }
     }
 
-    // 혹시 무기가 하나도 없으면 기본 지급
     if (weapons_.empty())
     {
-        GiveWeapon(0, 12, 24);
-        GiveWeapon(13, 0, 0);
-        currentWeaponId_ = 0;
-        return;
+        GiveWeapon(
+            static_cast<int>(ServerWeaponId::P92),
+            12,
+            36
+        );
+
+        GiveWeapon(
+            static_cast<int>(ServerWeaponId::Knife),
+            0,
+            0
+        );
     }
 
-    // 다음 라운드 시작 장비 우선순위:
-    // 주무기 보유 중이면 주무기부터 들고 시작
-    if (primaryWeaponId >= 0)
-    {
-        currentWeaponId_ = primaryWeaponId;
-        return;
-    }
-
-    // 주무기가 없으면 권총
-    if (pistolWeaponId >= 0)
-    {
-        currentWeaponId_ = pistolWeaponId;
-        return;
-    }
-
-    // 권총도 없으면 칼
-    if (knifeWeaponId >= 0)
-    {
-        currentWeaponId_ = knifeWeaponId;
-        return;
-    }
-
-    // 마지막 방어
-    GiveWeapon(0, 12, 24);
-    GiveWeapon(13, 0, 0);
-    currentWeaponId_ = 0;
+    currentWeaponId_ = SelectBestCurrentWeaponId();
 }
 
 void Session::GiveWeapon(int weaponId, int magAmmo, int reserveAmmo)
@@ -338,6 +339,11 @@ void Session::GiveWeapon(int weaponId, int magAmmo, int reserveAmmo)
     state.isReloading = false;
 
     weapons_[weaponId] = state;
+
+    if (currentWeaponId_ <= 0)
+    {
+        currentWeaponId_ = SelectBestCurrentWeaponId();
+    }
 }
 
 bool Session::HasWeapon(int weaponId) const
@@ -416,7 +422,7 @@ void Session::Damage(int amount)
 
 void Session::Respawn()
 {
-    InitRoundState();
+    ResetRoundStateKeepInventory();
 
     position_.x = 0.f;
     position_.y = 1.f;
@@ -490,24 +496,7 @@ bool Session::RemoveWeapon(int weaponId)
 
     if (currentWeaponId_ == weaponId)
     {
-        int p92Id =
-            static_cast<int>(ServerWeaponId::P92);
-
-        int knifeId =
-            static_cast<int>(ServerWeaponId::Knife);
-
-        if (HasWeapon(p92Id))
-        {
-            currentWeaponId_ = p92Id;
-        }
-        else if (HasWeapon(knifeId))
-        {
-            currentWeaponId_ = knifeId;
-        }
-        else
-        {
-            currentWeaponId_ = -1;
-        }
+        currentWeaponId_ = SelectBestCurrentWeaponId();
     }
 
     return true;

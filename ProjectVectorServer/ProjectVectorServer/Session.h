@@ -2,6 +2,7 @@
 #include "Common.h"
 #include "OverlappedEx.h"
 #include "packetType.h"
+
 struct Vector3
 {
     float x, y, z;
@@ -127,6 +128,7 @@ public:
     bool IsDead() const { return hp_ <= 0; }
     void InitRoundState();
     void ResetRoundStateKeepInventory();
+
     int GetCurrentWeaponId() const { return currentWeaponId_; }
     void SetCurrentWeaponId(int weaponId) { currentWeaponId_ = weaponId; }
 
@@ -151,21 +153,21 @@ public:
 
     void SetCredits(int credits)
     {
-		credits_ = credits;
+        credits_ = credits;
 
-		if (credits_ < 0)
-			credits_ = 0;
+        if (credits_ < 0)
+            credits_ = 0;
 
-        if (credits_>9000)
-			credits_ = 9000;
+        if (credits_ > 9000)
+            credits_ = 9000;
     }
 
-	void AddCredits(int amount)
-	{
-		SetCredits(credits_ + amount);
-	}
+    void AddCredits(int amount)
+    {
+        SetCredits(credits_ + amount);
+    }
 
-	void ResetCredits() { credits_ = 0; }
+    void ResetCredits() { credits_ = 0; }
 
     void SetAnimIndex(uint8_t animIndex)
     {
@@ -182,6 +184,7 @@ public:
 
 private:
     void ProcessPackets();
+    int SelectBestCurrentWeaponId() const;
 
 private:
     SOCKET socket_;
@@ -207,7 +210,7 @@ private:
 
     bool isDead_ = false;
 
-    int currentWeaponId_ = 0; // ±âº» ±ÇÃÑ
+    int currentWeaponId_ = 0;
     std::unordered_map<int, PlayerWeaponState> weapons_;
 
     PlayerMatchStats matchStats_;

@@ -1076,4 +1076,15 @@ struct SC_StoreBuyResult
     int32_t barrier;
     int32_t maxBarrier;
 };
+
+struct CS_KnifeAttack
+{
+    PacketHeader header;
+};
+
+struct SC_KnifeAttackNotify
+{
+    PacketHeader header;
+    uint32_t playerId;
+};
 #pragma pack(pop)

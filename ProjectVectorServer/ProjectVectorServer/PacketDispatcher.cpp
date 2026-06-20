@@ -4894,6 +4894,109 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         break;
     }
 
+    case PacketType::PKT_CS_KNIFE_ATTACK:
+    {
+        if (header->size != sizeof(CS_KnifeAttack))
+        {
+            std::cout << "[KNIFE ATTACK BLOCK] invalid packet size playerId="
+                << session->GetPlayerId()
+                << " receivedSize=" << header->size
+                << " expectedSize=" << sizeof(CS_KnifeAttack)
+                << std::endl;
+
+            break;
+        }
+
+        if (session->GetState() != SessionState::IN_GAME)
+        {
+            std::cout << "[KNIFE ATTACK BLOCK] not in game playerId="
+                << session->GetPlayerId()
+                << " state="
+                << static_cast<int>(session->GetState())
+                << std::endl;
+
+            break;
+        }
+
+        if (session->IsDead())
+        {
+            std::cout << "[KNIFE ATTACK BLOCK] player dead playerId="
+                << session->GetPlayerId()
+                << std::endl;
+
+            break;
+        }
+
+        uint32_t roomId = session->GetCurrentRoomId();
+
+        if (roomId == 0)
+        {
+            std::cout << "[KNIFE ATTACK BLOCK] roomId is 0 playerId="
+                << session->GetPlayerId()
+                << std::endl;
+
+            break;
+        }
+
+        int currentWeaponId =
+            session->GetCurrentWeaponId();
+
+        if (!session->HasWeapon(currentWeaponId))
+        {
+            std::cout << "[KNIFE ATTACK BLOCK] weapon not owned playerId="
+                << session->GetPlayerId()
+                << " weaponId=" << currentWeaponId
+                << std::endl;
+
+            break;
+        }
+
+        const ServerWeaponData* weaponData =
+            ServerWeaponTable::Find(currentWeaponId);
+
+        if (weaponData == nullptr)
+        {
+            std::cout << "[KNIFE ATTACK BLOCK] weapon data not found playerId="
+                << session->GetPlayerId()
+                << " weaponId=" << currentWeaponId
+                << std::endl;
+
+            break;
+        }
+
+        if (weaponData->weaponType != ServerWeaponType::Knife)
+        {
+            std::cout << "[KNIFE ATTACK BLOCK] current weapon is not knife playerId="
+                << session->GetPlayerId()
+                << " weaponId=" << currentWeaponId
+                << std::endl;
+
+            break;
+        }
+
+        SC_KnifeAttackNotify out{};
+
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(
+            PacketType::PKT_SC_KNIFE_ATTACK_NOTIFY
+            );
+
+        out.playerId = session->GetPlayerId();
+
+        BroadcastPacketToRoomInternal(
+            roomId,
+            &out
+        );
+
+        std::cout << "[KNIFE ATTACK BROADCAST] playerId="
+            << session->GetPlayerId()
+            << " roomId=" << roomId
+            << " weaponId=" << currentWeaponId
+            << std::endl;
+
+        break;
+    }
+
     case PacketType::PKT_CS_RESULT_LEAVE:
     {
         uint32_t roomId = session->GetCurrentRoomId();

@@ -4434,6 +4434,17 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
     {
         auto* pkt = reinterpret_cast<CS_MoveState*>(header);
 
+        if (header->size != sizeof(CS_MoveState))
+        {
+            std::cout << "[MOVE BLOCK] invalid packet size playerId="
+                << session->GetPlayerId()
+                << " receivedSize=" << header->size
+                << " expectedSize=" << sizeof(CS_MoveState)
+                << std::endl;
+
+            break;
+        }
+
         if (session->GetState() != SessionState::IN_GAME &&
             session->GetState() != SessionState::IN_ROOM)
         {
@@ -4441,6 +4452,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
                 << session->GetPlayerId()
                 << " state=" << static_cast<int>(session->GetState())
                 << std::endl;
+
             break;
         }
 
@@ -4451,35 +4463,63 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             std::cout << "[MOVE BLOCK] roomId is 0 playerId="
                 << session->GetPlayerId()
                 << std::endl;
+
             break;
         }
 
-        session->SetPosition(pkt->x, pkt->y, pkt->z);
+        session->SetPosition(
+            pkt->x,
+            pkt->y,
+            pkt->z
+        );
+
         session->SetYaw(pkt->yaw);
         session->SetPitch(pkt->pitch);
 
         uint8_t animIndex = pkt->animIndex;
 
-        // 서버 방어 코드
-        // 0 = Idle, 1 = Walk, 2 = Crouch
-        if (animIndex > 2)
+        // 클라이언트 애니메이션 인덱스
+        //
+        // 0 ~ 5   : 권총
+        // 6 ~ 11  : 긴 총
+        // 12 ~ 17 : 칼
+        constexpr uint8_t MAX_ANIM_INDEX = 17;
+
+        if (animIndex > MAX_ANIM_INDEX)
+        {
+            std::cout << "[MOVE ANIM INVALID] playerId="
+                << session->GetPlayerId()
+                << " animIndex="
+                << static_cast<int>(animIndex)
+                << std::endl;
+
             animIndex = 0;
+        }
 
         session->SetAnimIndex(animIndex);
 
         SC_MoveState out{};
+
         out.header.size = sizeof(out);
-        out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_MOVE_STATE);
+        out.header.type = static_cast<uint16_t>(
+            PacketType::PKT_SC_MOVE_STATE
+            );
 
         out.playerId = session->GetPlayerId();
+
         out.x = pkt->x;
         out.y = pkt->y;
         out.z = pkt->z;
+
         out.yaw = pkt->yaw;
         out.pitch = pkt->pitch;
+
         out.animIndex = animIndex;
 
-        BroadcastPacketToRoomInternal(roomId, &out);
+        BroadcastPacketToRoomInternal(
+            roomId,
+            &out
+        );
 
         break;
     }

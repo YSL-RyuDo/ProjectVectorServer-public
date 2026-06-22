@@ -145,10 +145,8 @@ namespace
 
     const std::unordered_map<int, StoreArmorData> g_storeArmors =
     {
-        //{ 0, { 0, 500,  50 } },  // 경량 베리어
-        //{ 1, { 1, 1000, 100 } }  // 중량 베리어
-        { 0, { 0, 5,  50 } },  // 경량 베리어
-        { 1, { 1, 10, 100 } }  // 중량 베리어
+        { 0, { 0, 500,  50 } },  // 경량 베리어
+        { 1, { 1, 1000, 100 } }  // 중량 베리어    
     };
 
     std::once_flag g_creditRewardLoadOnce;
@@ -1418,20 +1416,45 @@ namespace
         ).detach();
     }
 
-    void SendAmmoUpdate(Session* session, const PlayerWeaponState& weaponState)
+    void SendAmmoUpdate(
+        Session* session,
+        const PlayerWeaponState& weaponState)
     {
         if (session == nullptr)
             return;
 
+        uint32_t roomId =
+            session->GetCurrentRoomId();
+
+        if (roomId == 0)
+            return;
+
         SC_AmmoUpdate out{};
-        out.header.size = sizeof(out);
-        out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_AMMO_UPDATE);
 
-        out.weaponId = weaponState.weaponId;
-        out.magAmmo = weaponState.magAmmo;
-        out.reserveAmmo = weaponState.reserveAmmo;
+        out.header.size =
+            sizeof(out);
 
-        session->Send(&out);
+        out.header.type =
+            static_cast<uint16_t>(
+                PacketType::PKT_SC_AMMO_UPDATE
+                );
+
+        out.playerId =
+            session->GetPlayerId();
+
+        out.weaponId =
+            weaponState.weaponId;
+
+        out.magAmmo =
+            weaponState.magAmmo;
+
+        out.reserveAmmo =
+            weaponState.reserveAmmo;
+
+        BroadcastPacketToRoomInternal(
+            roomId,
+            &out
+        );
     }
 
     void BroadcastRoundResult(uint32_t roomId,RoomTeam winnerTeam,uint8_t scoreA,uint8_t scoreB,uint8_t currentRound,bool matchEnd,RoundWinReason winReason)
@@ -4515,7 +4538,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         out.pitch = pkt->pitch;
 
         out.animIndex = animIndex;
-
+        out.isCrouching =pkt->isCrouching != 0? 1: 0;
         BroadcastPacketToRoomInternal(
             roomId,
             &out
@@ -4883,6 +4906,30 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         weaponState->magAmmo -= 1;
 
         SendAmmoUpdate(session, *weaponState);
+
+        uint32_t roomId =
+            session->GetCurrentRoomId();
+
+        SC_FireNotify fireOut{};
+
+        fireOut.header.size =
+            sizeof(fireOut);
+
+        fireOut.header.type =
+            static_cast<uint16_t>(
+                PacketType::PKT_SC_FIRE_NOTIFY
+                );
+
+        fireOut.playerId =
+            session->GetPlayerId();
+
+        fireOut.weaponId =
+            weaponId;
+
+        BroadcastPacketToRoomInternal(
+            roomId,
+            &fireOut
+        );
 
         std::cout << "[FIRE APPLY] playerId="
             << session->GetPlayerId()
@@ -6008,6 +6055,70 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             0,
             0,
             0
+        );
+
+        break;
+    }
+
+    case PacketType::PKT_CS_RELOAD_VISUAL:
+    {
+        auto* pkt =
+            reinterpret_cast<CS_ReloadVisual*>(
+                header
+                );
+
+        if (header->size !=
+            sizeof(CS_ReloadVisual))
+        {
+            break;
+        }
+
+        uint32_t roomId =
+            session->GetCurrentRoomId();
+
+        if (roomId == 0)
+            break;
+
+        if (session->GetState() !=
+            SessionState::IN_GAME)
+        {
+            break;
+        }
+
+        int currentWeaponId =
+            session->GetCurrentWeaponId();
+
+        if (pkt->weaponId !=
+            currentWeaponId)
+        {
+            break;
+        }
+
+        SC_ReloadVisual out{};
+
+        out.header.size =
+            sizeof(out);
+
+        out.header.type =
+            static_cast<uint16_t>(
+                PacketType::
+                PKT_SC_RELOAD_VISUAL
+                );
+
+        out.playerId =
+            session->GetPlayerId();
+
+        out.weaponId =
+            pkt->weaponId;
+
+        out.isReloading =
+            pkt->isReloading != 0
+            ? 1
+            : 0;
+
+        BroadcastPacketToRoomInternal(
+            roomId,
+            &out
         );
 
         break;

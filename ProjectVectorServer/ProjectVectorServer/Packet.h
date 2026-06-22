@@ -617,6 +617,7 @@ struct CS_MoveState
     float pitch;
 
     uint8_t animIndex;
+    uint8_t isCrouching;
 };
 
 struct SC_MoveState
@@ -633,6 +634,7 @@ struct SC_MoveState
     float pitch;
 
     uint8_t animIndex;
+    uint8_t isCrouching;
 };
 
 struct CS_Hit
@@ -673,9 +675,10 @@ struct SC_Die
 struct SC_AmmoUpdate
 {
     PacketHeader header;
-    int weaponId;
-    int magAmmo;
-    int reserveAmmo;
+    uint32_t playerId;
+    int32_t weaponId;
+    int32_t magAmmo;
+    int32_t reserveAmmo;
 };
 
 struct CS_WeaponSwitch
@@ -1058,6 +1061,7 @@ struct CS_StoreBuyRequest
     int32_t itemId;     // weaponId ¶Ç´Â armorId
 };
 
+
 struct SC_StoreBuyResult
 {
     PacketHeader header;
@@ -1086,5 +1090,30 @@ struct SC_KnifeAttackNotify
 {
     PacketHeader header;
     uint32_t playerId;
+};
+
+struct SC_FireNotify
+{
+    PacketHeader header;
+
+    uint32_t playerId;
+    int32_t weaponId;
+};
+
+struct CS_ReloadVisual
+{
+    PacketHeader header;
+
+    int32_t weaponId;
+    int32_t isReloading;
+};
+
+struct SC_ReloadVisual
+{
+    PacketHeader header;
+
+    uint32_t playerId;
+    int32_t weaponId;
+    int32_t isReloading;
 };
 #pragma pack(pop)

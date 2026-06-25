@@ -27,7 +27,7 @@ namespace
 
     constexpr uint16_t ROUND_END_DELAY_SECONDS = 6;
     constexpr uint16_t ROUND_PLAY_SECONDS = 100;
-    constexpr uint16_t SPIKE_EXPLODE_SECONDS = 35;
+    constexpr uint16_t SPIKE_EXPLODE_SECONDS = 45;
 
     // 정규전 기준 6선승
     constexpr uint8_t MATCH_WIN_ROUND_COUNT = 6;
@@ -76,6 +76,11 @@ namespace
 
         uint32_t spikeDefuserPlayerId = 0;
         bool spikeHalfDefused = false;
+
+        // 설치할 때마다 증가하는 고유 번호.
+        // 이전 라운드의 분리된 타이머 스레드가 다음 라운드 스파이크를
+        // 잘못 폭발시키는 것을 막는다.
+        uint64_t spikePlantGeneration = 0;
 
         bool buyPhase = true;
 
@@ -157,8 +162,8 @@ namespace
     {
         std::ifstream check(CREDIT_REWARD_CSV_PATH);
 
-		if (check.good())
-			return;
+        if (check.good())
+            return;
 
         std::ofstream out(CREDIT_REWARD_CSV_PATH);
 
@@ -182,13 +187,13 @@ namespace
     {
         CreateDefaultCreditRewardCsvIfMissing();
 
-		std::ifstream file(CREDIT_REWARD_CSV_PATH);
+        std::ifstream file(CREDIT_REWARD_CSV_PATH);
 
         if (!file.is_open())
         {
-			std::cout << "[CREDIT CSV LOAD FAILED] path="
-				<< CREDIT_REWARD_CSV_PATH
-				<< std::endl;
+            std::cout << "[CREDIT CSV LOAD FAILED] path="
+                << CREDIT_REWARD_CSV_PATH
+                << std::endl;
             return;
         }
 
@@ -197,27 +202,27 @@ namespace
         std::getline(file, line);
         while (std::getline(file, line))
         {
-			if (line.empty())
-				continue;
+            if (line.empty())
+                continue;
 
-			std::stringstream ss(line);
+            std::stringstream ss(line);
 
             std::string key;
             std::string creditText;
 
-			std::getline(ss, key, ',');
-			std::getline(ss, creditText, ',');
-			
-			if (key.empty() || creditText.empty())
-				continue;
+            std::getline(ss, key, ',');
+            std::getline(ss, creditText, ',');
 
-			int credit = std::stoi(creditText);
-			g_creditRewards[key] = credit;
+            if (key.empty() || creditText.empty())
+                continue;
 
-			std::cout << "[CREDIT REWARD LOADED] key="
-				<< key
-				<< " credit=" << credit
-				<< std::endl;
+            int credit = std::stoi(creditText);
+            g_creditRewards[key] = credit;
+
+            std::cout << "[CREDIT REWARD LOADED] key="
+                << key
+                << " credit=" << credit
+                << std::endl;
         }
     }
 
@@ -265,12 +270,12 @@ namespace
     void BroadcastSpikePickupNotify(uint32_t roomId, uint32_t carrierPlayerId);
     void BroadcastSpikePlanted(uint32_t roomId, float x, float y, float z);
 
-    void StartSpikeTimerThread(uint32_t roomId);
-    void ResolveRoundBySpikeExplode(uint32_t roomId);
+    void StartSpikeTimerThread(uint32_t roomId, uint64_t spikeGeneration);
+    void ResolveRoundBySpikeExplode(uint32_t roomId, uint64_t spikeGeneration);
 
-    void ApplyRoundEndCredits(uint32_t roomId,RoomTeam winnerTeam,RoundWinReason winReason);
+    void ApplyRoundEndCredits(uint32_t roomId, RoomTeam winnerTeam, RoundWinReason winReason);
 
-    void SetAllPlayerCreditsInRoom(uint32_t roomId,int credit);
+    void SetAllPlayerCreditsInRoom(uint32_t roomId, int credit);
 
     void BroadcastSpikeDefuseState(uint32_t roomId, bool halfDefused, uint32_t defuserPlayerId);
 
@@ -283,14 +288,15 @@ namespace
         state.scoreA = 0;
         state.scoreB = 0;
 
-		state.loseStreakA = 0;
-		state.loseStreakB = 0;
+        state.loseStreakA = 0;
+        state.loseStreakB = 0;
 
         state.spikeCarrierPlayerId = 0;
         state.spikePlanted = false;
 
         state.spikeDefuserPlayerId = 0;
         state.spikeHalfDefused = false;
+        state.spikePlantGeneration = 0;
 
         state.buyPhase = true;
 
@@ -312,7 +318,7 @@ namespace
     void BroadcastGamePrepareTimer(const Room& room, uint16_t remainingSeconds);
     void StartGamePrepareTimerThread(uint32_t roomId);
 
-    void BroadcastPickTimer(const Room& room,PickPhase phase,uint16_t remainingSeconds)
+    void BroadcastPickTimer(const Room& room, PickPhase phase, uint16_t remainingSeconds)
     {
         SC_PickTimer out{};
         out.header.size = sizeof(out);
@@ -393,7 +399,7 @@ namespace
         out.isLeader = member.isLeader ? 1 : 0;
     }
 
-    void FillRoomCreateResultPacket(SC_RoomCreateResult& out,const Room& room,uint8_t result,uint32_t receiverPlayerId)
+    void FillRoomCreateResultPacket(SC_RoomCreateResult& out, const Room& room, uint8_t result, uint32_t receiverPlayerId)
     {
         out.header.size = sizeof(out);
         out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_ROOM_CREATE_RESULT);
@@ -532,7 +538,7 @@ namespace
         return true;
     }
 
-    bool TakePendingSlotSwap(uint32_t targetPlayerId,uint32_t requesterPlayerId,PendingSlotSwap& outRequest)
+    bool TakePendingSlotSwap(uint32_t targetPlayerId, uint32_t requesterPlayerId, PendingSlotSwap& outRequest)
     {
         std::lock_guard<std::mutex> lock(g_pendingSlotSwapMutex);
 
@@ -549,7 +555,7 @@ namespace
         return true;
     }
 
-    void SendRoomSlotChangeResult(Session* session,RoomSlotChangeResult result,RoomTeam targetTeam,uint8_t targetSlotIndex,const std::string& targetNickname = "")
+    void SendRoomSlotChangeResult(Session* session, RoomSlotChangeResult result, RoomTeam targetTeam, uint8_t targetSlotIndex, const std::string& targetNickname = "")
     {
         if (session == nullptr)
             return;
@@ -569,7 +575,7 @@ namespace
         session->Send(&out);
     }
 
-    void SendRoomTransferLeaderResult(Session* session,RoomAdminResult result,uint32_t targetPlayerId,const std::string& targetNickname = "")
+    void SendRoomTransferLeaderResult(Session* session, RoomAdminResult result, uint32_t targetPlayerId, const std::string& targetNickname = "")
     {
         if (session == nullptr)
             return;
@@ -588,7 +594,7 @@ namespace
         session->Send(&out);
     }
 
-    void SendRoomKickResult(Session* session,RoomAdminResult result,uint32_t targetPlayerId,const std::string& targetNickname = "")
+    void SendRoomKickResult(Session* session, RoomAdminResult result, uint32_t targetPlayerId, const std::string& targetNickname = "")
     {
         if (session == nullptr)
             return;
@@ -624,7 +630,7 @@ namespace
         session->Send(&out);
     }
 
-    void FillPickTeamMemberInfo(PickTeamMemberInfo& out,const RoomMember& member,uint32_t receiverPlayerId)
+    void FillPickTeamMemberInfo(PickTeamMemberInfo& out, const RoomMember& member, uint32_t receiverPlayerId)
     {
         out.playerId = member.playerId;
 
@@ -640,7 +646,7 @@ namespace
         out.isMe = member.playerId == receiverPlayerId ? 1 : 0;
     }
 
-    void FillPickStatePacket(SC_PickState& out,const Room& room,const RoomMember& receiverMember,uint32_t receiverPlayerId)
+    void FillPickStatePacket(SC_PickState& out, const Room& room, const RoomMember& receiverMember, uint32_t receiverPlayerId)
     {
         out.header.size = sizeof(out);
         out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_PICK_STATE);
@@ -787,7 +793,7 @@ namespace
             << std::endl;
     }
 
-    void SendPickLockResult(Session* session,PickLockResult result,int characterId)
+    void SendPickLockResult(Session* session, PickLockResult result, int characterId)
     {
         if (session == nullptr)
             return;
@@ -856,7 +862,7 @@ namespace
                     if (!ok)
                         return;
 
-                    BroadcastPickTimer(updatedRoom,PickPhase::PICKING,static_cast<uint16_t>(remain)
+                    BroadcastPickTimer(updatedRoom, PickPhase::PICKING, static_cast<uint16_t>(remain)
                     );
 
                     if (remain == 0)
@@ -867,7 +873,7 @@ namespace
 
                 // 2) 자동 픽 확정
                 Room finalPickRoom{};
-                bool forceOk = RoomManager::Instance().ForceLockMissingPicks(roomId,finalPickRoom);
+                bool forceOk = RoomManager::Instance().ForceLockMissingPicks(roomId, finalPickRoom);
 
                 if (!forceOk)
                     return;
@@ -904,12 +910,12 @@ namespace
 
                 BroadcastMatchLoadingInfo(loadingRoom);
 
-                std::cout << "[MATCH LOADING WAIT CLIENT LOAD] roomId="<< roomId<< std::endl;
+                std::cout << "[MATCH LOADING WAIT CLIENT LOAD] roomId=" << roomId << std::endl;
 
             }).detach();
     }
 
-    void FillMatchLoadingMemberInfo(MatchLoadingMemberInfo& out,const RoomMember& member)
+    void FillMatchLoadingMemberInfo(MatchLoadingMemberInfo& out, const RoomMember& member)
     {
         out.playerId = member.playerId;
 
@@ -1011,7 +1017,7 @@ namespace
         std::cout << "[MATCH START BROADCAST] roomId="
             << room.roomId
             << std::endl;
-    } 
+    }
 
     void FillGameReadyMemberInfo(GameReadyMemberInfo& out, const RoomMember& member)
     {
@@ -1051,7 +1057,7 @@ namespace
             << std::endl;
     }
 
-    bool MarkGameLoadReadyAndCheckAll(uint32_t roomId,uint32_t playerId,Room& outRoom)
+    bool MarkGameLoadReadyAndCheckAll(uint32_t roomId, uint32_t playerId, Room& outRoom)
     {
         if (!RoomManager::Instance().GetRoom(roomId, outRoom))
             return false;
@@ -1101,7 +1107,7 @@ namespace
         g_gamePrepareStartedRooms.insert(roomId);
         return true;
     }
-    
+
     void FillHPUpdatePacket(SC_HPUpdate& out, Session* target)
     {
         out.header.size = sizeof(out);
@@ -1457,7 +1463,7 @@ namespace
         );
     }
 
-    void BroadcastRoundResult(uint32_t roomId,RoomTeam winnerTeam,uint8_t scoreA,uint8_t scoreB,uint8_t currentRound,bool matchEnd,RoundWinReason winReason)
+    void BroadcastRoundResult(uint32_t roomId, RoomTeam winnerTeam, uint8_t scoreA, uint8_t scoreB, uint8_t currentRound, bool matchEnd, RoundWinReason winReason)
     {
         SC_RoundResult out{};
 
@@ -1489,7 +1495,7 @@ namespace
         return stats.kills * 100 + stats.assists * 50 - stats.deaths * 20;
     }
 
-    void BroadcastMatchResultDetail(uint32_t roomId,RoomTeam winnerTeam,uint8_t scoreA,uint8_t scoreB)
+    void BroadcastMatchResultDetail(uint32_t roomId, RoomTeam winnerTeam, uint8_t scoreA, uint8_t scoreB)
     {
         Room room{};
 
@@ -1701,6 +1707,9 @@ namespace
 
             state.spikeDefuserPlayerId = 0;
             state.spikeHalfDefused = false;
+
+            // 이전 라운드에 남아 있는 스파이크 타이머를 무효화한다.
+            state.spikePlantGeneration++;
 
             state.buyPhase = true;
 
@@ -2102,7 +2111,7 @@ namespace
             winReason
         );
 
-		ApplyRoundEndCredits(roomId, winnerTeam, winReason);
+        ApplyRoundEndCredits(roomId, winnerTeam, winReason);
 
         BroadcastScoreboardUpdate(roomId);
 
@@ -2230,7 +2239,7 @@ namespace
             << std::endl;
     }
 
-    void ResolveRoundBySpikeExplode(uint32_t roomId)
+    void ResolveRoundBySpikeExplode(uint32_t roomId, uint64_t spikeGeneration)
     {
         RoomTeam winnerTeam = RoomTeam::A;
 
@@ -2255,7 +2264,23 @@ namespace
             if (!state.spikePlanted)
                 return;
 
+            // 이 스레드가 시작될 때의 설치와 현재 설치가 다르면
+            // 이전 라운드에서 남아 있던 타이머이므로 무시한다.
+            if (state.spikePlantGeneration != spikeGeneration)
+            {
+                std::cout << "[SPIKE TIMER STALE] roomId="
+                    << roomId
+                    << " timerGeneration=" << spikeGeneration
+                    << " currentGeneration=" << state.spikePlantGeneration
+                    << std::endl;
+                return;
+            }
+
             state.roundResolving = true;
+            state.spikePlanted = false;
+
+            // 같은 설치에 대해 남아 있을 수 있는 다른 타이머도 무효화한다.
+            state.spikePlantGeneration++;
 
             winnerTeam = GetAttackTeam(state.currentRound);
 
@@ -2308,20 +2333,24 @@ namespace
             << std::endl;
     }
 
-    void StartSpikeTimerThread(uint32_t roomId)
+    void StartSpikeTimerThread(uint32_t roomId, uint64_t spikeGeneration)
     {
-        std::thread([roomId]()
+        std::thread([roomId, spikeGeneration]()
             {
                 std::this_thread::sleep_for(
                     std::chrono::seconds(SPIKE_EXPLODE_SECONDS)
                 );
 
-                ResolveRoundBySpikeExplode(roomId);
+                ResolveRoundBySpikeExplode(
+                    roomId,
+                    spikeGeneration
+                );
             }
         ).detach();
 
         std::cout << "[SPIKE TIMER START] roomId="
             << roomId
+            << " generation=" << spikeGeneration
             << " seconds=" << SPIKE_EXPLODE_SECONDS
             << std::endl;
     }
@@ -2514,7 +2543,10 @@ namespace
             state.roundResolving = true;
             state.spikePlanted = false;
             state.spikeCarrierPlayerId = 0;
-            
+
+            // 설치 당시 시작된 폭발 타이머를 무효화한다.
+            state.spikePlantGeneration++;
+
             state.spikeDefuserPlayerId = 0;
             state.spikeHalfDefused = false;
 
@@ -2619,36 +2651,36 @@ namespace
     {
         Room room{};
 
-		if (!RoomManager::Instance().GetRoom(roomId, room))
-			return;
+        if (!RoomManager::Instance().GetRoom(roomId, room))
+            return;
 
-		RoomTeam loserTeam = winnerTeam == RoomTeam::A ? RoomTeam::B : RoomTeam::A;
+        RoomTeam loserTeam = winnerTeam == RoomTeam::A ? RoomTeam::B : RoomTeam::A;
 
         uint8_t loserStreak = 1;
 
         {
             std::lock_guard<std::mutex> lock(g_matchStateMutex);
 
-			MatchRuntimeState& state = g_matchStates[roomId];
+            MatchRuntimeState& state = g_matchStates[roomId];
 
-			if (winnerTeam == RoomTeam::A)
-			{
-				state.loseStreakA = 0;
+            if (winnerTeam == RoomTeam::A)
+            {
+                state.loseStreakA = 0;
 
                 if (state.loseStreakB < 3)
                     state.loseStreakB++;
 
                 loserStreak = state.loseStreakB;
-			}
-			else
-			{
+            }
+            else
+            {
                 state.loseStreakB = 0;
 
-				if (state.loseStreakA < 3)
-					state.loseStreakA++;
+                if (state.loseStreakA < 3)
+                    state.loseStreakA++;
 
-				loserStreak = state.loseStreakA;
-			}
+                loserStreak = state.loseStreakA;
+            }
         }
 
         int winCredit = GetCreditReward("ROUND_WIN");
@@ -2657,18 +2689,18 @@ namespace
 
         for (const RoomMember& member : room.members)
         {
-			if (member.team == RoomTeam::OBSERVER)
-				continue;
-			
+            if (member.team == RoomTeam::OBSERVER)
+                continue;
+
             Session* s = SessionManager::Instance().Find(member.playerId);
-		    
+
             if (s == nullptr)
-				continue;
+                continue;
 
             if (member.team == winnerTeam)
             {
                 s->AddCredits(winCredit);
-                
+
                 std::cout << "[CREDIT ROUND WIN] playerId="
                     << s->GetPlayerId()
                     << " add=" << winCredit
@@ -2939,6 +2971,26 @@ namespace
 
         out.playerId = playerId;
         out.weaponId = weaponId;
+
+        BroadcastPacketToRoomInternal(roomId, &out);
+    }
+
+    void BroadcastReloadVisualInternal(
+        uint32_t roomId,
+        uint32_t playerId,
+        int weaponId,
+        bool isReloading)
+    {
+        SC_ReloadVisual out{};
+
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(
+            PacketType::PKT_SC_RELOAD_VISUAL
+            );
+
+        out.playerId = playerId;
+        out.weaponId = weaponId;
+        out.isReloading = isReloading ? 1 : 0;
 
         BroadcastPacketToRoomInternal(roomId, &out);
     }
@@ -4538,7 +4590,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         out.pitch = pkt->pitch;
 
         out.animIndex = animIndex;
-        out.isCrouching =pkt->isCrouching != 0? 1: 0;
+        out.isCrouching = pkt->isCrouching != 0 ? 1 : 0;
         BroadcastPacketToRoomInternal(
             roomId,
             &out
@@ -4721,20 +4773,44 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             break;
         }
 
+        int previousWeaponId = session->GetCurrentWeaponId();
+
+        // 장전 중 다른 무기로 바꾸면 이전 무기의 장전을 서버에서도 취소한다.
+        if (previousWeaponId != pkt->weaponId)
+        {
+            PlayerWeaponState* previousState =
+                session->GetWeaponState(previousWeaponId);
+
+            if (previousState != nullptr && previousState->isReloading)
+            {
+                previousState->isReloading = false;
+
+                BroadcastReloadVisualInternal(
+                    roomId,
+                    session->GetPlayerId(),
+                    previousWeaponId,
+                    false
+                );
+
+                std::cout << "[RELOAD CANCEL BY SWITCH] playerId="
+                    << session->GetPlayerId()
+                    << " weaponId=" << previousWeaponId
+                    << " nextWeaponId=" << pkt->weaponId
+                    << std::endl;
+            }
+        }
+
         session->SetCurrentWeaponId(pkt->weaponId);
 
         PlayerWeaponState* weaponState = session->GetWeaponState(pkt->weaponId);
         if (weaponState != nullptr)
             SendAmmoUpdate(session, *weaponState);
 
-        SC_WeaponSwitchNotify out{};
-        out.header.size = sizeof(out);
-        out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_WEAPON_SWITCH_NOTIFY);
-
-        out.playerId = session->GetPlayerId();
-        out.weaponId = pkt->weaponId;
-
-        BroadcastPacketToRoomInternal(roomId, &out);
+        BroadcastWeaponSwitchNotify(
+            roomId,
+            session->GetPlayerId(),
+            pkt->weaponId
+        );
 
         std::cout << "[WEAPON SWITCH BROADCAST] playerId="
             << session->GetPlayerId()
@@ -4787,9 +4863,33 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
     case PacketType::PKT_CS_RELOAD:
     {
+        if (header->size != sizeof(CS_Reload))
+        {
+            std::cout << "[RELOAD BLOCK] invalid packet size. playerId="
+                << session->GetPlayerId()
+                << " receivedSize=" << header->size
+                << " expectedSize=" << sizeof(CS_Reload)
+                << std::endl;
+            break;
+        }
+
+        if (session->GetState() != SessionState::IN_GAME)
+        {
+            std::cout << "[RELOAD BLOCK] not in game. playerId="
+                << session->GetPlayerId()
+                << std::endl;
+            break;
+        }
+
+        uint32_t roomId = session->GetCurrentRoomId();
+        if (roomId == 0)
+            break;
+
         int weaponId = session->GetCurrentWeaponId();
 
-        PlayerWeaponState* weaponState = session->GetWeaponState(weaponId);
+        PlayerWeaponState* weaponState =
+            session->GetWeaponState(weaponId);
+
         if (weaponState == nullptr)
         {
             std::cout << "[RELOAD BLOCK] weapon state null. playerId="
@@ -4799,31 +4899,41 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             break;
         }
 
-        const ServerWeaponData* weaponData = ServerWeaponTable::Find(weaponId);
-        if (weaponData == nullptr)
+        // 장전 시작 상태가 없거나 무기 변경으로 취소된 장전은 적용하지 않는다.
+        if (!weaponState->isReloading)
         {
-            std::cout << "[RELOAD BLOCK] weapon data null. weaponId="
-                << weaponId
-                << std::endl;
-            break;
-        }
-
-        if (weaponData->weaponType == ServerWeaponType::Knife)
-        {
-            std::cout << "[RELOAD BLOCK] knife cannot reload. playerId="
+            std::cout << "[RELOAD BLOCK] reload is not active. playerId="
                 << session->GetPlayerId()
+                << " weaponId=" << weaponId
                 << std::endl;
-            break;
-        }
 
-        if (weaponState->magAmmo >= weaponData->magSize)
-        {
             SendAmmoUpdate(session, *weaponState);
             break;
         }
 
-        if (weaponState->reserveAmmo <= 0)
+        const ServerWeaponData* weaponData =
+            ServerWeaponTable::Find(weaponId);
+
+        if (weaponData == nullptr)
         {
+            weaponState->isReloading = false;
+            break;
+        }
+
+        // 이 시점부터 완료 또는 실패 모두 장전 상태를 종료한다.
+        weaponState->isReloading = false;
+
+        if (weaponData->weaponType == ServerWeaponType::Knife ||
+            weaponState->magAmmo >= weaponData->magSize ||
+            weaponState->reserveAmmo <= 0)
+        {
+            BroadcastReloadVisualInternal(
+                roomId,
+                session->GetPlayerId(),
+                weaponId,
+                false
+            );
+
             SendAmmoUpdate(session, *weaponState);
             break;
         }
@@ -4835,6 +4945,13 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         weaponState->reserveAmmo -= reloadAmount;
 
         SendAmmoUpdate(session, *weaponState);
+
+        BroadcastReloadVisualInternal(
+            roomId,
+            session->GetPlayerId(),
+            weaponId,
+            false
+        );
 
         std::cout << "[RELOAD APPLY] playerId="
             << session->GetPlayerId()
@@ -4871,6 +4988,15 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         if (weaponState == nullptr)
         {
             std::cout << "[FIRE BLOCK] weapon state null. playerId="
+                << session->GetPlayerId()
+                << " weaponId=" << weaponId
+                << std::endl;
+            break;
+        }
+
+        if (weaponState->isReloading)
+        {
+            std::cout << "[FIRE BLOCK] weapon is reloading. playerId="
                 << session->GetPlayerId()
                 << " weaponId=" << weaponId
                 << std::endl;
@@ -5307,6 +5433,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             break;
 
         bool plantOk = false;
+        uint64_t spikeGeneration = 0;
 
         {
             std::lock_guard<std::mutex> lock(g_matchStateMutex);
@@ -5337,6 +5464,10 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             state.spikeDefuserPlayerId = 0;
             state.spikeHalfDefused = false;
 
+            // 이번 설치만의 고유 번호를 발급한다.
+            state.spikePlantGeneration++;
+            spikeGeneration = state.spikePlantGeneration;
+
             plantOk = true;
         }
 
@@ -5361,7 +5492,10 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
             BroadcastScoreboardUpdate(roomId);
 
-            StartSpikeTimerThread(roomId);
+            StartSpikeTimerThread(
+                roomId,
+                spikeGeneration
+            );
         }
 
         break;
@@ -5986,7 +6120,15 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
             StoreArmorData armorData = it->second;
 
-            if (session->GetMaxBarrier() >= armorData.barrier)
+            // 남아 있는 보호막이 있고, 현재 등급이 구매하려는 등급 이상일 때만 재구매 차단.
+            // 예: 50 보호막 보유 중 -> 50 재구매 불가, 100 업그레이드 가능.
+            // 보호막이 0이면 파괴된 상태이므로 같은 등급도 다시 구매 가능.
+            bool hasActiveArmor = session->GetBarrier() > 0;
+            bool alreadyOwnsSameOrBetterArmor =
+                hasActiveArmor &&
+                session->GetMaxBarrier() >= armorData.barrier;
+
+            if (alreadyOwnsSameOrBetterArmor)
             {
                 SendStoreBuyResult(
                     session,
@@ -6067,9 +6209,113 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
                 header
                 );
 
-        if (header->size !=
-            sizeof(CS_ReloadVisual))
+        if (header->size != sizeof(CS_ReloadVisual))
+            break;
+
+        if (session->GetState() != SessionState::IN_GAME)
+            break;
+
+        uint32_t roomId = session->GetCurrentRoomId();
+        if (roomId == 0)
+            break;
+
+        PlayerWeaponState* weaponState =
+            session->GetWeaponState(pkt->weaponId);
+
+        if (weaponState == nullptr || !weaponState->owned)
+            break;
+
+        bool wantsReload = pkt->isReloading != 0;
+
+        if (wantsReload)
         {
+            // 장전 시작은 현재 들고 있는 무기에 대해서만 허용한다.
+            if (pkt->weaponId != session->GetCurrentWeaponId())
+            {
+                std::cout << "[RELOAD START BLOCK] not current weapon. playerId="
+                    << session->GetPlayerId()
+                    << " weaponId=" << pkt->weaponId
+                    << " currentWeaponId=" << session->GetCurrentWeaponId()
+                    << std::endl;
+                break;
+            }
+
+            const ServerWeaponData* weaponData =
+                ServerWeaponTable::Find(pkt->weaponId);
+
+            if (weaponData == nullptr ||
+                weaponData->weaponType == ServerWeaponType::Knife ||
+                weaponState->magAmmo >= weaponData->magSize ||
+                weaponState->reserveAmmo <= 0)
+            {
+                weaponState->isReloading = false;
+
+                SendAmmoUpdate(session, *weaponState);
+                break;
+            }
+
+            weaponState->isReloading = true;
+
+            BroadcastReloadVisualInternal(
+                roomId,
+                session->GetPlayerId(),
+                pkt->weaponId,
+                true
+            );
+
+            std::cout << "[RELOAD START ACCEPT] playerId="
+                << session->GetPlayerId()
+                << " weaponId=" << pkt->weaponId
+                << std::endl;
+        }
+        else
+        {
+            // 취소는 이미 다른 무기로 바뀐 뒤 도착해도 허용한다.
+            // 해당 무기의 남아 있는 장전 상태만 제거한다.
+            bool wasReloading = weaponState->isReloading;
+
+            weaponState->isReloading = false;
+
+            BroadcastReloadVisualInternal(
+                roomId,
+                session->GetPlayerId(),
+                pkt->weaponId,
+                false
+            );
+
+            if (wasReloading)
+            {
+                std::cout << "[RELOAD CANCEL ACCEPT] playerId="
+                    << session->GetPlayerId()
+                    << " weaponId=" << pkt->weaponId
+                    << std::endl;
+            }
+        }
+
+        break;
+    }
+
+    case PacketType::PKT_CS_IN_GAME_CHAT:
+    {
+        if (header->size !=
+            sizeof(CS_InGameChat))
+        {
+            std::cout
+                << "[IN GAME CHAT BLOCK] invalid size="
+                << header->size
+                << std::endl;
+
+            break;
+        }
+
+        if (session->GetState() !=
+            SessionState::IN_GAME)
+        {
+            std::cout
+                << "[IN GAME CHAT BLOCK] not in game playerId="
+                << session->GetPlayerId()
+                << std::endl;
+
             break;
         }
 
@@ -6079,47 +6325,175 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         if (roomId == 0)
             break;
 
-        if (session->GetState() !=
-            SessionState::IN_GAME)
+        auto* pkt =
+            reinterpret_cast<CS_InGameChat*>(
+                header
+                );
+
+        bool isTeamChat =
+            pkt->channel ==
+            static_cast<uint8_t>(
+                InGameChatChannel::TEAM
+                );
+
+        bool isMatchChat =
+            pkt->channel ==
+            static_cast<uint8_t>(
+                InGameChatChannel::MATCH
+                );
+
+        if (!isTeamChat &&
+            !isMatchChat)
+        {
+            std::cout
+                << "[IN GAME CHAT BLOCK] invalid channel="
+                << static_cast<int>(pkt->channel)
+                << std::endl;
+
+            break;
+        }
+
+        size_t messageLength =
+            strnlen_s(
+                pkt->message,
+                IN_GAME_CHAT_MESSAGE_LEN
+            );
+
+        if (messageLength == 0 ||
+            messageLength >=
+            IN_GAME_CHAT_MESSAGE_LEN)
+        {
+            std::cout
+                << "[IN GAME CHAT BLOCK] invalid message length="
+                << messageLength
+                << std::endl;
+
+            break;
+        }
+
+        Room room{};
+
+        if (!RoomManager::Instance().GetRoom(
+            roomId,
+            room))
         {
             break;
         }
 
-        int currentWeaponId =
-            session->GetCurrentWeaponId();
+        RoomMember senderMember{};
 
-        if (pkt->weaponId !=
-            currentWeaponId)
+        if (!RoomManager::Instance().GetMember(
+            roomId,
+            session->GetPlayerId(),
+            senderMember))
         {
             break;
         }
 
-        SC_ReloadVisual out{};
+        SC_InGameChat out{};
 
         out.header.size =
             sizeof(out);
 
         out.header.type =
             static_cast<uint16_t>(
-                PacketType::
-                PKT_SC_RELOAD_VISUAL
+                PacketType::PKT_SC_IN_GAME_CHAT
                 );
 
-        out.playerId =
+        out.senderPlayerId =
             session->GetPlayerId();
 
-        out.weaponId =
-            pkt->weaponId;
+        out.channel =
+            pkt->channel;
 
-        out.isReloading =
-            pkt->isReloading != 0
-            ? 1
-            : 0;
+        out.senderTeam =
+            static_cast<uint8_t>(
+                senderMember.team
+                );
 
-        BroadcastPacketToRoomInternal(
-            roomId,
-            &out
+        memset(
+            out.nickname,
+            0,
+            sizeof(out.nickname)
         );
+
+        strncpy_s(
+            out.nickname,
+            sizeof(out.nickname),
+            senderMember.nickname.c_str(),
+            _TRUNCATE
+        );
+
+        memset(
+            out.message,
+            0,
+            sizeof(out.message)
+        );
+
+        strncpy_s(
+            out.message,
+            sizeof(out.message),
+            pkt->message,
+            _TRUNCATE
+        );
+
+        int sentCount = 0;
+
+        for (const RoomMember& receiverMember :
+            room.members)
+        {
+            if (isTeamChat &&
+                receiverMember.team !=
+                senderMember.team)
+            {
+                continue;
+            }
+
+            Session* receiver =
+                SessionManager::Instance().Find(
+                    receiverMember.playerId
+                );
+
+            if (receiver == nullptr)
+                continue;
+
+            if (receiver->GetCurrentRoomId() !=
+                roomId)
+            {
+                continue;
+            }
+
+            if (receiver->GetState() !=
+                SessionState::IN_GAME)
+            {
+                continue;
+            }
+
+            receiver->Send(
+                &out
+            );
+
+            sentCount++;
+        }
+
+        std::cout
+            << "[IN GAME CHAT] roomId="
+            << roomId
+            << " sender="
+            << session->GetPlayerId()
+            << " team="
+            << static_cast<int>(
+                senderMember.team
+                )
+            << " channel="
+            << static_cast<int>(
+                pkt->channel
+                )
+            << " targetCount="
+            << sentCount
+            << " message="
+            << pkt->message
+            << std::endl;
 
         break;
     }
@@ -6226,25 +6600,25 @@ void PacketDispatcher::HandleDeath(Session* target)
     Session* killer = SessionManager::Instance().Find(killerId);
 
     SC_Die diePkt{};
-	diePkt.header.size = sizeof(diePkt);
-	diePkt.header.type = static_cast<uint16_t>(PacketType::PKT_SC_DIE);
+    diePkt.header.size = sizeof(diePkt);
+    diePkt.header.type = static_cast<uint16_t>(PacketType::PKT_SC_DIE);
 
     diePkt.killerPlayerId = 0;
-	diePkt.deadPlayerId = target->GetPlayerId();
+    diePkt.deadPlayerId = target->GetPlayerId();
 
     diePkt.killerTeam = 255;
-	diePkt.deadTeam = 255;
+    diePkt.deadTeam = 255;
 
-	diePkt.killerCharacterId = -1;
+    diePkt.killerCharacterId = -1;
     diePkt.deadCharacterId = -1;
 
-	memset(diePkt.killerNickname, 0, sizeof(diePkt.killerNickname));
-	memset(diePkt.deadNickname, 0, sizeof(diePkt.deadNickname));
+    memset(diePkt.killerNickname, 0, sizeof(diePkt.killerNickname));
+    memset(diePkt.deadNickname, 0, sizeof(diePkt.deadNickname));
 
     RoomMember deadMember{};
 
-	if (RoomManager::Instance().GetMember(roomId, target->GetPlayerId(), deadMember))
-	{
+    if (RoomManager::Instance().GetMember(roomId, target->GetPlayerId(), deadMember))
+    {
         diePkt.deadTeam =
             static_cast<uint8_t>(deadMember.team);
 
@@ -6257,7 +6631,7 @@ void PacketDispatcher::HandleDeath(Session* target)
             deadMember.nickname.c_str(),
             _TRUNCATE
         );
-	}
+    }
 
     // 킬러가 정상적으로 존재할 때만 킬러 정보 입력
     if (killer != nullptr && killer != target)

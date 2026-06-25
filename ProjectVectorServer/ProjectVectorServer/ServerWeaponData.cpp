@@ -219,7 +219,7 @@ namespace
             {
                 static_cast<int>(ServerWeaponId::Knife),
                 ServerWeaponType::Knife,
-                20,
+                50,
                 2.0f,
                 0.3f,
                 0,

@@ -289,8 +289,14 @@ void Session::ResetRoundStateKeepInventory()
     maxHp_ = 100;
     hp_ = maxHp_;
 
-    maxBarrier_ = 0;
-    barrier_ = 0;
+    // 생존자의 보호막은 현재 남은 수치 그대로 다음 라운드에 보존한다.
+    // 예: 100 보호막이 40 남았다면 다음 라운드도 40/100이다.
+    // 완전히 파괴된 경우에만 보유 보호막 정보를 제거한다.
+    if (barrier_ <= 0)
+    {
+        barrier_ = 0;
+        maxBarrier_ = 0;
+    }
 
     isDead_ = false;
 

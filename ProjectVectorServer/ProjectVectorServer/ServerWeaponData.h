@@ -50,7 +50,6 @@ struct ServerWeaponData
     int damage = 0;
     float range = 0.0f;
 
-    // 다음 발사까지 필요한 시간
     float fireRate = 0.0f;
 
     int magSize = 0;

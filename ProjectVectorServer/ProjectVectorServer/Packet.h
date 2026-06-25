@@ -1116,4 +1116,41 @@ struct SC_ReloadVisual
     int32_t weaponId;
     int32_t isReloading;
 };
+
+constexpr int IN_GAME_CHAT_MESSAGE_LEN = 256;
+
+enum class InGameChatChannel : uint8_t
+{
+    TEAM = 0,
+    MATCH = 1
+};
+
+struct CS_InGameChat
+{
+    PacketHeader header;
+
+    uint8_t channel;
+
+    char message[
+        IN_GAME_CHAT_MESSAGE_LEN
+    ];
+};
+
+struct SC_InGameChat
+{
+    PacketHeader header;
+
+    uint32_t senderPlayerId;
+
+    uint8_t channel;
+    uint8_t senderTeam;
+
+    char nickname[
+        GAME_MEMBER_NICKNAME_LEN
+    ];
+
+    char message[
+        IN_GAME_CHAT_MESSAGE_LEN
+    ];
+};
 #pragma pack(pop)

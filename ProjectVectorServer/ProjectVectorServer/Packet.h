@@ -1153,4 +1153,106 @@ struct SC_InGameChat
         IN_GAME_CHAT_MESSAGE_LEN
     ];
 };
+
+struct CS_DroneDeploy
+{
+    PacketHeader header;
+
+    float x;
+    float y;
+    float z;
+
+    float yaw;
+    float pitch;
+};
+
+struct CS_DroneState
+{
+    PacketHeader header;
+
+    uint32_t droneId;
+
+    float x;
+    float y;
+    float z;
+
+    float yaw;
+    float pitch;
+};
+
+struct CS_DroneExit
+{
+    PacketHeader header;
+
+    uint32_t droneId;
+};
+
+struct SC_DroneSpawn
+{
+    PacketHeader header;
+
+    uint32_t droneId;
+    uint32_t ownerPlayerId;
+
+    float x;
+    float y;
+    float z;
+
+    float yaw;
+    float pitch;
+};
+
+struct SC_DroneState
+{
+    PacketHeader header;
+
+    uint32_t droneId;
+    uint32_t ownerPlayerId;
+
+    float x;
+    float y;
+    float z;
+
+    float yaw;
+    float pitch;
+};
+
+struct SC_DroneDestroy
+{
+    PacketHeader header;
+
+    uint32_t droneId;
+    uint32_t ownerPlayerId;
+
+    uint8_t reason;
+};
+
+struct CS_DroneHit
+{
+    PacketHeader header;
+    uint32_t droneId;
+};
+
+struct CS_DroneTaserFire
+{
+    PacketHeader header;
+
+    uint32_t droneId;
+    uint32_t targetPlayerId; // 0이면 빗나감
+};
+
+struct SC_DroneTaserFire
+{
+    PacketHeader header;
+
+    uint32_t droneId;
+    uint32_t ownerPlayerId;
+    uint32_t targetPlayerId;
+
+    uint8_t hit;    // 0 = miss / blocked, 1 = hit
+    uint8_t stack;  // 감전 스택
+
+    float duration;
+    int32_t damage;
+};
 #pragma pack(pop)

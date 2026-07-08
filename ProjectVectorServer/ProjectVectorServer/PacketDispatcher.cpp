@@ -279,6 +279,11 @@ namespace
 
     void BroadcastSpikeDefuseState(uint32_t roomId, bool halfDefused, uint32_t defuserPlayerId);
 
+    bool IsDroneActiveForPlayer(uint32_t playerId);
+    void DestroyDroneForPlayer(uint32_t ownerPlayerId, uint8_t reason);
+    void ClearDronesInRoom(uint32_t roomId, uint8_t reason);
+    bool IsDroneBlockedAction(Session* session, const char* actionName);
+
     void ResetMatchRuntimeState(uint32_t roomId)
     {
         std::lock_guard<std::mutex> lock(g_matchStateMutex);
@@ -1229,6 +1234,8 @@ namespace
 
     void BroadcastGameAllReady(const Room& room)
     {
+        ClearDronesInRoom(room.roomId, 3);
+
         ResetMatchRuntimeState(room.roomId);
         ClearDroppedWeaponsInRoom(room.roomId);
 
@@ -1656,6 +1663,7 @@ namespace
         if (!RoomManager::Instance().GetRoom(roomId, room))
             return;
 
+        ClearDronesInRoom(roomId, 2);
         ClearDroppedWeaponsInRoom(roomId);
 
         SC_RoundReset out{};
@@ -2471,15 +2479,7 @@ namespace
             << std::endl;
     }
 
-    void BroadcastSpikeDropped(
-        uint32_t roomId,
-        float x,
-        float y,
-        float z,
-        float dirX,
-        float dirY,
-        float dirZ,
-        uint32_t dropperPlayerId)
+    void BroadcastSpikeDropped(uint32_t roomId, float x, float y, float z, float dirX, float dirY, float dirZ, uint32_t dropperPlayerId)
     {
         SC_SpikeDropped out{};
 
@@ -2586,11 +2586,7 @@ namespace
         StartRoundEndThread(roomId, winnerTeam, matchEnd);
     }
 
-    void BroadcastSpikeDefuseState(
-        uint32_t roomId,
-        uint8_t state,
-        bool halfDefused,
-        uint32_t defuserPlayerId)
+    void BroadcastSpikeDefuseState(uint32_t roomId, uint8_t state, bool halfDefused, uint32_t defuserPlayerId)
     {
         SC_SpikeDefuseState out{};
 
@@ -2867,18 +2863,7 @@ namespace
         return -1;
     }
 
-    uint32_t CreateDroppedWeapon(
-        uint32_t roomId,
-        uint32_t dropperPlayerId,
-        int weaponId,
-        int magAmmo,
-        int reserveAmmo,
-        float x,
-        float y,
-        float z,
-        float dirX,
-        float dirY,
-        float dirZ)
+    uint32_t CreateDroppedWeapon(uint32_t roomId, uint32_t dropperPlayerId, int weaponId, int magAmmo, int reserveAmmo, float x, float y, float z, float dirX, float dirY, float dirZ)
     {
         uint32_t dropId = 0;
 
@@ -2933,13 +2918,7 @@ namespace
         return dropId;
     }
 
-    void BroadcastWeaponPickupNotify(
-        uint32_t roomId,
-        uint32_t dropId,
-        uint32_t pickerPlayerId,
-        int weaponId,
-        int magAmmo,
-        int reserveAmmo)
+    void BroadcastWeaponPickupNotify(uint32_t roomId, uint32_t dropId, uint32_t pickerPlayerId, int weaponId, int magAmmo, int reserveAmmo)
     {
         SC_WeaponPickupNotify out{};
 
@@ -2957,10 +2936,7 @@ namespace
         BroadcastPacketToRoomInternal(roomId, &out);
     }
 
-    void BroadcastWeaponSwitchNotify(
-        uint32_t roomId,
-        uint32_t playerId,
-        int weaponId)
+    void BroadcastWeaponSwitchNotify(uint32_t roomId, uint32_t playerId, int weaponId)
     {
         SC_WeaponSwitchNotify out{};
 
@@ -2975,11 +2951,7 @@ namespace
         BroadcastPacketToRoomInternal(roomId, &out);
     }
 
-    void BroadcastReloadVisualInternal(
-        uint32_t roomId,
-        uint32_t playerId,
-        int weaponId,
-        bool isReloading)
+    void BroadcastReloadVisualInternal(uint32_t roomId, uint32_t playerId, int weaponId, bool isReloading)
     {
         SC_ReloadVisual out{};
 
@@ -3031,6 +3003,220 @@ namespace
 
         session->Send(&out);
     }
+
+    constexpr int DRONE_MAX_HP = 100;
+
+    struct ServerDroneState
+    {
+        uint32_t droneId = 0;
+        uint32_t ownerPlayerId = 0;
+        uint32_t roomId = 0;
+
+        int hp = DRONE_MAX_HP;
+
+        bool taserUsed = false;
+
+        float x = 0.f;
+        float y = 0.f;
+        float z = 0.f;
+
+        float yaw = 0.f;
+        float pitch = 0.f;
+    };
+
+    std::mutex g_droneMutex;
+    std::unordered_map<uint32_t, ServerDroneState> g_drones;
+    std::unordered_map<uint32_t, uint32_t> g_ownerDroneIds;
+    uint32_t g_nextDroneId = 1;
+
+    bool IsDroneActiveForPlayer(uint32_t playerId)
+    {
+        std::lock_guard<std::mutex> lock(g_droneMutex);
+        return g_ownerDroneIds.find(playerId) != g_ownerDroneIds.end();
+    }
+
+    void BroadcastDroneDestroy(uint32_t roomId, uint32_t droneId, uint32_t ownerPlayerId, uint8_t reason)
+    {
+        if (roomId == 0 || droneId == 0 || ownerPlayerId == 0)
+            return;
+
+        SC_DroneDestroy out{};
+
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_DRONE_DESTROY);
+
+        out.droneId = droneId;
+        out.ownerPlayerId = ownerPlayerId;
+        out.reason = reason;
+
+        BroadcastPacketToRoomInternal(roomId, &out);
+    }
+
+    void BroadcastDroneTaserFire(
+        uint32_t roomId,
+        uint32_t droneId,
+        uint32_t ownerPlayerId,
+        uint32_t targetPlayerId,
+        bool hit,
+        uint8_t stack,
+        float duration,
+        int32_t damage)
+    {
+        SC_DroneTaserFire out{};
+
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(
+            PacketType::PKT_SC_DRONE_TASER_FIRE
+            );
+
+        out.droneId = droneId;
+        out.ownerPlayerId = ownerPlayerId;
+        out.targetPlayerId = targetPlayerId;
+
+        out.hit = hit ? 1 : 0;
+        out.stack = stack;
+
+        out.duration = duration;
+        out.damage = damage;
+
+        BroadcastPacketToRoomInternal(roomId, &out);
+    }
+
+    void DestroyDroneForPlayer(uint32_t ownerPlayerId, uint8_t reason)
+    {
+        uint32_t roomId = 0;
+        uint32_t droneId = 0;
+
+        {
+            std::lock_guard<std::mutex> lock(g_droneMutex);
+
+            auto ownerIt = g_ownerDroneIds.find(ownerPlayerId);
+
+            if (ownerIt == g_ownerDroneIds.end())
+                return;
+
+            droneId = ownerIt->second;
+
+            auto droneIt = g_drones.find(droneId);
+
+            if (droneIt == g_drones.end())
+            {
+                g_ownerDroneIds.erase(ownerIt);
+                return;
+            }
+
+            roomId = droneIt->second.roomId;
+
+            g_drones.erase(droneIt);
+            g_ownerDroneIds.erase(ownerIt);
+        }
+
+        BroadcastDroneDestroy(roomId, droneId, ownerPlayerId, reason);
+
+        std::cout << "[DRONE DESTROY] owner="
+            << ownerPlayerId
+            << " droneId=" << droneId
+            << " roomId=" << roomId
+            << " reason=" << static_cast<int>(reason)
+            << std::endl;
+    }
+
+    void DestroyDroneById(uint32_t droneId, uint8_t reason)
+    {
+        uint32_t roomId = 0;
+        uint32_t ownerPlayerId = 0;
+
+        {
+            std::lock_guard<std::mutex> lock(g_droneMutex);
+
+            auto droneIt = g_drones.find(droneId);
+            if (droneIt == g_drones.end())
+                return;
+
+            roomId = droneIt->second.roomId;
+            ownerPlayerId = droneIt->second.ownerPlayerId;
+
+            g_drones.erase(droneIt);
+            g_ownerDroneIds.erase(ownerPlayerId);
+        }
+
+        BroadcastDroneDestroy(
+            roomId,
+            droneId,
+            ownerPlayerId,
+            reason
+        );
+
+        std::cout
+            << "[DRONE DESTROY BY ID] droneId="
+            << droneId
+            << " owner="
+            << ownerPlayerId
+            << " reason="
+            << static_cast<int>(reason)
+            << std::endl;
+    }
+
+    void ClearDronesInRoom(uint32_t roomId, uint8_t reason)
+    {
+        std::vector<ServerDroneState> removedDrones;
+
+        {
+            std::lock_guard<std::mutex> lock(g_droneMutex);
+
+            for (auto it = g_drones.begin(); it != g_drones.end();)
+            {
+                if (it->second.roomId != roomId)
+                {
+                    ++it;
+                    continue;
+                }
+
+                ServerDroneState removed = it->second;
+                removedDrones.push_back(removed);
+
+                g_ownerDroneIds.erase(removed.ownerPlayerId);
+                it = g_drones.erase(it);
+            }
+        }
+
+        for (const ServerDroneState& drone : removedDrones)
+        {
+            BroadcastDroneDestroy(
+                roomId,
+                drone.droneId,
+                drone.ownerPlayerId,
+                reason
+            );
+        }
+
+        if (!removedDrones.empty())
+        {
+            std::cout << "[DRONE CLEAR ROOM] roomId="
+                << roomId
+                << " count=" << removedDrones.size()
+                << " reason=" << static_cast<int>(reason)
+                << std::endl;
+        }
+    }
+
+    bool IsDroneBlockedAction(Session* session, const char* actionName)
+    {
+        if (session == nullptr)
+            return true;
+
+        if (!IsDroneActiveForPlayer(session->GetPlayerId()))
+            return false;
+
+        std::cout << "[DRONE ACTION BLOCK] action="
+            << actionName
+            << " playerId="
+            << session->GetPlayerId()
+            << std::endl;
+
+        return true;
+    }
+
 }
 
 void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
@@ -4542,6 +4728,15 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             break;
         }
 
+        if (IsDroneActiveForPlayer(session->GetPlayerId()))
+        {
+            std::cout << "[MOVE BLOCK] player is controlling drone. playerId="
+                << session->GetPlayerId()
+                << std::endl;
+
+            break;
+        }
+
         session->SetPosition(
             pkt->x,
             pkt->y,
@@ -4611,6 +4806,9 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
                 << std::endl;
             break;
         }
+
+        if (IsDroneBlockedAction(session, "HIT"))
+            break;
 
         uint32_t roomId = session->GetCurrentRoomId();
 
@@ -4754,6 +4952,9 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             break;
         }
 
+        if (IsDroneBlockedAction(session, "WEAPON_SWITCH"))
+            break;
+
         uint32_t roomId = session->GetCurrentRoomId();
 
         if (roomId == 0)
@@ -4833,6 +5034,9 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             break;
         }
 
+        if (IsDroneBlockedAction(session, "ADS"))
+            break;
+
         uint32_t roomId = session->GetCurrentRoomId();
 
         if (roomId == 0)
@@ -4880,6 +5084,9 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
                 << std::endl;
             break;
         }
+
+        if (IsDroneBlockedAction(session, "RELOAD"))
+            break;
 
         uint32_t roomId = session->GetCurrentRoomId();
         if (roomId == 0)
@@ -4972,6 +5179,9 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
                 << std::endl;
             break;
         }
+
+        if (IsDroneBlockedAction(session, "FIRE"))
+            break;
 
         int weaponId = session->GetCurrentWeaponId();
 
@@ -5099,6 +5309,9 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
             break;
         }
+
+        if (IsDroneBlockedAction(session, "KNIFE_ATTACK"))
+            break;
 
         uint32_t roomId = session->GetCurrentRoomId();
 
@@ -5295,6 +5508,9 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             break;
         }
 
+        if (IsDroneBlockedAction(session, "SPIKE_PICKUP"))
+            break;
+
         RoomMember member{};
         if (!RoomManager::Instance().GetMember(roomId, session->GetPlayerId(), member))
             break;
@@ -5362,6 +5578,9 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         if (session->IsDead())
             break;
 
+        if (IsDroneBlockedAction(session, "SPIKE_DROP"))
+            break;
+
         bool dropOk = false;
 
         Vector3 dropPos{};
@@ -5426,6 +5645,9 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         uint32_t roomId = session->GetCurrentRoomId();
 
         if (session->GetState() != SessionState::IN_GAME || roomId == 0)
+            break;
+
+        if (IsDroneBlockedAction(session, "SPIKE_PLANT"))
             break;
 
         RoomMember member{};
@@ -5508,6 +5730,9 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         if (session->GetState() != SessionState::IN_GAME || roomId == 0)
             break;
 
+        if (IsDroneBlockedAction(session, "SPIKE_DEFUSE_COMPLETE"))
+            break;
+
         RoomMember member{};
         if (!RoomManager::Instance().GetMember(roomId, session->GetPlayerId(), member))
             break;
@@ -5556,6 +5781,9 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         uint32_t roomId = session->GetCurrentRoomId();
 
         if (session->GetState() != SessionState::IN_GAME || roomId == 0)
+            break;
+
+        if (IsDroneBlockedAction(session, "SPIKE_DEFUSE_START"))
             break;
 
         RoomMember member{};
@@ -5694,6 +5922,9 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         if (session->GetState() != SessionState::IN_GAME)
             break;
 
+        if (IsDroneBlockedAction(session, "WEAPON_DROP"))
+            break;
+
         uint32_t roomId = session->GetCurrentRoomId();
 
         if (roomId == 0)
@@ -5764,6 +5995,9 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         auto* pkt = reinterpret_cast<CS_WeaponPickupRequest*>(header);
 
         if (session->GetState() != SessionState::IN_GAME)
+            break;
+
+        if (IsDroneBlockedAction(session, "WEAPON_PICKUP"))
             break;
 
         uint32_t roomId = session->GetCurrentRoomId();
@@ -6215,6 +6449,9 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         if (session->GetState() != SessionState::IN_GAME)
             break;
 
+        if (IsDroneBlockedAction(session, "RELOAD_VISUAL"))
+            break;
+
         uint32_t roomId = session->GetCurrentRoomId();
         if (roomId == 0)
             break;
@@ -6498,6 +6735,644 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         break;
     }
 
+    case PacketType::PKT_CS_DRONE_DEPLOY:
+    {
+        auto* pkt = reinterpret_cast<CS_DroneDeploy*>(header);
+
+        if (header->size != sizeof(CS_DroneDeploy))
+        {
+            std::cout << "[DRONE DEPLOY BLOCK] invalid size playerId="
+                << session->GetPlayerId()
+                << std::endl;
+            break;
+        }
+
+        if (session->GetState() != SessionState::IN_GAME)
+        {
+            std::cout << "[DRONE DEPLOY BLOCK] not in game playerId="
+                << session->GetPlayerId()
+                << std::endl;
+            break;
+        }
+
+        if (session->IsDead())
+        {
+            std::cout << "[DRONE DEPLOY BLOCK] dead playerId="
+                << session->GetPlayerId()
+                << std::endl;
+            break;
+        }
+
+        uint32_t roomId = session->GetCurrentRoomId();
+
+        if (roomId == 0)
+            break;
+
+        RoomMember member{};
+
+        if (!RoomManager::Instance().GetMember(roomId, session->GetPlayerId(), member))
+            break;
+
+        // 실제 이니시에이터 characterId로 바꿔야 함
+        // 예: constexpr int INITIATOR_CHARACTER_ID = 0;
+        // if (member.lockedCharacterId != INITIATOR_CHARACTER_ID) break;
+
+        {
+            std::lock_guard<std::mutex> lock(g_matchStateMutex);
+
+            auto it = g_matchStates.find(roomId);
+
+            if (it == g_matchStates.end())
+            {
+                std::cout << "[DRONE DEPLOY BLOCK] match state not found. roomId="
+                    << roomId
+                    << std::endl;
+
+                break;
+            }
+
+            if (it->second.buyPhase ||
+                it->second.roundResolving ||
+                it->second.matchEnded)
+            {
+                std::cout << "[DRONE DEPLOY BLOCK] invalid round state. playerId="
+                    << session->GetPlayerId()
+                    << " buyPhase=" << it->second.buyPhase
+                    << " resolving=" << it->second.roundResolving
+                    << " matchEnded=" << it->second.matchEnded
+                    << std::endl;
+
+                break;
+            }
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(g_droneMutex);
+
+            if (g_ownerDroneIds.find(session->GetPlayerId()) != g_ownerDroneIds.end())
+            {
+                std::cout << "[DRONE DEPLOY BLOCK] already has drone playerId="
+                    << session->GetPlayerId()
+                    << std::endl;
+                break;
+            }
+
+            uint32_t droneId = g_nextDroneId++;
+
+            ServerDroneState state{};
+            state.droneId = droneId;
+            state.ownerPlayerId = session->GetPlayerId();
+            state.roomId = roomId;
+            state.x = pkt->x;
+            state.y = pkt->y;
+            state.z = pkt->z;
+            state.yaw = pkt->yaw;
+            state.pitch = pkt->pitch;
+
+            g_drones[droneId] = state;
+            g_ownerDroneIds[session->GetPlayerId()] = droneId;
+
+            SC_DroneSpawn out{};
+            out.header.size = sizeof(out);
+            out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_DRONE_SPAWN);
+            out.droneId = droneId;
+            out.ownerPlayerId = session->GetPlayerId();
+            out.x = state.x;
+            out.y = state.y;
+            out.z = state.z;
+            out.yaw = state.yaw;
+            out.pitch = state.pitch;
+
+            BroadcastPacketToRoomInternal(roomId, &out);
+
+            std::cout << "[DRONE SPAWN] owner="
+                << session->GetPlayerId()
+                << " droneId=" << droneId
+                << " roomId=" << roomId
+                << std::endl;
+        }
+
+        break;
+    }
+
+    case PacketType::PKT_CS_DRONE_STATE:
+    {
+        auto* pkt = reinterpret_cast<CS_DroneState*>(header);
+
+        if (header->size != sizeof(CS_DroneState))
+            break;
+
+        if (session->GetState() != SessionState::IN_GAME)
+            break;
+
+        if (session->IsDead())
+        {
+            DestroyDroneForPlayer(session->GetPlayerId(), 1);
+            break;
+        }
+
+        uint32_t roomId = session->GetCurrentRoomId();
+
+        if (roomId == 0)
+            break;
+
+        {
+            std::lock_guard<std::mutex> lock(g_droneMutex);
+
+            auto droneIt = g_drones.find(pkt->droneId);
+            if (droneIt == g_drones.end())
+                break;
+
+            ServerDroneState& drone = droneIt->second;
+
+            if (drone.ownerPlayerId != session->GetPlayerId())
+                break;
+
+            if (drone.roomId != roomId)
+                break;
+
+            drone.x = pkt->x;
+            drone.y = pkt->y;
+            drone.z = pkt->z;
+            drone.yaw = pkt->yaw;
+            drone.pitch = pkt->pitch;
+
+            SC_DroneState out{};
+            out.header.size = sizeof(out);
+            out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_DRONE_STATE);
+            out.droneId = drone.droneId;
+            out.ownerPlayerId = drone.ownerPlayerId;
+            out.x = drone.x;
+            out.y = drone.y;
+            out.z = drone.z;
+            out.yaw = drone.yaw;
+            out.pitch = drone.pitch;
+
+            BroadcastPacketToRoomInternal(roomId, &out);
+        }
+
+        break;
+    }
+
+    case PacketType::PKT_CS_DRONE_EXIT:
+    {
+        auto* pkt = reinterpret_cast<CS_DroneExit*>(header);
+
+        if (header->size != sizeof(CS_DroneExit))
+            break;
+
+        {
+            std::lock_guard<std::mutex> lock(g_droneMutex);
+
+            auto ownerIt = g_ownerDroneIds.find(session->GetPlayerId());
+
+            if (ownerIt == g_ownerDroneIds.end())
+                break;
+
+            if (ownerIt->second != pkt->droneId)
+            {
+                std::cout << "[DRONE EXIT BLOCK] wrong droneId. playerId="
+                    << session->GetPlayerId()
+                    << " requestDroneId=" << pkt->droneId
+                    << " ownerDroneId=" << ownerIt->second
+                    << std::endl;
+
+                break;
+            }
+        }
+
+        DestroyDroneForPlayer(session->GetPlayerId(), 0);
+
+        break;
+    }
+
+    case PacketType::PKT_CS_DRONE_HIT:
+    {
+        auto* pkt = reinterpret_cast<CS_DroneHit*>(header);
+
+        if (header->size != sizeof(CS_DroneHit))
+        {
+            std::cout
+                << "[DRONE HIT BLOCK] invalid size playerId="
+                << session->GetPlayerId()
+                << std::endl;
+
+            break;
+        }
+
+        if (session->GetState() != SessionState::IN_GAME)
+        {
+            std::cout
+                << "[DRONE HIT BLOCK] not in game playerId="
+                << session->GetPlayerId()
+                << std::endl;
+
+            break;
+        }
+
+        if (session->IsDead())
+        {
+            std::cout
+                << "[DRONE HIT BLOCK] attacker dead playerId="
+                << session->GetPlayerId()
+                << std::endl;
+
+            break;
+        }
+
+        uint32_t roomId = session->GetCurrentRoomId();
+
+        if (roomId == 0)
+            break;
+
+        uint32_t ownerPlayerId = 0;
+        uint32_t droneRoomId = 0;
+
+        {
+            std::lock_guard<std::mutex> lock(g_droneMutex);
+
+            auto droneIt = g_drones.find(pkt->droneId);
+            if (droneIt == g_drones.end())
+            {
+                std::cout
+                    << "[DRONE HIT BLOCK] drone not found droneId="
+                    << pkt->droneId
+                    << std::endl;
+
+                break;
+            }
+
+            ownerPlayerId = droneIt->second.ownerPlayerId;
+            droneRoomId = droneIt->second.roomId;
+        }
+
+        if (droneRoomId != roomId)
+        {
+            std::cout
+                << "[DRONE HIT BLOCK] different room attacker="
+                << session->GetPlayerId()
+                << " droneId="
+                << pkt->droneId
+                << std::endl;
+
+            break;
+        }
+
+        if (ownerPlayerId == session->GetPlayerId())
+        {
+            std::cout
+                << "[DRONE HIT BLOCK] own drone attacker="
+                << session->GetPlayerId()
+                << " droneId="
+                << pkt->droneId
+                << std::endl;
+
+            break;
+        }
+
+        RoomMember attackerMember{};
+        RoomMember ownerMember{};
+
+        if (!RoomManager::Instance().GetMember(
+            roomId,
+            session->GetPlayerId(),
+            attackerMember))
+        {
+            break;
+        }
+
+        if (!RoomManager::Instance().GetMember(
+            roomId,
+            ownerPlayerId,
+            ownerMember))
+        {
+            break;
+        }
+
+        if (attackerMember.team == ownerMember.team)
+        {
+            std::cout
+                << "[DRONE HIT BLOCK] friendly drone fire blocked. attacker="
+                << session->GetPlayerId()
+                << " owner="
+                << ownerPlayerId
+                << std::endl;
+
+            break;
+        }
+
+        int weaponId = session->GetCurrentWeaponId();
+
+        if (!session->HasWeapon(weaponId))
+        {
+            std::cout
+                << "[DRONE HIT BLOCK] weapon not owned playerId="
+                << session->GetPlayerId()
+                << " weaponId="
+                << weaponId
+                << std::endl;
+
+            break;
+        }
+
+        PlayerWeaponState* weaponState =
+            session->GetWeaponState(weaponId);
+
+        if (weaponState == nullptr)
+            break;
+
+        const ServerWeaponData* weaponData =
+            ServerWeaponTable::Find(weaponId);
+
+        if (weaponData == nullptr)
+            break;
+
+        int damage = weaponData->damage;
+        int remainHp = 0;
+        bool destroyed = false;
+
+        {
+            std::lock_guard<std::mutex> lock(g_droneMutex);
+
+            auto droneIt = g_drones.find(pkt->droneId);
+            if (droneIt == g_drones.end())
+                break;
+
+            ServerDroneState& drone = droneIt->second;
+
+            if (drone.roomId != roomId)
+                break;
+
+            if (drone.ownerPlayerId != ownerPlayerId)
+                break;
+
+            drone.hp -= damage;
+            remainHp = drone.hp;
+
+            if (drone.hp <= 0)
+            {
+                g_drones.erase(droneIt);
+                g_ownerDroneIds.erase(ownerPlayerId);
+                destroyed = true;
+            }
+        }
+
+        std::cout
+            << "[DRONE HIT] attacker="
+            << session->GetPlayerId()
+            << " droneId="
+            << pkt->droneId
+            << " owner="
+            << ownerPlayerId
+            << " damage="
+            << damage
+            << " remainHp="
+            << remainHp
+            << std::endl;
+
+        if (destroyed)
+        {
+            BroadcastDroneDestroy(
+                roomId,
+                pkt->droneId,
+                ownerPlayerId,
+                1
+            );
+
+            std::cout
+                << "[DRONE DESTROY BY HIT] droneId="
+                << pkt->droneId
+                << " owner="
+                << ownerPlayerId
+                << std::endl;
+        }
+
+        break;
+    }
+
+    case PacketType::PKT_CS_DRONE_TASER_FIRE:
+    {
+        auto* pkt = reinterpret_cast<CS_DroneTaserFire*>(header);
+
+        if (header->size != sizeof(CS_DroneTaserFire))
+        {
+            std::cout
+                << "[DRONE TASER BLOCK] invalid size playerId="
+                << session->GetPlayerId()
+                << std::endl;
+
+            break;
+        }
+
+        if (session->GetState() != SessionState::IN_GAME)
+        {
+            std::cout
+                << "[DRONE TASER BLOCK] not in game playerId="
+                << session->GetPlayerId()
+                << std::endl;
+
+            break;
+        }
+
+        if (session->IsDead())
+        {
+            std::cout
+                << "[DRONE TASER BLOCK] owner dead playerId="
+                << session->GetPlayerId()
+                << std::endl;
+
+            break;
+        }
+
+        uint32_t roomId = session->GetCurrentRoomId();
+
+        if (roomId == 0)
+            break;
+
+        constexpr float DRONE_TASER_RANGE = 100.f;
+        constexpr float DRONE_TASER_RANGE_SQ =
+            DRONE_TASER_RANGE * DRONE_TASER_RANGE;
+
+        constexpr float DRONE_TASER_DURATION = 3.f;
+        constexpr int32_t DRONE_TASER_DAMAGE = 10;
+        constexpr uint8_t DRONE_TASER_STACK = 1;
+
+        ServerDroneState droneSnapshot{};
+
+        {
+            std::lock_guard<std::mutex> lock(g_droneMutex);
+
+            auto droneIt = g_drones.find(pkt->droneId);
+
+            if (droneIt == g_drones.end())
+            {
+                std::cout
+                    << "[DRONE TASER BLOCK] drone not found droneId="
+                    << pkt->droneId
+                    << std::endl;
+
+                break;
+            }
+
+            ServerDroneState& drone = droneIt->second;
+
+            if (drone.ownerPlayerId != session->GetPlayerId())
+            {
+                std::cout
+                    << "[DRONE TASER BLOCK] not owner playerId="
+                    << session->GetPlayerId()
+                    << " droneOwner="
+                    << drone.ownerPlayerId
+                    << std::endl;
+
+                break;
+            }
+
+            if (drone.roomId != roomId)
+            {
+                std::cout
+                    << "[DRONE TASER BLOCK] room mismatch playerId="
+                    << session->GetPlayerId()
+                    << std::endl;
+
+                break;
+            }
+
+            if (drone.taserUsed)
+            {
+                std::cout
+                    << "[DRONE TASER BLOCK] already used droneId="
+                    << pkt->droneId
+                    << std::endl;
+
+                break;
+            }
+
+            // 핵심:
+            // 맞췄든 못 맞췄든 여기서 1회 사용 확정.
+            drone.taserUsed = true;
+            droneSnapshot = drone;
+        }
+
+        bool validHit = false;
+        uint32_t finalTargetPlayerId = 0;
+
+        if (pkt->targetPlayerId != 0)
+        {
+            Session* target =
+                SessionManager::Instance().Find(pkt->targetPlayerId);
+
+            if (target != nullptr &&
+                target->GetCurrentRoomId() == roomId &&
+                !target->IsDead())
+            {
+                RoomMember ownerMember{};
+                RoomMember targetMember{};
+
+                bool ownerOk =
+                    RoomManager::Instance().GetMember(
+                        roomId,
+                        session->GetPlayerId(),
+                        ownerMember
+                    );
+
+                bool targetOk =
+                    RoomManager::Instance().GetMember(
+                        roomId,
+                        target->GetPlayerId(),
+                        targetMember
+                    );
+
+                if (ownerOk &&
+                    targetOk &&
+                    ownerMember.team != targetMember.team)
+                {
+                    Vector3 targetPos = target->GetPosition();
+
+                    float dx = targetPos.x - droneSnapshot.x;
+                    float dy = targetPos.y - droneSnapshot.y;
+                    float dz = targetPos.z - droneSnapshot.z;
+
+                    float distSq =
+                        dx * dx +
+                        dy * dy +
+                        dz * dz;
+
+                    if (distSq <= DRONE_TASER_RANGE_SQ)
+                    {
+                        validHit = true;
+                        finalTargetPlayerId = target->GetPlayerId();
+
+                        target->SetLastDamager(
+                            session->GetPlayerId()
+                        );
+
+                        target->AddAssistDamageRecord(
+                            session->GetPlayerId(),
+                            DRONE_TASER_DAMAGE
+                        );
+
+                        target->Damage(
+                            DRONE_TASER_DAMAGE
+                        );
+
+                        SC_HPUpdate hpPkt{};
+                        FillHPUpdatePacket(
+                            hpPkt,
+                            target
+                        );
+
+                        BroadcastPacketToRoomInternal(
+                            roomId,
+                            &hpPkt
+                        );
+
+                        std::cout
+                            << "[DRONE TASER HIT] owner="
+                            << session->GetPlayerId()
+                            << " target="
+                            << target->GetPlayerId()
+                            << " damage="
+                            << DRONE_TASER_DAMAGE
+                            << " targetHp="
+                            << target->GetHP()
+                            << std::endl;
+
+                        if (target->IsDead())
+                        {
+                            HandleDeath(target);
+                        }
+                    }
+                }
+            }
+        }
+
+        BroadcastDroneTaserFire(
+            roomId,
+            pkt->droneId,
+            session->GetPlayerId(),
+            finalTargetPlayerId,
+            validHit,
+            validHit ? DRONE_TASER_STACK : 0,
+            DRONE_TASER_DURATION,
+            validHit ? DRONE_TASER_DAMAGE : 0
+        );
+
+        if (!validHit)
+        {
+            std::cout
+                << "[DRONE TASER MISS/BLOCKED] owner="
+                << session->GetPlayerId()
+                << " droneId="
+                << pkt->droneId
+                << " requestedTarget="
+                << pkt->targetPlayerId
+                << std::endl;
+        }
+
+        break;
+    }
+
     default:
     {
         std::cout << "[UNHANDLED PACKET] type=" << (uint16_t)type
@@ -6593,6 +7468,7 @@ void PacketDispatcher::HandleDeath(Session* target)
 
     uint32_t roomId = target->GetCurrentRoomId();
 
+    DestroyDroneForPlayer(target->GetPlayerId(), 1);
 
     constexpr int ASSIST_VALID_SECONDS = 10;
 

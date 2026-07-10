@@ -1255,4 +1255,88 @@ struct SC_DroneTaserFire
     float duration;
     int32_t damage;
 };
+
+struct SC_DroneHpUpdate
+{
+    PacketHeader header;
+    uint32_t droneId;
+    uint32_t ownerPlayerId;
+    int32_t hp;
+    int32_t maxHp;
+};
+
+struct CS_ScannerThrow
+{
+    PacketHeader header;
+
+    float x;
+    float y;
+    float z;
+
+    float vx;
+    float vy;
+    float vz;
+};
+
+struct SC_ScannerSpawn
+{
+    PacketHeader header;
+
+    uint32_t scannerId;
+    uint32_t ownerPlayerId;
+
+    float x;
+    float y;
+    float z;
+
+    float vx;
+    float vy;
+    float vz;
+};
+
+struct CS_ScannerAnchor
+{
+    PacketHeader header;
+
+    uint32_t scannerId;
+
+    float x;
+    float y;
+    float z;
+};
+
+struct SC_ScannerAnchored
+{
+    PacketHeader header;
+
+    uint32_t scannerId;
+
+    float x;
+    float y;
+    float z;
+};
+
+struct SC_ScannerZap
+{
+    PacketHeader header;
+
+    uint32_t scannerId;
+    uint32_t targetPlayerId;
+
+    uint8_t stack;
+    float duration;
+};
+
+struct SC_ScannerDestroy
+{
+    PacketHeader header;
+
+    uint32_t scannerId;
+};
+
+struct CS_ScannerHit
+{
+    PacketHeader header;
+    uint32_t scannerId;
+};
 #pragma pack(pop)

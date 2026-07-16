@@ -1339,4 +1339,61 @@ struct CS_ScannerHit
     PacketHeader header;
     uint32_t scannerId;
 };
+
+constexpr int EMP_MAX_TARGET_COUNT = GAME_MEMBER_COUNT;
+
+struct CS_EmpCast
+{
+    PacketHeader header;
+};
+
+struct SC_EmpCast
+{
+    PacketHeader header;
+
+    uint32_t casterPlayerId;
+    uint8_t targetCount;
+
+    uint32_t targetPlayerIds[EMP_MAX_TARGET_COUNT];
+};
+
+struct SC_ElectricStatus
+{
+    PacketHeader header;
+
+    uint32_t playerId;
+
+    uint8_t shockStack;
+    uint8_t stunned;
+
+    float stunSeconds;
+};
+
+constexpr int ULTIMATE_MAX_TARGET_COUNT = GAME_MEMBER_COUNT;
+
+struct CS_UltimateCast
+{
+    PacketHeader header;
+
+    float dirX;
+    float dirY;
+    float dirZ;
+};
+
+struct SC_UltimateCast
+{
+    PacketHeader header;
+
+    uint32_t casterPlayerId;
+
+    float dirX;
+    float dirY;
+    float dirZ;
+
+    uint8_t targetCount;
+    uint32_t targetPlayerIds[ULTIMATE_MAX_TARGET_COUNT];
+
+    int32_t damage;
+    uint8_t stack;
+};
 #pragma pack(pop)

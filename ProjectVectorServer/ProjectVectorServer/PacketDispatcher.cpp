@@ -96,6 +96,32 @@ namespace
     std::mutex g_scannerMoveStateMutex;
     std::unordered_map<uint32_t, PlayerScannerMoveState> g_scannerMoveStates;
 
+    constexpr float EMP_RADIUS = 7.0f;
+    constexpr float EMP_RADIUS_SQ = EMP_RADIUS * EMP_RADIUS;
+
+    constexpr int ELECTRIC_MAX_STACK = 3;
+    constexpr int ELECTRIC_STACK_EXPIRE_MS = 5000;
+
+    struct ElectricStatusState
+    {
+        uint8_t shockStack = 0;
+
+        std::chrono::steady_clock::time_point shockExpireTime;
+        std::chrono::steady_clock::time_point stunEndTime;
+    };
+
+    std::mutex g_electricStatusMutex;
+    std::unordered_map<uint32_t, ElectricStatusState> g_electricStatuses;
+
+    constexpr float ULTIMATE_RANGE = 18.0f;
+    constexpr float ULTIMATE_RANGE_SQ = ULTIMATE_RANGE * ULTIMATE_RANGE;
+
+    // 전방 120도 정도
+    constexpr float ULTIMATE_CONE_DOT = 0.5f;
+
+    constexpr int32_t ULTIMATE_DAMAGE = 45;
+    constexpr uint8_t ULTIMATE_STACK = 2;
+
     bool IsOvertimeScore(uint8_t scoreA, uint8_t scoreB)
     {
         return scoreA == OVERTIME_TRIGGER_SCORE &&
@@ -1957,12 +1983,34 @@ namespace
         return originalTeam;
     }
 
+    void ClearElectricStatusInRoom(uint32_t roomId)
+    {
+        Room room{};
+
+        if (!RoomManager::Instance().GetRoom(roomId, room))
+            return;
+
+        std::lock_guard<std::mutex> lock(g_electricStatusMutex);
+
+        for (const RoomMember& member : room.members)
+        {
+            g_electricStatuses.erase(member.playerId);
+        }
+
+        std::cout
+            << "[ELECTRIC STATUS CLEAR ROOM] roomId="
+            << roomId
+            << std::endl;
+    }
+
     void ResetRound(uint32_t roomId)
     {
         Room room{};
 
         if (!RoomManager::Instance().GetRoom(roomId, room))
             return;
+
+        ClearElectricStatusInRoom(roomId);
 
         ClearDronesInRoom(roomId, 2);
         ClearDroppedWeaponsInRoom(roomId);
@@ -3439,6 +3487,96 @@ namespace
             << std::endl;
     }
 
+    void BroadcastElectricStatus(
+        uint32_t roomId,
+        uint32_t playerId,
+        uint8_t shockStack,
+        bool stunned,
+        float stunSeconds)
+    {
+        SC_ElectricStatus out{};
+
+        out.header.size = sizeof(out);
+        out.header.type =
+            static_cast<uint16_t>(PacketType::PKT_SC_ELECTRIC_STATUS);
+
+        out.playerId = playerId;
+        out.shockStack = shockStack;
+        out.stunned = stunned ? 1 : 0;
+        out.stunSeconds = stunSeconds;
+
+        BroadcastPacketToRoomInternal(roomId, &out);
+
+        std::cout
+            << "[ELECTRIC STATUS BROADCAST] "
+            << "roomId=" << roomId
+            << " playerId=" << playerId
+            << " stack=" << static_cast<int>(shockStack)
+            << " stunned=" << stunned
+            << " stunSeconds=" << stunSeconds
+            << std::endl;
+    }
+
+    uint8_t ConsumeElectricShockStack(uint32_t playerId)
+    {
+        auto now = std::chrono::steady_clock::now();
+
+        std::lock_guard<std::mutex> lock(g_electricStatusMutex);
+
+        auto it = g_electricStatuses.find(playerId);
+
+        if (it == g_electricStatuses.end())
+            return 0;
+
+        if (it->second.shockStack == 0)
+            return 0;
+
+        if (now > it->second.shockExpireTime)
+        {
+            it->second.shockStack = 0;
+            return 0;
+        }
+
+        uint8_t stack = it->second.shockStack;
+
+        it->second.shockStack = 0;
+
+        return stack;
+    }
+
+    void ApplyElectricStun(
+        uint32_t roomId,
+        uint32_t playerId,
+        float stunSeconds)
+    {
+        if (stunSeconds <= 0.0f)
+            return;
+
+        {
+            std::lock_guard<std::mutex> lock(g_electricStatusMutex);
+
+            ElectricStatusState& status =
+                g_electricStatuses[playerId];
+
+            auto stunEnd =
+                std::chrono::steady_clock::now() +
+                std::chrono::milliseconds(
+                    static_cast<int>(stunSeconds * 1000.0f)
+                );
+
+            if (stunEnd > status.stunEndTime)
+                status.stunEndTime = stunEnd;
+        }
+
+        BroadcastElectricStatus(
+            roomId,
+            playerId,
+            0,
+            true,
+            stunSeconds
+        );
+    }
+
     void ClearDronesInRoom(uint32_t roomId, uint8_t reason)
     {
         std::vector<ServerDroneState> removedDrones;
@@ -3532,6 +3670,48 @@ namespace
             return false;
 
         return it->second.moving;
+    }
+
+    void AddElectricShockStack(
+        uint32_t roomId,
+        uint32_t playerId,
+        uint8_t amount)
+    {
+        if (amount == 0)
+            return;
+
+        uint8_t nextStack = 0;
+
+        {
+            std::lock_guard<std::mutex> lock(g_electricStatusMutex);
+
+            ElectricStatusState& status =
+                g_electricStatuses[playerId];
+
+            int stack =
+                static_cast<int>(status.shockStack) +
+                static_cast<int>(amount);
+
+            if (stack > ELECTRIC_MAX_STACK)
+                stack = ELECTRIC_MAX_STACK;
+
+            status.shockStack =
+                static_cast<uint8_t>(stack);
+
+            status.shockExpireTime =
+                std::chrono::steady_clock::now() +
+                std::chrono::milliseconds(ELECTRIC_STACK_EXPIRE_MS);
+
+            nextStack = status.shockStack;
+        }
+
+        BroadcastElectricStatus(
+            roomId,
+            playerId,
+            nextStack,
+            false,
+            0.0f
+        );
     }
 
     void TryTriggerScannersByMovement(Session* actor)
@@ -3635,6 +3815,12 @@ namespace
                 SCANNER_SHOCK_DURATION
             );
 
+            AddElectricShockStack(
+                roomId,
+                actorPlayerId,
+                1
+            );
+
             std::cout
                 << "[SCANNER MOVE TRIGGER] "
                 << "scannerId=" << scannerId
@@ -3656,6 +3842,145 @@ namespace
             else
                 ++it;
         }
+    }
+
+    float GetStunDurationByStack(uint8_t stack)
+    {
+        /*if (stack == 1)
+            return 0.8f;
+
+        if (stack == 2)
+            return 1.3f;
+
+        if (stack >= 3)
+            return 1.8f;*/
+
+        if (stack == 1)
+            return 3.0f;
+
+        if (stack == 2)
+            return 4.0f;
+
+        if (stack >= 3)
+            return 5.0f;
+
+        return 0.0f;
+    }
+
+    bool IsPlayerStunned(uint32_t playerId)
+    {
+        auto now = std::chrono::steady_clock::now();
+
+        std::lock_guard<std::mutex> lock(g_electricStatusMutex);
+
+        auto it = g_electricStatuses.find(playerId);
+
+        if (it == g_electricStatuses.end())
+            return false;
+
+        return now < it->second.stunEndTime;
+    }
+
+    
+
+    void BroadcastEmpCast(
+        uint32_t roomId,
+        uint32_t casterPlayerId,
+        const std::vector<uint32_t>& targetPlayerIds)
+    {
+        SC_EmpCast out{};
+
+        out.header.size = sizeof(out);
+        out.header.type =
+            static_cast<uint16_t>(PacketType::PKT_SC_EMP_CAST);
+
+        out.casterPlayerId = casterPlayerId;
+
+        uint8_t count =
+            static_cast<uint8_t>(
+                std::min<size_t>(
+                    targetPlayerIds.size(),
+                    EMP_MAX_TARGET_COUNT
+                )
+                );
+
+        out.targetCount = count;
+
+        for (int i = 0; i < count; i++)
+        {
+            out.targetPlayerIds[i] = targetPlayerIds[i];
+        }
+
+        BroadcastPacketToRoomInternal(roomId, &out);
+
+        std::cout
+            << "[EMP CAST BROADCAST] "
+            << "roomId=" << roomId
+            << " caster=" << casterPlayerId
+            << " targetCount=" << static_cast<int>(count)
+            << std::endl;
+    }
+
+    void BroadcastUltimateCast(
+        uint32_t roomId,
+        uint32_t casterPlayerId,
+        float dirX,
+        float dirY,
+        float dirZ,
+        const std::vector<uint32_t>& targetPlayerIds,
+        int32_t damage,
+        uint8_t stack)
+    {
+        SC_UltimateCast out{};
+
+        out.header.size = sizeof(out);
+        out.header.type =
+            static_cast<uint16_t>(
+                PacketType::PKT_SC_ULTIMATE_CAST
+                );
+
+        out.casterPlayerId = casterPlayerId;
+
+        out.dirX = dirX;
+        out.dirY = dirY;
+        out.dirZ = dirZ;
+
+        uint8_t count =
+            static_cast<uint8_t>(
+                std::min<size_t>(
+                    targetPlayerIds.size(),
+                    ULTIMATE_MAX_TARGET_COUNT
+                )
+                );
+
+        out.targetCount = count;
+
+        for (int i = 0; i < count; i++)
+        {
+            out.targetPlayerIds[i] =
+                targetPlayerIds[i];
+        }
+
+        out.damage = damage;
+        out.stack = stack;
+
+        BroadcastPacketToRoomInternal(
+            roomId,
+            &out
+        );
+
+        std::cout
+            << "[ULTIMATE CAST BROADCAST] roomId="
+            << roomId
+            << " caster="
+            << casterPlayerId
+            << " targetCount="
+            << static_cast<int>(count)
+            << " damage="
+            << damage
+            << " stack="
+            << static_cast<int>(stack)
+            << std::endl;
     }
 }
 
@@ -5191,6 +5516,16 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         bool moved =
             distSq > SCANNER_MOVE_EPSILON_SQ;
 
+        if (IsPlayerStunned(session->GetPlayerId()))
+        {
+            std::cout
+                << "[MOVE BLOCK] stunned playerId="
+                << session->GetPlayerId()
+                << std::endl;
+
+            break;
+        }
+
         session->SetPosition(
             pkt->x,
             pkt->y,
@@ -5639,6 +5974,22 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             break;
         }
 
+        if (session->IsDead())
+        {
+            std::cout << "[FIRE BLOCK] player dead. playerId="
+                << session->GetPlayerId()
+                << std::endl;
+            break;
+        }
+
+        if (IsPlayerStunned(session->GetPlayerId()))
+        {
+            std::cout << "[FIRE BLOCK] stunned playerId="
+                << session->GetPlayerId()
+                << std::endl;
+            break;
+        }
+
         if (IsDroneBlockedAction(session, "FIRE"))
             break;
 
@@ -5763,6 +6114,15 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         if (session->IsDead())
         {
             std::cout << "[KNIFE ATTACK BLOCK] player dead playerId="
+                << session->GetPlayerId()
+                << std::endl;
+
+            break;
+        }
+
+        if (IsPlayerStunned(session->GetPlayerId()))
+        {
+            std::cout << "[KNIFE ATTACK BLOCK] stunned playerId="
                 << session->GetPlayerId()
                 << std::endl;
 
@@ -7715,6 +8075,14 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
                         validHit = true;
                         finalTargetPlayerId = target->GetPlayerId();
 
+                        // 핵심:
+                        // 드론 테이저 적중 시 감전 스택 1개 추가
+                        AddElectricShockStack(
+                            roomId,
+                            target->GetPlayerId(),
+                            DRONE_TASER_STACK
+                        );
+
                         target->SetLastDamager(
                             session->GetPlayerId()
                         );
@@ -7769,6 +8137,8 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             DRONE_TASER_DURATION,
             validHit ? DRONE_TASER_DAMAGE : 0
         );
+
+
 
         if (!validHit)
         {
@@ -8135,6 +8505,382 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
                 pkt->scannerId
             );
         }
+
+        break;
+    }
+
+        case PacketType::PKT_CS_EMP_CAST:
+        {
+            auto* pkt = reinterpret_cast<CS_EmpCast*>(header);
+
+            if (header->size != sizeof(CS_EmpCast))
+            {
+                std::cout
+                    << "[EMP BLOCK] invalid size. size="
+                    << header->size
+                    << " expected=" << sizeof(CS_EmpCast)
+                    << std::endl;
+
+                break;
+            }
+
+            if (session->GetState() != SessionState::IN_GAME)
+            {
+                std::cout
+                    << "[EMP BLOCK] not in game. playerId="
+                    << session->GetPlayerId()
+                    << std::endl;
+
+                break;
+            }
+
+            if (session->IsDead())
+            {
+                std::cout
+                    << "[EMP BLOCK] caster dead. playerId="
+                    << session->GetPlayerId()
+                    << std::endl;
+
+                break;
+            }
+
+            if (IsPlayerStunned(session->GetPlayerId()))
+            {
+                std::cout
+                    << "[EMP BLOCK] caster stunned. playerId="
+                    << session->GetPlayerId()
+                    << std::endl;
+
+                break;
+            }
+
+            uint32_t roomId =
+                session->GetCurrentRoomId();
+
+            if (roomId == 0)
+                break;
+
+            uint32_t casterPlayerId =
+                session->GetPlayerId();
+
+            Room room{};
+
+            if (!RoomManager::Instance().GetRoom(roomId, room))
+                break;
+
+            RoomMember casterMember{};
+
+            if (!RoomManager::Instance().GetMember(
+                roomId,
+                casterPlayerId,
+                casterMember))
+            {
+                break;
+            }
+
+            Vector3 casterPos =
+                session->GetPosition();
+
+            std::vector<uint32_t> hitTargets;
+
+            for (const RoomMember& member : room.members)
+            {
+                if (member.team == RoomTeam::OBSERVER)
+                    continue;
+
+                if (member.playerId == casterPlayerId)
+                    continue;
+
+                // 핵심: 적군만
+                if (member.team == casterMember.team)
+                    continue;
+
+                Session* target =
+                    SessionManager::Instance().Find(member.playerId);
+
+                if (target == nullptr)
+                    continue;
+
+                if (target->GetCurrentRoomId() != roomId)
+                    continue;
+
+                if (target->IsDead())
+                    continue;
+
+                Vector3 targetPos =
+                    target->GetPosition();
+
+                float dx = targetPos.x - casterPos.x;
+                float dy = targetPos.y - casterPos.y;
+                float dz = targetPos.z - casterPos.z;
+
+                float distSq =
+                    dx * dx +
+                    dy * dy +
+                    dz * dz;
+
+                if (distSq > EMP_RADIUS_SQ)
+                    continue;
+
+                uint8_t stack =
+                    ConsumeElectricShockStack(member.playerId);
+
+                if (stack == 0)
+                    continue;
+
+                float stunSeconds =
+                    GetStunDurationByStack(stack);
+
+                ApplyElectricStun(
+                    roomId,
+                    member.playerId,
+                    stunSeconds
+                );
+
+                hitTargets.push_back(member.playerId);
+
+                std::cout
+                    << "[EMP HIT] "
+                    << "caster=" << casterPlayerId
+                    << " target=" << member.playerId
+                    << " stack=" << static_cast<int>(stack)
+                    << " stun=" << stunSeconds
+                    << std::endl;
+            }
+
+            BroadcastEmpCast(
+                roomId,
+                casterPlayerId,
+                hitTargets
+            );
+
+            break;
+        }
+    
+    case PacketType::PKT_CS_ULTIMATE_CAST:
+    {
+        auto* pkt =
+            reinterpret_cast<CS_UltimateCast*>(header);
+
+        if (header->size != sizeof(CS_UltimateCast))
+        {
+            std::cout
+                << "[ULTIMATE BLOCK] invalid size playerId="
+                << session->GetPlayerId()
+                << std::endl;
+
+            break;
+        }
+
+        if (session->GetState() != SessionState::IN_GAME)
+        {
+            std::cout
+                << "[ULTIMATE BLOCK] not in game playerId="
+                << session->GetPlayerId()
+                << std::endl;
+
+            break;
+        }
+
+        if (session->IsDead())
+        {
+            std::cout
+                << "[ULTIMATE BLOCK] player dead playerId="
+                << session->GetPlayerId()
+                << std::endl;
+
+            break;
+        }
+
+        if (IsPlayerStunned(session->GetPlayerId()))
+        {
+            std::cout
+                << "[ULTIMATE BLOCK] stunned playerId="
+                << session->GetPlayerId()
+                << std::endl;
+
+            break;
+        }
+
+        if (IsDroneBlockedAction(session, "ULTIMATE_CAST"))
+            break;
+
+        uint32_t roomId =
+            session->GetCurrentRoomId();
+
+        if (roomId == 0)
+            break;
+
+        Room room{};
+
+        if (!RoomManager::Instance().GetRoom(roomId, room))
+            break;
+
+        RoomMember casterMember{};
+
+        if (!RoomManager::Instance().GetMember(
+            roomId,
+            session->GetPlayerId(),
+            casterMember))
+        {
+            break;
+        }
+
+        Vector3 casterPos =
+            session->GetPosition();
+
+        float dirX = pkt->dirX;
+        float dirY = pkt->dirY;
+        float dirZ = pkt->dirZ;
+
+        float dirLen =
+            std::sqrt(
+                dirX * dirX +
+                dirY * dirY +
+                dirZ * dirZ
+            );
+
+        if (dirLen <= 0.0001f)
+        {
+            std::cout
+                << "[ULTIMATE BLOCK] invalid direction playerId="
+                << session->GetPlayerId()
+                << std::endl;
+
+            break;
+        }
+
+        dirX /= dirLen;
+        dirY /= dirLen;
+        dirZ /= dirLen;
+
+        std::vector<uint32_t> hitTargets;
+
+        for (const RoomMember& member : room.members)
+        {
+            if (member.team == RoomTeam::OBSERVER)
+                continue;
+
+            if (member.playerId == session->GetPlayerId())
+                continue;
+
+            if (member.team == casterMember.team)
+                continue;
+
+            Session* target =
+                SessionManager::Instance().Find(
+                    member.playerId
+                );
+
+            if (target == nullptr)
+                continue;
+
+            if (target->GetCurrentRoomId() != roomId)
+                continue;
+
+            if (target->IsDead())
+                continue;
+
+            Vector3 targetPos =
+                target->GetPosition();
+
+            float toX = targetPos.x - casterPos.x;
+            float toY = targetPos.y - casterPos.y;
+            float toZ = targetPos.z - casterPos.z;
+
+            float distSq =
+                toX * toX +
+                toY * toY +
+                toZ * toZ;
+
+            if (distSq > ULTIMATE_RANGE_SQ)
+                continue;
+
+            float dist =
+                std::sqrt(distSq);
+
+            if (dist <= 0.0001f)
+                continue;
+
+            float ndX = toX / dist;
+            float ndY = toY / dist;
+            float ndZ = toZ / dist;
+
+            float dot =
+                ndX * dirX +
+                ndY * dirY +
+                ndZ * dirZ;
+
+            if (dot < ULTIMATE_CONE_DOT)
+                continue;
+
+            target->SetLastDamager(
+                session->GetPlayerId()
+            );
+
+            target->AddAssistDamageRecord(
+                session->GetPlayerId(),
+                ULTIMATE_DAMAGE
+            );
+
+            target->Damage(
+                ULTIMATE_DAMAGE
+            );
+
+            SC_HPUpdate hpPkt{};
+
+            FillHPUpdatePacket(
+                hpPkt,
+                target
+            );
+
+            BroadcastPacketToRoomInternal(
+                roomId,
+                &hpPkt
+            );
+
+            if (!target->IsDead())
+            {
+                AddElectricShockStack(
+                    roomId,
+                    target->GetPlayerId(),
+                    ULTIMATE_STACK
+                );
+            }
+
+            hitTargets.push_back(
+                target->GetPlayerId()
+            );
+
+            std::cout
+                << "[ULTIMATE HIT] caster="
+                << session->GetPlayerId()
+                << " target="
+                << target->GetPlayerId()
+                << " damage="
+                << ULTIMATE_DAMAGE
+                << " stack="
+                << static_cast<int>(ULTIMATE_STACK)
+                << " hp="
+                << target->GetHP()
+                << std::endl;
+
+            if (target->IsDead())
+            {
+                HandleDeath(target);
+            }
+        }
+
+        BroadcastUltimateCast(
+            roomId,
+            session->GetPlayerId(),
+            dirX,
+            dirY,
+            dirZ,
+            hitTargets,
+            ULTIMATE_DAMAGE,
+            ULTIMATE_STACK
+        );
 
         break;
     }

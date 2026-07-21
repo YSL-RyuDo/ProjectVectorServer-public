@@ -1396,4 +1396,211 @@ struct SC_UltimateCast
     int32_t damage;
     uint8_t stack;
 };
+
+struct CS_BeastStealthCast
+{
+    PacketHeader header;
+};
+
+struct CS_BeastStealthCancel
+{
+    PacketHeader header;
+};
+
+struct SC_BeastStealthState
+{
+    PacketHeader header;
+
+    uint32_t playerId;
+
+    uint8_t active;
+
+    float duration;
+    float speedMultiplier;
+    float revealRange;
+};
+
+struct CS_EntrySmokeThrow
+{
+    PacketHeader header;
+
+    float x;
+    float y;
+    float z;
+
+    float vx;
+    float vy;
+    float vz;
+};
+
+struct SC_EntrySmokeSpawn
+{
+    PacketHeader header;
+
+    uint32_t smokeId;
+    uint32_t ownerPlayerId;
+
+    float x;
+    float y;
+    float z;
+
+    float vx;
+    float vy;
+    float vz;
+};
+
+struct CS_EntrySmokeAttach
+{
+    PacketHeader header;
+
+    uint32_t smokeId;
+
+    float x;
+    float y;
+    float z;
+
+    float nx;
+    float ny;
+    float nz;
+};
+
+struct SC_EntrySmokeActivate
+{
+    PacketHeader header;
+
+    uint32_t smokeId;
+    uint32_t ownerPlayerId;
+
+    float x;
+    float y;
+    float z;
+
+    float nx;
+    float ny;
+    float nz;
+
+    float radius;
+    float duration;
+};
+
+struct SC_EntrySmokeDestroy
+{
+    PacketHeader header;
+
+    uint32_t smokeId;
+};
+
+struct CS_EntrySmokeState
+{
+    PacketHeader header;
+
+    uint32_t smokeId;
+
+    float x;
+    float y;
+    float z;
+
+    float rotX;
+    float rotY;
+    float rotZ;
+    float rotW;
+};
+
+struct SC_EntrySmokeState
+{
+    PacketHeader header;
+
+    uint32_t smokeId;
+    uint32_t ownerPlayerId;
+
+    float x;
+    float y;
+    float z;
+
+    float rotX;
+    float rotY;
+    float rotZ;
+    float rotW;
+};
+
+struct CS_EntryDashCast
+{
+    PacketHeader header;
+
+    float dirX;
+    float dirY;
+    float dirZ;
+};
+
+struct SC_EntryDashCast
+{
+    PacketHeader header;
+
+    uint32_t playerId;
+
+    float dirX;
+    float dirY;
+    float dirZ;
+
+    float dashForce;
+    float dashDuration;
+};
+
+struct SC_EntryDashEnd
+{
+    PacketHeader header;
+
+    uint32_t playerId;
+};
+
+struct CS_EntryBladeActivate
+{
+    PacketHeader header;
+};
+
+struct SC_EntryBladeState
+{
+    PacketHeader header;
+
+    uint32_t playerId;
+
+    uint8_t active;
+    uint8_t bladeCount;
+
+    float duration;
+};
+
+struct CS_EntryBladeFire
+{
+    PacketHeader header;
+
+    float dirX;
+    float dirY;
+    float dirZ;
+
+    uint32_t targetPlayerId;
+
+    float hitX;
+    float hitY;
+    float hitZ;
+};
+
+struct SC_EntryBladeFire
+{
+    PacketHeader header;
+
+    uint32_t shooterPlayerId;
+    uint32_t targetPlayerId;
+
+    uint8_t hit;
+    uint8_t remainingBlades;
+
+    float startX;
+    float startY;
+    float startZ;
+
+    float endX;
+    float endY;
+    float endZ;
+};
 #pragma pack(pop)

@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <vector>
 #include <unordered_set>
+#include <cmath>
 
 namespace
 {
@@ -182,6 +183,74 @@ namespace
     std::unordered_map<uint32_t, std::unordered_set<uint32_t>> g_resultLeavePlayers;
 
     std::unordered_map<std::string, int> g_creditRewards;
+
+    constexpr float BEAST_STEALTH_DURATION = 5.0f;
+    constexpr float BEAST_STEALTH_SPEED_MULTIPLIER = 1.5f;
+    constexpr float BEAST_STEALTH_REVEAL_RANGE = 3.0f;
+
+    struct BeastStealthState
+    {
+        uint32_t roomId = 0;
+        bool active = false;
+
+        float speedMultiplier = 1.0f;
+        float revealRange = 3.0f;
+
+        uint64_t version = 0;
+
+        std::chrono::steady_clock::time_point endTime;
+    };
+
+    std::mutex g_beastStealthMutex;
+    std::unordered_map<uint32_t, BeastStealthState> g_beastStealthStates;
+
+    constexpr float ENTRY_SMOKE_RADIUS = 4.5f;
+    constexpr float ENTRY_SMOKE_DURATION = 6.0f;
+
+    struct EntrySmokeState
+    {
+        uint32_t smokeId = 0;
+        uint32_t ownerPlayerId = 0;
+        uint32_t roomId = 0;
+
+        bool active = false;
+
+        float x = 0.0f;
+        float y = 0.0f;
+        float z = 0.0f;
+
+        float nx = 0.0f;
+        float ny = 1.0f;
+        float nz = 0.0f;
+    };
+
+    std::mutex g_entrySmokeMutex;
+    std::unordered_map<uint32_t, EntrySmokeState> g_entrySmokes;
+    uint32_t g_nextEntrySmokeId = 1;
+
+    constexpr float ENTRY_DASH_FORCE = 28.0f;
+    constexpr float ENTRY_DASH_DURATION = 0.28f;
+
+    constexpr uint8_t ENTRY_BLADE_MAX_COUNT = 5;
+    constexpr float ENTRY_BLADE_DURATION = 12.0f;
+    constexpr float ENTRY_BLADE_RANGE = 35.0f;
+    constexpr float ENTRY_BLADE_RANGE_SQ = ENTRY_BLADE_RANGE * ENTRY_BLADE_RANGE;
+    constexpr int32_t ENTRY_BLADE_DAMAGE = 50;
+    constexpr float ENTRY_BLADE_HIT_DOT = 0.96f;
+
+    struct EntryBladeState
+    {
+        uint32_t playerId = 0;
+        uint32_t roomId = 0;
+
+        bool active = false;
+        uint8_t bladeCount = 0;
+
+        std::chrono::steady_clock::time_point endTime;
+    };
+
+    std::mutex g_entryBladeMutex;
+    std::unordered_map<uint32_t, EntryBladeState> g_entryBladeStates;
 
     struct StoreWeaponData
     {
@@ -1584,6 +1653,439 @@ namespace
             << std::endl;
     }
 
+    void BroadcastEntryDashCast(
+        uint32_t roomId,
+        uint32_t playerId,
+        float dirX,
+        float dirY,
+        float dirZ,
+        float dashForce,
+        float dashDuration)
+    {
+        SC_EntryDashCast out{};
+
+        out.header.size =
+            sizeof(out);
+
+        out.header.type =
+            static_cast<uint16_t>(
+                PacketType::PKT_SC_ENTRY_DASH_CAST
+                );
+
+        out.playerId =
+            playerId;
+
+        out.dirX = dirX;
+        out.dirY = dirY;
+        out.dirZ = dirZ;
+
+        out.dashForce =
+            dashForce;
+
+        out.dashDuration =
+            dashDuration;
+
+        BroadcastPacketToRoomInternal(
+            roomId,
+            &out
+        );
+
+        std::cout
+            << "[ENTRY DASH CAST BROADCAST] roomId="
+            << roomId
+            << " playerId="
+            << playerId
+            << " dir=("
+            << dirX << ", " << dirY << ", " << dirZ
+            << ") force="
+            << dashForce
+            << " duration="
+            << dashDuration
+            << std::endl;
+    }
+
+    void BroadcastEntryDashEnd(
+        uint32_t roomId,
+        uint32_t playerId)
+    {
+        SC_EntryDashEnd out{};
+
+        out.header.size =
+            sizeof(out);
+
+        out.header.type =
+            static_cast<uint16_t>(
+                PacketType::PKT_SC_ENTRY_DASH_END
+                );
+
+        out.playerId =
+            playerId;
+
+        BroadcastPacketToRoomInternal(
+            roomId,
+            &out
+        );
+
+        std::cout
+            << "[ENTRY DASH END BROADCAST] roomId="
+            << roomId
+            << " playerId="
+            << playerId
+            << std::endl;
+    }
+
+    void BroadcastEntrySmokeState(
+        uint32_t roomId,
+        uint32_t smokeId,
+        uint32_t ownerPlayerId,
+        float x,
+        float y,
+        float z,
+        float rotX,
+        float rotY,
+        float rotZ,
+        float rotW)
+    {
+        SC_EntrySmokeState out{};
+
+        out.header.size =
+            sizeof(out);
+
+        out.header.type =
+            static_cast<uint16_t>(
+                PacketType::PKT_SC_ENTRY_SMOKE_STATE
+                );
+
+        out.smokeId =
+            smokeId;
+
+        out.ownerPlayerId =
+            ownerPlayerId;
+
+        out.x = x;
+        out.y = y;
+        out.z = z;
+
+        out.rotX = rotX;
+        out.rotY = rotY;
+        out.rotZ = rotZ;
+        out.rotW = rotW;
+
+        BroadcastPacketToRoomInternal(
+            roomId,
+            &out
+        );
+    }
+
+    void BroadcastEntrySmokeActivate(
+        uint32_t roomId,
+        uint32_t smokeId,
+        uint32_t ownerPlayerId,
+        float x,
+        float y,
+        float z,
+        float nx,
+        float ny,
+        float nz,
+        float radius,
+        float duration)
+    {
+        SC_EntrySmokeActivate out{};
+
+        out.header.size =
+            sizeof(out);
+
+        out.header.type =
+            static_cast<uint16_t>(
+                PacketType::PKT_SC_ENTRY_SMOKE_ACTIVATE
+                );
+
+        out.smokeId =
+            smokeId;
+
+        out.ownerPlayerId =
+            ownerPlayerId;
+
+        out.x = x;
+        out.y = y;
+        out.z = z;
+
+        out.nx = nx;
+        out.ny = ny;
+        out.nz = nz;
+
+        out.radius =
+            radius;
+
+        out.duration =
+            duration;
+
+        BroadcastPacketToRoomInternal(
+            roomId,
+            &out
+        );
+
+        std::cout
+            << "[ENTRY SMOKE ACTIVATE BROADCAST] roomId="
+            << roomId
+            << " smokeId="
+            << smokeId
+            << " owner="
+            << ownerPlayerId
+            << " pos=("
+            << x << ", " << y << ", " << z << ")"
+            << std::endl;
+    }
+
+    void BroadcastEntrySmokeDestroy(
+        uint32_t roomId,
+        uint32_t smokeId)
+    {
+        SC_EntrySmokeDestroy out{};
+
+        out.header.size =
+            sizeof(out);
+
+        out.header.type =
+            static_cast<uint16_t>(
+                PacketType::PKT_SC_ENTRY_SMOKE_DESTROY
+                );
+
+        out.smokeId =
+            smokeId;
+
+        BroadcastPacketToRoomInternal(
+            roomId,
+            &out
+        );
+
+        std::cout
+            << "[ENTRY SMOKE DESTROY BROADCAST] roomId="
+            << roomId
+            << " smokeId="
+            << smokeId
+            << std::endl;
+    }
+
+
+    void BroadcastEntrySmokeSpawn(
+        uint32_t roomId,
+        uint32_t smokeId,
+        uint32_t ownerPlayerId,
+        float x,
+        float y,
+        float z,
+        float vx,
+        float vy,
+        float vz)
+    {
+        SC_EntrySmokeSpawn out{};
+
+        out.header.size =
+            sizeof(out);
+
+        out.header.type =
+            static_cast<uint16_t>(
+                PacketType::PKT_SC_ENTRY_SMOKE_SPAWN
+                );
+
+        out.smokeId =
+            smokeId;
+
+        out.ownerPlayerId =
+            ownerPlayerId;
+
+        out.x = x;
+        out.y = y;
+        out.z = z;
+
+        out.vx = vx;
+        out.vy = vy;
+        out.vz = vz;
+
+        BroadcastPacketToRoomInternal(
+            roomId,
+            &out
+        );
+
+        std::cout
+            << "[ENTRY SMOKE SPAWN BROADCAST] roomId="
+            << roomId
+            << " smokeId="
+            << smokeId
+            << " owner="
+            << ownerPlayerId
+            << std::endl;
+    }
+
+    void StartEntrySmokeAutoActivateTimer(
+        uint32_t roomId,
+        uint32_t smokeId)
+    {
+        std::thread(
+            [roomId, smokeId]()
+            {
+                std::this_thread::sleep_for(
+                    std::chrono::milliseconds(2500)
+                );
+
+                uint32_t ownerPlayerId = 0;
+
+                float x = 0.0f;
+                float y = 0.0f;
+                float z = 0.0f;
+
+                float nx = 0.0f;
+                float ny = 1.0f;
+                float nz = 0.0f;
+
+                bool shouldActivate = false;
+
+                {
+                    std::lock_guard<std::mutex> lock(g_entrySmokeMutex);
+
+                    auto it =
+                        g_entrySmokes.find(smokeId);
+
+                    if (it == g_entrySmokes.end())
+                        return;
+
+                    EntrySmokeState& state =
+                        it->second;
+
+                    if (state.roomId != roomId)
+                        return;
+
+                    if (state.active)
+                        return;
+
+                    state.active = true;
+
+                    ownerPlayerId =
+                        state.ownerPlayerId;
+
+                    x = state.x;
+                    y = state.y;
+                    z = state.z;
+
+                    nx = state.nx;
+                    ny = state.ny;
+                    nz = state.nz;
+
+                    shouldActivate = true;
+                }
+
+                if (!shouldActivate)
+                    return;
+
+                std::cout
+                    << "[ENTRY SMOKE AUTO ACTIVATE] roomId="
+                    << roomId
+                    << " smokeId="
+                    << smokeId
+                    << std::endl;
+
+                BroadcastEntrySmokeActivate(
+                    roomId,
+                    smokeId,
+                    ownerPlayerId,
+                    x,
+                    y,
+                    z,
+                    nx,
+                    ny,
+                    nz,
+                    ENTRY_SMOKE_RADIUS,
+                    ENTRY_SMOKE_DURATION
+                );
+
+                std::thread(
+                    [roomId, smokeId]()
+                    {
+                        std::this_thread::sleep_for(
+                            std::chrono::milliseconds(
+                                static_cast<int>(
+                                    ENTRY_SMOKE_DURATION * 1000.0f
+                                    )
+                            )
+                        );
+
+                        bool shouldDestroy = false;
+
+                        {
+                            std::lock_guard<std::mutex> lock(g_entrySmokeMutex);
+
+                            auto it =
+                                g_entrySmokes.find(smokeId);
+
+                            if (it != g_entrySmokes.end())
+                            {
+                                g_entrySmokes.erase(it);
+                                shouldDestroy = true;
+                            }
+                        }
+
+                        if (shouldDestroy)
+                        {
+                            BroadcastEntrySmokeDestroy(
+                                roomId,
+                                smokeId
+                            );
+                        }
+                    }
+                ).detach();
+            }
+        ).detach();
+    }
+
+    
+
+    
+    void ClearEntrySmokesInRoom(uint32_t roomId)
+    {
+        std::vector<uint32_t> removedSmokeIds;
+
+        {
+            std::lock_guard<std::mutex> lock(g_entrySmokeMutex);
+
+            for (auto it = g_entrySmokes.begin();
+                it != g_entrySmokes.end();)
+            {
+                if (it->second.roomId == roomId)
+                {
+                    removedSmokeIds.push_back(
+                        it->first
+                    );
+
+                    it =
+                        g_entrySmokes.erase(it);
+                }
+                else
+                {
+                    ++it;
+                }
+            }
+        }
+
+        for (uint32_t smokeId : removedSmokeIds)
+        {
+            BroadcastEntrySmokeDestroy(
+                roomId,
+                smokeId
+            );
+        }
+
+        if (!removedSmokeIds.empty())
+        {
+            std::cout
+                << "[ENTRY SMOKE CLEAR ROOM] roomId="
+                << roomId
+                << " count="
+                << removedSmokeIds.size()
+                << std::endl;
+        }
+    }
+
     void BroadcastDroneSpawn(
         uint32_t roomId,
         uint32_t droneId,
@@ -1983,6 +2485,306 @@ namespace
         return originalTeam;
     }
 
+    void BroadcastEntryBladeState(
+        uint32_t roomId,
+        uint32_t playerId,
+        bool active,
+        uint8_t bladeCount,
+        float duration)
+    {
+        SC_EntryBladeState out{};
+
+        out.header.size =
+            sizeof(out);
+
+        out.header.type =
+            static_cast<uint16_t>(
+                PacketType::PKT_SC_ENTRY_BLADE_STATE
+                );
+
+        out.playerId =
+            playerId;
+
+        out.active =
+            active ? 1 : 0;
+
+        out.bladeCount =
+            bladeCount;
+
+        out.duration =
+            duration;
+
+        BroadcastPacketToRoomInternal(
+            roomId,
+            &out
+        );
+
+        std::cout
+            << "[ENTRY BLADE STATE BROADCAST] roomId="
+            << roomId
+            << " playerId="
+            << playerId
+            << " active="
+            << active
+            << " bladeCount="
+            << static_cast<int>(bladeCount)
+            << " duration="
+            << duration
+            << std::endl;
+    }
+
+    void BroadcastEntryBladeFire(
+        uint32_t roomId,
+        uint32_t shooterPlayerId,
+        uint32_t targetPlayerId,
+        bool hit,
+        uint8_t remainingBlades,
+        float startX,
+        float startY,
+        float startZ,
+        float endX,
+        float endY,
+        float endZ)
+    {
+        SC_EntryBladeFire out{};
+
+        out.header.size =
+            sizeof(out);
+
+        out.header.type =
+            static_cast<uint16_t>(
+                PacketType::PKT_SC_ENTRY_BLADE_FIRE
+                );
+
+        out.shooterPlayerId =
+            shooterPlayerId;
+
+        out.targetPlayerId =
+            targetPlayerId;
+
+        out.hit =
+            hit ? 1 : 0;
+
+        out.remainingBlades =
+            remainingBlades;
+
+        out.startX = startX;
+        out.startY = startY;
+        out.startZ = startZ;
+
+        out.endX = endX;
+        out.endY = endY;
+        out.endZ = endZ;
+
+        BroadcastPacketToRoomInternal(
+            roomId,
+            &out
+        );
+
+        std::cout
+            << "[ENTRY BLADE FIRE BROADCAST] roomId="
+            << roomId
+            << " shooter="
+            << shooterPlayerId
+            << " target="
+            << targetPlayerId
+            << " hit="
+            << hit
+            << " remaining="
+            << static_cast<int>(remainingBlades)
+            << std::endl;
+    }
+
+    bool IsEntryBladeActive(uint32_t playerId)
+    {
+        std::lock_guard<std::mutex> lock(g_entryBladeMutex);
+
+        auto it =
+            g_entryBladeStates.find(playerId);
+
+        if (it == g_entryBladeStates.end())
+            return false;
+
+        if (!it->second.active)
+            return false;
+
+        if (it->second.bladeCount == 0)
+            return false;
+
+        if (std::chrono::steady_clock::now() > it->second.endTime)
+            return false;
+
+        return true;
+    }
+
+    void EndEntryBladeUltimate(
+        uint32_t roomId,
+        uint32_t playerId,
+        const char* reason)
+    {
+        bool shouldBroadcast = false;
+
+        {
+            std::lock_guard<std::mutex> lock(g_entryBladeMutex);
+
+            auto it =
+                g_entryBladeStates.find(playerId);
+
+            if (it != g_entryBladeStates.end())
+            {
+                g_entryBladeStates.erase(it);
+                shouldBroadcast = true;
+            }
+        }
+
+        if (!shouldBroadcast)
+            return;
+
+        BroadcastEntryBladeState(
+            roomId,
+            playerId,
+            false,
+            0,
+            0.0f
+        );
+
+        std::cout
+            << "[ENTRY BLADE END] playerId="
+            << playerId
+            << " reason="
+            << reason
+            << std::endl;
+    }
+
+    void ClearEntryBladesInRoom(uint32_t roomId)
+    {
+        std::vector<uint32_t> removedPlayerIds;
+
+        {
+            std::lock_guard<std::mutex> lock(g_entryBladeMutex);
+
+            for (auto it = g_entryBladeStates.begin();
+                it != g_entryBladeStates.end();)
+            {
+                if (it->second.roomId == roomId)
+                {
+                    removedPlayerIds.push_back(it->first);
+                    it = g_entryBladeStates.erase(it);
+                }
+                else
+                {
+                    ++it;
+                }
+            }
+        }
+
+        for (uint32_t playerId : removedPlayerIds)
+        {
+            BroadcastEntryBladeState(
+                roomId,
+                playerId,
+                false,
+                0,
+                0.0f
+            );
+        }
+
+        if (!removedPlayerIds.empty())
+        {
+            std::cout
+                << "[ENTRY BLADE CLEAR ROOM] roomId="
+                << roomId
+                << " count="
+                << removedPlayerIds.size()
+                << std::endl;
+        }
+    }
+
+    void BroadcastBeastStealthState(
+        uint32_t roomId,
+        uint32_t playerId,
+        bool active,
+        float duration,
+        float speedMultiplier,
+        float revealRange)
+    {
+        SC_BeastStealthState out{};
+
+        out.header.size = sizeof(out);
+        out.header.type =
+            static_cast<uint16_t>(
+                PacketType::PKT_SC_BEAST_STEALTH_STATE
+                );
+
+        out.playerId = playerId;
+        out.active = active ? 1 : 0;
+        out.duration = duration;
+        out.speedMultiplier = speedMultiplier;
+        out.revealRange = revealRange;
+
+        BroadcastPacketToRoomInternal(
+            roomId,
+            &out
+        );
+
+        std::cout
+            << "[BEAST STEALTH STATE BROADCAST] roomId="
+            << roomId
+            << " playerId="
+            << playerId
+            << " active="
+            << active
+            << " duration="
+            << duration
+            << " speedMultiplier="
+            << speedMultiplier
+            << " revealRange="
+            << revealRange
+            << std::endl;
+    }
+
+    void ClearBeastStealthInRoom(uint32_t roomId)
+    {
+        std::vector<uint32_t> clearedPlayers;
+
+        {
+            std::lock_guard<std::mutex> lock(g_beastStealthMutex);
+
+            for (auto it = g_beastStealthStates.begin();
+                it != g_beastStealthStates.end();)
+            {
+                if (it->second.roomId == roomId)
+                {
+                    clearedPlayers.push_back(it->first);
+                    it = g_beastStealthStates.erase(it);
+                }
+                else
+                {
+                    ++it;
+                }
+            }
+        }
+
+        for (uint32_t playerId : clearedPlayers)
+        {
+            BroadcastBeastStealthState(
+                roomId,
+                playerId,
+                false,
+                0.0f,
+                1.0f,
+                BEAST_STEALTH_REVEAL_RANGE
+            );
+        }
+
+        std::cout
+            << "[BEAST STEALTH CLEAR ROOM] roomId="
+            << roomId
+            << " count="
+            << clearedPlayers.size()
+            << std::endl;
+    }
+
     void ClearElectricStatusInRoom(uint32_t roomId)
     {
         Room room{};
@@ -2011,6 +2813,9 @@ namespace
             return;
 
         ClearElectricStatusInRoom(roomId);
+        ClearBeastStealthInRoom(roomId);
+        ClearEntrySmokesInRoom(roomId);
+        ClearEntryBladesInRoom(roomId);
 
         ClearDronesInRoom(roomId, 2);
         ClearDroppedWeaponsInRoom(roomId);
@@ -3485,6 +4290,174 @@ namespace
             << " reason="
             << static_cast<int>(reason)
             << std::endl;
+    }
+
+    
+
+    bool IsBeastStealthActive(uint32_t playerId)
+    {
+        std::lock_guard<std::mutex> lock(g_beastStealthMutex);
+
+        auto it = g_beastStealthStates.find(playerId);
+
+        if (it == g_beastStealthStates.end())
+            return false;
+
+        return it->second.active;
+    }
+
+    void CancelBeastStealth(
+        uint32_t playerId,
+        const char* reason)
+    {
+        uint32_t roomId = 0;
+        bool shouldBroadcast = false;
+
+        {
+            std::lock_guard<std::mutex> lock(g_beastStealthMutex);
+
+            auto it = g_beastStealthStates.find(playerId);
+
+            if (it == g_beastStealthStates.end())
+                return;
+
+            if (!it->second.active)
+                return;
+
+            roomId = it->second.roomId;
+            it->second.active = false;
+            it->second.version++;
+
+            shouldBroadcast = true;
+        }
+
+        if (!shouldBroadcast || roomId == 0)
+            return;
+
+        BroadcastBeastStealthState(
+            roomId,
+            playerId,
+            false,
+            0.0f,
+            1.0f,
+            BEAST_STEALTH_REVEAL_RANGE
+        );
+
+        std::cout
+            << "[BEAST STEALTH CANCEL] playerId="
+            << playerId
+            << " reason="
+            << reason
+            << std::endl;
+    }
+
+    void StartBeastStealth(Session* session)
+    {
+        if (session == nullptr)
+            return;
+
+        uint32_t playerId =
+            session->GetPlayerId();
+
+        uint32_t roomId =
+            session->GetCurrentRoomId();
+
+        if (roomId == 0)
+            return;
+
+        uint64_t version = 0;
+
+        {
+            std::lock_guard<std::mutex> lock(g_beastStealthMutex);
+
+            BeastStealthState& state =
+                g_beastStealthStates[playerId];
+
+            state.roomId = roomId;
+            state.active = true;
+            state.speedMultiplier = BEAST_STEALTH_SPEED_MULTIPLIER;
+            state.revealRange = BEAST_STEALTH_REVEAL_RANGE;
+            state.version++;
+
+            state.endTime =
+                std::chrono::steady_clock::now() +
+                std::chrono::milliseconds(
+                    static_cast<int>(
+                        BEAST_STEALTH_DURATION * 1000.0f
+                        )
+                );
+
+            version = state.version;
+        }
+
+        BroadcastBeastStealthState(
+            roomId,
+            playerId,
+            true,
+            BEAST_STEALTH_DURATION,
+            BEAST_STEALTH_SPEED_MULTIPLIER,
+            BEAST_STEALTH_REVEAL_RANGE
+        );
+
+        std::cout
+            << "[BEAST STEALTH START] playerId="
+            << playerId
+            << " roomId="
+            << roomId
+            << std::endl;
+
+        std::thread(
+            [playerId, roomId, version]()
+            {
+                std::this_thread::sleep_for(
+                    std::chrono::milliseconds(
+                        static_cast<int>(
+                            BEAST_STEALTH_DURATION * 1000.0f
+                            )
+                    )
+                );
+
+                bool shouldEnd = false;
+
+                {
+                    std::lock_guard<std::mutex> lock(g_beastStealthMutex);
+
+                    auto it =
+                        g_beastStealthStates.find(playerId);
+
+                    if (it == g_beastStealthStates.end())
+                        return;
+
+                    if (!it->second.active)
+                        return;
+
+                    if (it->second.version != version)
+                        return;
+
+                    it->second.active = false;
+                    it->second.version++;
+
+                    shouldEnd = true;
+                }
+
+                if (shouldEnd)
+                {
+                    BroadcastBeastStealthState(
+                        roomId,
+                        playerId,
+                        false,
+                        0.0f,
+                        1.0f,
+                        BEAST_STEALTH_REVEAL_RANGE
+                    );
+
+                    std::cout
+                        << "[BEAST STEALTH END AUTO] playerId="
+                        << playerId
+                        << std::endl;
+                }
+            }
+        ).detach();
     }
 
     void BroadcastElectricStatus(
@@ -5604,6 +6577,16 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         if (IsDroneBlockedAction(session, "HIT"))
             break;
 
+        if (IsEntryBladeActive(session->GetPlayerId()))
+        {
+            std::cout
+                << "[HIT BLOCK] entry blade active attacker="
+                << session->GetPlayerId()
+                << std::endl;
+
+            break;
+        }
+
         uint32_t roomId = session->GetCurrentRoomId();
 
         if (roomId == 0)
@@ -5990,6 +6973,16 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             break;
         }
 
+        if (IsEntryBladeActive(session->GetPlayerId()))
+        {
+            std::cout
+                << "[FIRE BLOCK] entry blade active playerId="
+                << session->GetPlayerId()
+                << std::endl;
+
+            break;
+        }
+
         if (IsDroneBlockedAction(session, "FIRE"))
             break;
 
@@ -6005,6 +6998,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         }
 
         PlayerWeaponState* weaponState = session->GetWeaponState(weaponId);
+
         if (weaponState == nullptr)
         {
             std::cout << "[FIRE BLOCK] weapon state null. playerId="
@@ -6024,6 +7018,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         }
 
         const ServerWeaponData* weaponData = ServerWeaponTable::Find(weaponId);
+
         if (weaponData == nullptr)
         {
             std::cout << "[FIRE BLOCK] weapon data null. weaponId="
@@ -6048,6 +7043,13 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             SendAmmoUpdate(session, *weaponState);
             break;
         }
+
+        // 여기서부터 실제 총 발사가 성립됨.
+        // 야수화 중이면 공격으로 판정하고 해제한다.
+        CancelBeastStealth(
+            session->GetPlayerId(),
+            "fire"
+        );
 
         weaponState->magAmmo -= 1;
 
@@ -6129,6 +7131,16 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             break;
         }
 
+        if (IsEntryBladeActive(session->GetPlayerId()))
+        {
+            std::cout
+                << "[KNIFE ATTACK BLOCK] entry blade active playerId="
+                << session->GetPlayerId()
+                << std::endl;
+
+            break;
+        }
+
         if (IsDroneBlockedAction(session, "KNIFE_ATTACK"))
             break;
 
@@ -6179,14 +7191,25 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             break;
         }
 
+        // 여기서부터 실제 칼 공격이 성립됨.
+        // 야수화 중이면 공격으로 판정하고 해제한다.
+        CancelBeastStealth(
+            session->GetPlayerId(),
+            "knife_attack"
+        );
+
         SC_KnifeAttackNotify out{};
 
-        out.header.size = sizeof(out);
-        out.header.type = static_cast<uint16_t>(
-            PacketType::PKT_SC_KNIFE_ATTACK_NOTIFY
-            );
+        out.header.size =
+            sizeof(out);
 
-        out.playerId = session->GetPlayerId();
+        out.header.type =
+            static_cast<uint16_t>(
+                PacketType::PKT_SC_KNIFE_ATTACK_NOTIFY
+                );
+
+        out.playerId =
+            session->GetPlayerId();
 
         BroadcastPacketToRoomInternal(
             roomId,
@@ -8885,6 +9908,1097 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         break;
     }
 
+    case PacketType::PKT_CS_BEAST_STEALTH_CAST:
+    {
+        auto* pkt =
+            reinterpret_cast<CS_BeastStealthCast*>(header);
+
+        if (header->size != sizeof(CS_BeastStealthCast))
+            break;
+
+        if (session->GetState() != SessionState::IN_GAME)
+            break;
+
+        if (session->IsDead())
+            break;
+
+        if (IsPlayerStunned(session->GetPlayerId()))
+            break;
+
+        if (IsDroneBlockedAction(session, "BEAST_STEALTH_CAST"))
+            break;
+
+        if (IsBeastStealthActive(session->GetPlayerId()))
+            break;
+
+        StartBeastStealth(session);
+
+        break;
+    }
+
+    case PacketType::PKT_CS_BEAST_STEALTH_CANCEL:
+    {
+        auto* pkt =
+            reinterpret_cast<CS_BeastStealthCancel*>(header);
+
+        if (header->size != sizeof(CS_BeastStealthCancel))
+            break;
+
+        CancelBeastStealth(
+            session->GetPlayerId(),
+            "client_cancel"
+        );
+
+        break;
+    }
+
+    case PacketType::PKT_CS_ENTRY_SMOKE_THROW:
+    {
+        auto* pkt =
+            reinterpret_cast<CS_EntrySmokeThrow*>(header);
+
+        if (header->size != sizeof(CS_EntrySmokeThrow))
+        {
+            std::cout
+                << "[ENTRY SMOKE THROW BLOCK] invalid size playerId="
+                << session->GetPlayerId()
+                << " receivedSize="
+                << header->size
+                << " expectedSize="
+                << sizeof(CS_EntrySmokeThrow)
+                << std::endl;
+
+            break;
+        }
+
+        if (session->GetState() != SessionState::IN_GAME)
+        {
+            std::cout
+                << "[ENTRY SMOKE THROW BLOCK] not in game playerId="
+                << session->GetPlayerId()
+                << std::endl;
+
+            break;
+        }
+
+        if (session->IsDead())
+        {
+            std::cout
+                << "[ENTRY SMOKE THROW BLOCK] dead playerId="
+                << session->GetPlayerId()
+                << std::endl;
+
+            break;
+        }
+
+        if (IsPlayerStunned(session->GetPlayerId()))
+        {
+            std::cout
+                << "[ENTRY SMOKE THROW BLOCK] stunned playerId="
+                << session->GetPlayerId()
+                << std::endl;
+
+            break;
+        }
+
+        if (IsDroneBlockedAction(session, "ENTRY_SMOKE_THROW"))
+            break;
+
+        uint32_t roomId =
+            session->GetCurrentRoomId();
+
+        if (roomId == 0)
+        {
+            std::cout
+                << "[ENTRY SMOKE THROW BLOCK] roomId is 0 playerId="
+                << session->GetPlayerId()
+                << std::endl;
+
+            break;
+        }
+
+        CancelBeastStealth(
+            session->GetPlayerId(),
+            "entry_smoke_throw"
+        );
+
+        uint32_t smokeId = 0;
+
+        {
+            std::lock_guard<std::mutex> lock(g_entrySmokeMutex);
+
+            smokeId =
+                g_nextEntrySmokeId++;
+
+            EntrySmokeState state{};
+
+            state.smokeId =
+                smokeId;
+
+            state.ownerPlayerId =
+                session->GetPlayerId();
+
+            state.roomId =
+                roomId;
+
+            state.active =
+                false;
+
+            // fallback 활성화 위치.
+            // STATE/ATTACH가 들어오면 이 값이 계속 갱신됨.
+            state.x = pkt->x;
+            state.y = pkt->y;
+            state.z = pkt->z;
+
+            state.nx = 0.0f;
+            state.ny = 1.0f;
+            state.nz = 0.0f;
+
+            g_entrySmokes[smokeId] =
+                state;
+        }
+
+        BroadcastEntrySmokeSpawn(
+            roomId,
+            smokeId,
+            session->GetPlayerId(),
+            pkt->x,
+            pkt->y,
+            pkt->z,
+            pkt->vx,
+            pkt->vy,
+            pkt->vz
+        );
+
+        StartEntrySmokeAutoActivateTimer(
+            roomId,
+            smokeId
+        );
+
+        std::cout
+            << "[ENTRY SMOKE THROW APPLY] playerId="
+            << session->GetPlayerId()
+            << " smokeId="
+            << smokeId
+            << " pos=("
+            << pkt->x << ", " << pkt->y << ", " << pkt->z
+            << ") velocity=("
+            << pkt->vx << ", " << pkt->vy << ", " << pkt->vz
+            << ")"
+            << std::endl;
+
+        break;
+    }
+    case PacketType::PKT_CS_ENTRY_SMOKE_STATE:
+    {
+        auto* pkt =
+            reinterpret_cast<CS_EntrySmokeState*>(header);
+
+        if (header->size != sizeof(CS_EntrySmokeState))
+        {
+            std::cout
+                << "[ENTRY SMOKE STATE BLOCK] invalid size playerId="
+                << session->GetPlayerId()
+                << " receivedSize="
+                << header->size
+                << " expectedSize="
+                << sizeof(CS_EntrySmokeState)
+                << std::endl;
+
+            break;
+        }
+
+        if (session->GetState() != SessionState::IN_GAME)
+            break;
+
+        uint32_t roomId =
+            session->GetCurrentRoomId();
+
+        if (roomId == 0)
+            break;
+
+        uint32_t ownerPlayerId = 0;
+        bool valid = false;
+
+        {
+            std::lock_guard<std::mutex> lock(g_entrySmokeMutex);
+
+            auto it =
+                g_entrySmokes.find(pkt->smokeId);
+
+            if (it == g_entrySmokes.end())
+                break;
+
+            EntrySmokeState& state =
+                it->second;
+
+            if (state.ownerPlayerId != session->GetPlayerId())
+                break;
+
+            if (state.roomId != roomId)
+                break;
+
+            if (state.active)
+                break;
+
+            // fallback 위치 갱신
+            state.x = pkt->x;
+            state.y = pkt->y;
+            state.z = pkt->z;
+
+            ownerPlayerId =
+                state.ownerPlayerId;
+
+            valid =
+                true;
+        }
+
+        if (!valid)
+            break;
+
+        BroadcastEntrySmokeState(
+            roomId,
+            pkt->smokeId,
+            ownerPlayerId,
+            pkt->x,
+            pkt->y,
+            pkt->z,
+            pkt->rotX,
+            pkt->rotY,
+            pkt->rotZ,
+            pkt->rotW
+        );
+
+        break;
+    }
+    case PacketType::PKT_CS_ENTRY_SMOKE_ATTACH:
+    {
+        auto* pkt =
+            reinterpret_cast<CS_EntrySmokeAttach*>(header);
+
+        if (header->size != sizeof(CS_EntrySmokeAttach))
+        {
+            std::cout
+                << "[ENTRY SMOKE ATTACH BLOCK] invalid size playerId="
+                << session->GetPlayerId()
+                << " receivedSize="
+                << header->size
+                << " expectedSize="
+                << sizeof(CS_EntrySmokeAttach)
+                << std::endl;
+
+            break;
+        }
+
+        if (session->GetState() != SessionState::IN_GAME)
+        {
+            std::cout
+                << "[ENTRY SMOKE ATTACH BLOCK] not in game playerId="
+                << session->GetPlayerId()
+                << std::endl;
+
+            break;
+        }
+
+        uint32_t roomId =
+            session->GetCurrentRoomId();
+
+        if (roomId == 0)
+        {
+            std::cout
+                << "[ENTRY SMOKE ATTACH BLOCK] roomId is 0 playerId="
+                << session->GetPlayerId()
+                << std::endl;
+
+            break;
+        }
+
+        uint32_t ownerPlayerId = 0;
+        bool valid = false;
+
+        {
+            std::lock_guard<std::mutex> lock(g_entrySmokeMutex);
+
+            auto it =
+                g_entrySmokes.find(pkt->smokeId);
+
+            if (it == g_entrySmokes.end())
+            {
+                std::cout
+                    << "[ENTRY SMOKE ATTACH BLOCK] smoke not found smokeId="
+                    << pkt->smokeId
+                    << std::endl;
+
+                break;
+            }
+
+            EntrySmokeState& state =
+                it->second;
+
+            if (state.ownerPlayerId != session->GetPlayerId())
+            {
+                std::cout
+                    << "[ENTRY SMOKE ATTACH BLOCK] not owner smokeId="
+                    << pkt->smokeId
+                    << " owner="
+                    << state.ownerPlayerId
+                    << " requester="
+                    << session->GetPlayerId()
+                    << std::endl;
+
+                break;
+            }
+
+            if (state.roomId != roomId)
+            {
+                std::cout
+                    << "[ENTRY SMOKE ATTACH BLOCK] room mismatch smokeId="
+                    << pkt->smokeId
+                    << " stateRoom="
+                    << state.roomId
+                    << " requesterRoom="
+                    << roomId
+                    << std::endl;
+
+                break;
+            }
+
+            if (state.active)
+            {
+                std::cout
+                    << "[ENTRY SMOKE ATTACH BLOCK] already active smokeId="
+                    << pkt->smokeId
+                    << std::endl;
+
+                break;
+            }
+
+            state.x = pkt->x;
+            state.y = pkt->y;
+            state.z = pkt->z;
+
+            state.nx = pkt->nx;
+            state.ny = pkt->ny;
+            state.nz = pkt->nz;
+
+            state.active = true;
+
+            ownerPlayerId =
+                state.ownerPlayerId;
+
+            valid =
+                true;
+        }
+
+        if (!valid)
+            break;
+
+        BroadcastEntrySmokeActivate(
+            roomId,
+            pkt->smokeId,
+            ownerPlayerId,
+            pkt->x,
+            pkt->y,
+            pkt->z,
+            pkt->nx,
+            pkt->ny,
+            pkt->nz,
+            ENTRY_SMOKE_RADIUS,
+            ENTRY_SMOKE_DURATION
+        );
+
+        std::cout
+            << "[ENTRY SMOKE ATTACH APPLY] playerId="
+            << session->GetPlayerId()
+            << " smokeId="
+            << pkt->smokeId
+            << " pos=("
+            << pkt->x << ", " << pkt->y << ", " << pkt->z
+            << ") normal=("
+            << pkt->nx << ", " << pkt->ny << ", " << pkt->nz
+            << ")"
+            << std::endl;
+
+        std::thread(
+            [roomId, smokeId = pkt->smokeId]()
+            {
+                std::this_thread::sleep_for(
+                    std::chrono::milliseconds(
+                        static_cast<int>(
+                            ENTRY_SMOKE_DURATION * 1000.0f
+                            )
+                    )
+                );
+
+                bool shouldDestroy = false;
+
+                {
+                    std::lock_guard<std::mutex> lock(g_entrySmokeMutex);
+
+                    auto it =
+                        g_entrySmokes.find(smokeId);
+
+                    if (it != g_entrySmokes.end())
+                    {
+                        g_entrySmokes.erase(it);
+                        shouldDestroy = true;
+                    }
+                }
+
+                if (shouldDestroy)
+                {
+                    BroadcastEntrySmokeDestroy(
+                        roomId,
+                        smokeId
+                    );
+                }
+            }
+        ).detach();
+
+        break;
+    }
+
+    case PacketType::PKT_CS_ENTRY_DASH_CAST:
+    {
+        auto* pkt =
+            reinterpret_cast<CS_EntryDashCast*>(header);
+
+        if (header->size != sizeof(CS_EntryDashCast))
+        {
+            std::cout
+                << "[ENTRY DASH BLOCK] invalid size playerId="
+                << session->GetPlayerId()
+                << " receivedSize="
+                << header->size
+                << " expectedSize="
+                << sizeof(CS_EntryDashCast)
+                << std::endl;
+
+            break;
+        }
+
+        if (session->GetState() != SessionState::IN_GAME)
+        {
+            std::cout
+                << "[ENTRY DASH BLOCK] not in game playerId="
+                << session->GetPlayerId()
+                << std::endl;
+
+            break;
+        }
+
+        if (session->IsDead())
+        {
+            std::cout
+                << "[ENTRY DASH BLOCK] dead playerId="
+                << session->GetPlayerId()
+                << std::endl;
+
+            break;
+        }
+
+        if (IsPlayerStunned(session->GetPlayerId()))
+        {
+            std::cout
+                << "[ENTRY DASH BLOCK] stunned playerId="
+                << session->GetPlayerId()
+                << std::endl;
+
+            break;
+        }
+
+        if (IsDroneBlockedAction(session, "ENTRY_DASH"))
+            break;
+
+        uint32_t roomId =
+            session->GetCurrentRoomId();
+
+        if (roomId == 0)
+        {
+            std::cout
+                << "[ENTRY DASH BLOCK] roomId is 0 playerId="
+                << session->GetPlayerId()
+                << std::endl;
+
+            break;
+        }
+
+        float dirX = pkt->dirX;
+        float dirY = 0.0f;
+        float dirZ = pkt->dirZ;
+
+        float lenSq =
+            dirX * dirX +
+            dirY * dirY +
+            dirZ * dirZ;
+
+        if (lenSq <= 0.0001f)
+        {
+            std::cout
+                << "[ENTRY DASH BLOCK] invalid dir playerId="
+                << session->GetPlayerId()
+                << std::endl;
+
+            break;
+        }
+
+        float invLen =
+            1.0f / std::sqrt(lenSq);
+
+        dirX *= invLen;
+        dirY = 0.0f;
+        dirZ *= invLen;
+
+        // 돌진 사용 시 야수화 해제
+        CancelBeastStealth(
+            session->GetPlayerId(),
+            "entry_dash"
+        );
+
+        BroadcastEntryDashCast(
+            roomId,
+            session->GetPlayerId(),
+            dirX,
+            dirY,
+            dirZ,
+            ENTRY_DASH_FORCE,
+            ENTRY_DASH_DURATION
+        );
+
+        std::thread(
+            [roomId, playerId = session->GetPlayerId()]()
+            {
+                std::this_thread::sleep_for(
+                    std::chrono::milliseconds(
+                        static_cast<int>(
+                            ENTRY_DASH_DURATION * 1000.0f
+                            )
+                    )
+                );
+
+                BroadcastEntryDashEnd(
+                    roomId,
+                    playerId
+                );
+            }
+        ).detach();
+
+        std::cout
+            << "[ENTRY DASH APPLY] playerId="
+            << session->GetPlayerId()
+            << " dir=("
+            << dirX << ", " << dirY << ", " << dirZ
+            << ")"
+            << std::endl;
+
+        break;
+    }
+
+    case PacketType::PKT_CS_ENTRY_BLADE_ACTIVATE:
+    {
+        if (header->size != sizeof(CS_EntryBladeActivate))
+        {
+            std::cout
+                << "[ENTRY BLADE ACTIVATE BLOCK] invalid size playerId="
+                << session->GetPlayerId()
+                << " receivedSize="
+                << header->size
+                << " expectedSize="
+                << sizeof(CS_EntryBladeActivate)
+                << std::endl;
+
+            break;
+        }
+
+        if (session->GetState() != SessionState::IN_GAME)
+        {
+            std::cout
+                << "[ENTRY BLADE ACTIVATE BLOCK] not in game playerId="
+                << session->GetPlayerId()
+                << std::endl;
+
+            break;
+        }
+
+        if (session->IsDead())
+        {
+            std::cout
+                << "[ENTRY BLADE ACTIVATE BLOCK] dead playerId="
+                << session->GetPlayerId()
+                << std::endl;
+
+            break;
+        }
+
+        if (IsPlayerStunned(session->GetPlayerId()))
+        {
+            std::cout
+                << "[ENTRY BLADE ACTIVATE BLOCK] stunned playerId="
+                << session->GetPlayerId()
+                << std::endl;
+
+            break;
+        }
+
+        if (IsDroneBlockedAction(session, "ENTRY_BLADE_ACTIVATE"))
+            break;
+
+        uint32_t roomId =
+            session->GetCurrentRoomId();
+
+        if (roomId == 0)
+            break;
+
+        {
+            std::lock_guard<std::mutex> lock(g_entryBladeMutex);
+
+            auto it =
+                g_entryBladeStates.find(session->GetPlayerId());
+
+            if (it != g_entryBladeStates.end() &&
+                it->second.active)
+            {
+                std::cout
+                    << "[ENTRY BLADE ACTIVATE BLOCK] already active playerId="
+                    << session->GetPlayerId()
+                    << std::endl;
+
+                break;
+            }
+        }
+
+        CancelBeastStealth(
+            session->GetPlayerId(),
+            "entry_blade_activate"
+        );
+
+        {
+            std::lock_guard<std::mutex> lock(g_entryBladeMutex);
+
+            EntryBladeState state{};
+
+            state.playerId =
+                session->GetPlayerId();
+
+            state.roomId =
+                roomId;
+
+            state.active =
+                true;
+
+            state.bladeCount =
+                ENTRY_BLADE_MAX_COUNT;
+
+            state.endTime =
+                std::chrono::steady_clock::now() +
+                std::chrono::milliseconds(
+                    static_cast<int>(
+                        ENTRY_BLADE_DURATION * 1000.0f
+                        )
+                );
+
+            g_entryBladeStates[session->GetPlayerId()] =
+                state;
+        }
+
+        BroadcastEntryBladeState(
+            roomId,
+            session->GetPlayerId(),
+            true,
+            ENTRY_BLADE_MAX_COUNT,
+            ENTRY_BLADE_DURATION
+        );
+
+        std::thread(
+            [roomId, playerId = session->GetPlayerId()]()
+            {
+                std::this_thread::sleep_for(
+                    std::chrono::milliseconds(
+                        static_cast<int>(
+                            ENTRY_BLADE_DURATION * 1000.0f
+                            )
+                    )
+                );
+
+                EndEntryBladeUltimate(
+                    roomId,
+                    playerId,
+                    "duration_end"
+                );
+            }
+        ).detach();
+
+        std::cout
+            << "[ENTRY BLADE ACTIVATE APPLY] playerId="
+            << session->GetPlayerId()
+            << " bladeCount="
+            << static_cast<int>(ENTRY_BLADE_MAX_COUNT)
+            << std::endl;
+
+        break;
+    }
+
+    case PacketType::PKT_CS_ENTRY_BLADE_FIRE:
+    {
+        auto* pkt =
+            reinterpret_cast<CS_EntryBladeFire*>(header);
+
+        if (header->size != sizeof(CS_EntryBladeFire))
+        {
+            std::cout
+                << "[ENTRY BLADE FIRE BLOCK] invalid size playerId="
+                << session->GetPlayerId()
+                << " receivedSize="
+                << header->size
+                << " expectedSize="
+                << sizeof(CS_EntryBladeFire)
+                << std::endl;
+
+            break;
+        }
+
+        if (session->GetState() != SessionState::IN_GAME)
+        {
+            std::cout
+                << "[ENTRY BLADE FIRE BLOCK] not in game playerId="
+                << session->GetPlayerId()
+                << std::endl;
+
+            break;
+        }
+
+        if (session->IsDead())
+        {
+            std::cout
+                << "[ENTRY BLADE FIRE BLOCK] dead playerId="
+                << session->GetPlayerId()
+                << std::endl;
+
+            break;
+        }
+
+        if (IsPlayerStunned(session->GetPlayerId()))
+        {
+            std::cout
+                << "[ENTRY BLADE FIRE BLOCK] stunned playerId="
+                << session->GetPlayerId()
+                << std::endl;
+
+            break;
+        }
+
+        if (IsDroneBlockedAction(session, "ENTRY_BLADE_FIRE"))
+            break;
+
+        uint32_t roomId =
+            session->GetCurrentRoomId();
+
+        if (roomId == 0)
+            break;
+
+        uint8_t remainingBlades = 0;
+
+        {
+            std::lock_guard<std::mutex> lock(g_entryBladeMutex);
+
+            auto it =
+                g_entryBladeStates.find(session->GetPlayerId());
+
+            if (it == g_entryBladeStates.end())
+            {
+                std::cout
+                    << "[ENTRY BLADE FIRE BLOCK] ultimate not active playerId="
+                    << session->GetPlayerId()
+                    << std::endl;
+
+                break;
+            }
+
+            EntryBladeState& state =
+                it->second;
+
+            if (!state.active)
+            {
+                std::cout
+                    << "[ENTRY BLADE FIRE BLOCK] inactive playerId="
+                    << session->GetPlayerId()
+                    << std::endl;
+
+                break;
+            }
+
+            if (state.roomId != roomId)
+            {
+                std::cout
+                    << "[ENTRY BLADE FIRE BLOCK] room mismatch playerId="
+                    << session->GetPlayerId()
+                    << std::endl;
+
+                break;
+            }
+
+            if (state.bladeCount == 0)
+            {
+                std::cout
+                    << "[ENTRY BLADE FIRE BLOCK] empty playerId="
+                    << session->GetPlayerId()
+                    << std::endl;
+
+                break;
+            }
+
+            if (std::chrono::steady_clock::now() > state.endTime)
+            {
+                g_entryBladeStates.erase(it);
+
+                std::cout
+                    << "[ENTRY BLADE FIRE BLOCK] expired playerId="
+                    << session->GetPlayerId()
+                    << std::endl;
+
+                break;
+            }
+
+            state.bladeCount--;
+
+            remainingBlades =
+                state.bladeCount;
+        }
+
+        float dirX = pkt->dirX;
+        float dirY = pkt->dirY;
+        float dirZ = pkt->dirZ;
+
+        float lenSq =
+            dirX * dirX +
+            dirY * dirY +
+            dirZ * dirZ;
+
+        if (lenSq <= 0.0001f)
+        {
+            std::cout
+                << "[ENTRY BLADE FIRE BLOCK] invalid dir playerId="
+                << session->GetPlayerId()
+                << std::endl;
+
+            break;
+        }
+
+        float invLen =
+            1.0f / std::sqrt(lenSq);
+
+        dirX *= invLen;
+        dirY *= invLen;
+        dirZ *= invLen;
+
+        Vector3 shooterPos =
+            session->GetPosition();
+
+        float shooterX =
+            shooterPos.x;
+
+        float shooterY =
+            shooterPos.y;
+
+        float shooterZ =
+            shooterPos.z;
+
+        float startX =
+            shooterX;
+
+        float startY =
+            shooterY + 1.2f;
+
+        float startZ =
+            shooterZ;
+
+        bool validHit = false;
+        uint32_t finalTargetPlayerId = 0;
+
+        float endX =
+            startX + dirX * ENTRY_BLADE_RANGE;
+
+        float endY =
+            startY + dirY * ENTRY_BLADE_RANGE;
+
+        float endZ =
+            startZ + dirZ * ENTRY_BLADE_RANGE;
+
+        if (pkt->targetPlayerId != 0)
+        {
+            Session* target =
+                SessionManager::Instance().Find(
+                    pkt->targetPlayerId
+                );
+
+            if (target != nullptr &&
+                target->GetState() == SessionState::IN_GAME &&
+                !target->IsDead() &&
+                target->GetCurrentRoomId() == roomId &&
+                target->GetPlayerId() != session->GetPlayerId())
+            {
+                RoomMember shooterMember{};
+                RoomMember targetMember{};
+
+                bool shooterOk =
+                    RoomManager::Instance().GetMember(
+                        roomId,
+                        session->GetPlayerId(),
+                        shooterMember
+                    );
+
+                bool targetOk =
+                    RoomManager::Instance().GetMember(
+                        roomId,
+                        target->GetPlayerId(),
+                        targetMember
+                    );
+
+                if (shooterOk &&
+                    targetOk &&
+                    shooterMember.team != RoomTeam::OBSERVER &&
+                    targetMember.team != RoomTeam::OBSERVER &&
+                    shooterMember.team != targetMember.team)
+                {
+                    Vector3 targetPos =
+                        target->GetPosition();
+
+                    float toX =
+                        targetPos.x - startX;
+
+                    float toY =
+                        (targetPos.y + 1.0f) - startY;
+
+                    float toZ =
+                        targetPos.z - startZ;
+
+                    float distSq =
+                        toX * toX +
+                        toY * toY +
+                        toZ * toZ;
+
+                    if (distSq <= ENTRY_BLADE_RANGE_SQ)
+                    {
+                        float dist =
+                            std::sqrt(distSq);
+
+                        if (dist > 0.0001f)
+                        {
+                            float tx =
+                                toX / dist;
+
+                            float ty =
+                                toY / dist;
+
+                            float tz =
+                                toZ / dist;
+
+                            float dot =
+                                tx * dirX +
+                                ty * dirY +
+                                tz * dirZ;
+
+                            if (dot >= ENTRY_BLADE_HIT_DOT)
+                            {
+                                validHit =
+                                    true;
+
+                                finalTargetPlayerId =
+                                    target->GetPlayerId();
+
+                                endX =
+                                    targetPos.x;
+
+                                endY =
+                                    targetPos.y + 1.0f;
+
+                                endZ =
+                                    targetPos.z;
+
+                                target->SetLastDamager(
+                                    session->GetPlayerId()
+                                );
+
+                                target->AddAssistDamageRecord(
+                                    session->GetPlayerId(),
+                                    ENTRY_BLADE_DAMAGE
+                                );
+
+                                target->Damage(
+                                    ENTRY_BLADE_DAMAGE
+                                );
+
+                                SC_HPUpdate hpPkt{};
+
+                                FillHPUpdatePacket(
+                                    hpPkt,
+                                    target
+                                );
+
+                                BroadcastPacketToRoomInternal(
+                                    roomId,
+                                    &hpPkt
+                                );
+
+                                std::cout
+                                    << "[ENTRY BLADE HIT] shooter="
+                                    << session->GetPlayerId()
+                                    << " target="
+                                    << target->GetPlayerId()
+                                    << " damage="
+                                    << ENTRY_BLADE_DAMAGE
+                                    << " hp="
+                                    << target->GetHP()
+                                    << std::endl;
+
+                                if (target->IsDead())
+                                {
+                                    HandleDeath(target);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        BroadcastEntryBladeFire(
+            roomId,
+            session->GetPlayerId(),
+            finalTargetPlayerId,
+            validHit,
+            remainingBlades,
+            startX,
+            startY,
+            startZ,
+            endX,
+            endY,
+            endZ
+        );
+
+        if (remainingBlades == 0)
+        {
+            EndEntryBladeUltimate(
+                roomId,
+                session->GetPlayerId(),
+                "empty"
+            );
+        }
+
+        std::cout
+            << "[ENTRY BLADE FIRE APPLY] shooter="
+            << session->GetPlayerId()
+            << " target="
+            << finalTargetPlayerId
+            << " hit="
+            << validHit
+            << " remaining="
+            << static_cast<int>(remainingBlades)
+            << std::endl;
+
+        break;
+    }
+
     default:
     {
         std::cout << "[UNHANDLED PACKET] type=" << (uint16_t)type
@@ -8981,6 +11095,12 @@ void PacketDispatcher::HandleDeath(Session* target)
     uint32_t roomId = target->GetCurrentRoomId();
 
     DestroyDroneForPlayer(target->GetPlayerId(), 1);
+
+    EndEntryBladeUltimate(
+        roomId,
+        target->GetPlayerId(),
+        "death"
+    );
 
     constexpr int ASSIST_VALID_SECONDS = 10;
 

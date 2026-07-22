@@ -1603,4 +1603,100 @@ struct SC_EntryBladeFire
     float endY;
     float endZ;
 };
+
+struct CS_ControllerSwampThrow
+{
+    PacketHeader header;
+
+    float x;
+    float y;
+    float z;
+
+    float vx;
+    float vy;
+    float vz;
+};
+
+struct SC_ControllerSwampSpawn
+{
+    PacketHeader header;
+
+    uint32_t trapId;
+    uint32_t ownerPlayerId;
+
+    float x;
+    float y;
+    float z;
+
+    float vx;
+    float vy;
+    float vz;
+};
+
+struct CS_ControllerSwampActivate
+{
+    PacketHeader header;
+
+    uint32_t trapId;
+
+    float x;
+    float y;
+    float z;
+
+    float normalX;
+    float normalY;
+    float normalZ;
+};
+
+struct SC_ControllerSwampActivate
+{
+    PacketHeader header;
+
+    uint32_t trapId;
+    uint32_t ownerPlayerId;
+
+    float x;
+    float y;
+    float z;
+
+    float normalX;
+    float normalY;
+    float normalZ;
+
+    float radius;
+    float duration;
+};
+
+struct SC_ControllerSwampDestroy
+{
+    PacketHeader header;
+
+    uint32_t trapId;
+};
+
+struct CS_ControllerSmokeDrop
+{
+    PacketHeader header;
+    float x;
+    float y;
+    float z;
+};
+
+struct SC_ControllerSmokeSpawn
+{
+    PacketHeader header;
+    uint32_t smokeId;
+    uint32_t ownerPlayerId;
+    float x;
+    float y;
+    float z;
+    float radius;
+    float duration;
+};
+
+struct SC_ControllerSmokeDestroy
+{
+    PacketHeader header;
+    uint32_t smokeId;
+};
 #pragma pack(pop)

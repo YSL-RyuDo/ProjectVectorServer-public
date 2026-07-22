@@ -252,6 +252,35 @@ namespace
     std::mutex g_entryBladeMutex;
     std::unordered_map<uint32_t, EntryBladeState> g_entryBladeStates;
 
+    constexpr float CONTROLLER_SWAMP_RADIUS = 3.0f;
+    constexpr float CONTROLLER_SWAMP_DURATION = 5.0f;
+
+    struct ControllerSwampTrapState
+    {
+        uint32_t trapId = 0;
+        uint32_t roomId = 0;
+        uint32_t ownerPlayerId = 0;
+        bool activated = false;
+    };
+
+    std::mutex g_controllerSwampMutex;
+    std::unordered_map<uint32_t, ControllerSwampTrapState> g_controllerSwampTraps;
+    std::atomic<uint32_t> g_nextControllerSwampTrapId{ 1 };
+
+    constexpr float CONTROLLER_SMOKE_RADIUS = 4.5f;
+    constexpr float CONTROLLER_SMOKE_DURATION = 7.0f;
+
+    struct ControllerSmokeState
+    {
+        uint32_t smokeId = 0;
+        uint32_t roomId = 0;
+        uint32_t ownerPlayerId = 0;
+    };
+
+    std::mutex g_controllerSmokeMutex;
+    std::unordered_map<uint32_t, ControllerSmokeState> g_controllerSmokes;
+    std::atomic<uint32_t> g_nextControllerSmokeId{ 1 };
+
     struct StoreWeaponData
     {
         int weaponId = 0;
@@ -2485,6 +2514,169 @@ namespace
         return originalTeam;
     }
 
+    void BroadcastControllerSwampSpawn(
+        uint32_t roomId,
+        uint32_t trapId,
+        uint32_t ownerPlayerId,
+        float x,
+        float y,
+        float z,
+        float vx,
+        float vy,
+        float vz)
+    {
+        SC_ControllerSwampSpawn out{};
+
+        out.header.size =
+            sizeof(out);
+
+        out.header.type =
+            static_cast<uint16_t>(
+                PacketType::PKT_SC_CONTROLLER_SWAMP_SPAWN
+                );
+
+        out.trapId = trapId;
+        out.ownerPlayerId = ownerPlayerId;
+
+        out.x = x;
+        out.y = y;
+        out.z = z;
+
+        out.vx = vx;
+        out.vy = vy;
+        out.vz = vz;
+
+        BroadcastPacketToRoomInternal(
+            roomId,
+            &out
+        );
+
+        std::cout
+            << "[CONTROLLER SWAMP SPAWN BROADCAST] "
+            << "roomId=" << roomId
+            << " trapId=" << trapId
+            << " owner=" << ownerPlayerId
+            << std::endl;
+    }
+
+    void BroadcastControllerSwampActivate(
+        uint32_t roomId,
+        uint32_t trapId,
+        uint32_t ownerPlayerId,
+        float x,
+        float y,
+        float z,
+        float normalX,
+        float normalY,
+        float normalZ)
+    {
+        SC_ControllerSwampActivate out{};
+
+        out.header.size =
+            sizeof(out);
+
+        out.header.type =
+            static_cast<uint16_t>(
+                PacketType::PKT_SC_CONTROLLER_SWAMP_ACTIVATE
+                );
+
+        out.trapId = trapId;
+        out.ownerPlayerId = ownerPlayerId;
+
+        out.x = x;
+        out.y = y;
+        out.z = z;
+
+        out.normalX = normalX;
+        out.normalY = normalY;
+        out.normalZ = normalZ;
+
+        out.radius = CONTROLLER_SWAMP_RADIUS;
+        out.duration = CONTROLLER_SWAMP_DURATION;
+
+        BroadcastPacketToRoomInternal(
+            roomId,
+            &out
+        );
+
+        std::cout
+            << "[CONTROLLER SWAMP ACTIVATE BROADCAST] "
+            << "roomId=" << roomId
+            << " trapId=" << trapId
+            << " owner=" << ownerPlayerId
+            << std::endl;
+    }
+
+    void BroadcastControllerSwampDestroy(
+        uint32_t roomId,
+        uint32_t trapId)
+    {
+        SC_ControllerSwampDestroy out{};
+
+        out.header.size =
+            sizeof(out);
+
+        out.header.type =
+            static_cast<uint16_t>(
+                PacketType::PKT_SC_CONTROLLER_SWAMP_DESTROY
+                );
+
+        out.trapId = trapId;
+
+        BroadcastPacketToRoomInternal(
+            roomId,
+            &out
+        );
+
+        std::cout
+            << "[CONTROLLER SWAMP DESTROY BROADCAST] "
+            << "roomId=" << roomId
+            << " trapId=" << trapId
+            << std::endl;
+    }
+
+    void ClearControllerSwampsInRoom(uint32_t roomId)
+    {
+        std::vector<uint32_t> trapIds;
+
+        {
+            std::lock_guard<std::mutex> lock(
+                g_controllerSwampMutex
+            );
+
+            for (auto it = g_controllerSwampTraps.begin();
+                it != g_controllerSwampTraps.end();)
+            {
+                if (it->second.roomId == roomId)
+                {
+                    trapIds.push_back(
+                        it->first
+                    );
+
+                    it =
+                        g_controllerSwampTraps.erase(it);
+                }
+                else
+                {
+                    ++it;
+                }
+            }
+        }
+
+        for (uint32_t trapId : trapIds)
+        {
+            BroadcastControllerSwampDestroy(
+                roomId,
+                trapId
+            );
+        }
+
+        std::cout
+            << "[CONTROLLER SWAMP CLEAR ROOM] roomId="
+            << roomId
+            << std::endl;
+    }
+
     void BroadcastEntryBladeState(
         uint32_t roomId,
         uint32_t playerId,
@@ -2805,6 +2997,74 @@ namespace
             << std::endl;
     }
 
+    void BroadcastControllerSmokeSpawn(uint32_t roomId, uint32_t smokeId, uint32_t ownerPlayerId, float x, float y, float z)
+    {
+        SC_ControllerSmokeSpawn out{};
+
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_CONTROLLER_SMOKE_SPAWN);
+
+        out.smokeId = smokeId;
+        out.ownerPlayerId = ownerPlayerId;
+
+        out.x = x;
+        out.y = y;
+        out.z = z;
+
+        out.radius = CONTROLLER_SMOKE_RADIUS;
+        out.duration = CONTROLLER_SMOKE_DURATION;
+
+        BroadcastPacketToRoomInternal(roomId, &out);
+
+        std::cout << "[CONTROLLER SMOKE SPAWN BROADCAST] roomId=" << roomId << " smokeId=" << smokeId << " owner=" << ownerPlayerId << " pos=(" << x << "," << y << "," << z << ")" << std::endl;
+    }
+
+    void BroadcastControllerSmokeDestroy(uint32_t roomId, uint32_t smokeId)
+    {
+        SC_ControllerSmokeDestroy out{};
+
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_CONTROLLER_SMOKE_DESTROY);
+
+        out.smokeId = smokeId;
+
+        BroadcastPacketToRoomInternal(roomId, &out);
+
+        std::cout << "[CONTROLLER SMOKE DESTROY BROADCAST] roomId=" << roomId << " smokeId=" << smokeId << std::endl;
+    }
+
+    void ClearControllerSmokesInRoom(uint32_t roomId)
+    {
+        std::vector<uint32_t> smokeIds;
+
+        {
+            std::lock_guard<std::mutex> lock(g_controllerSmokeMutex);
+
+            for (auto it = g_controllerSmokes.begin(); it != g_controllerSmokes.end();)
+            {
+                if (it->second.roomId == roomId)
+                {
+                    smokeIds.push_back(it->first);
+                    it = g_controllerSmokes.erase(it);
+                }
+                else
+                {
+                    ++it;
+                }
+            }
+        }
+
+        for (uint32_t smokeId : smokeIds)
+        {
+            BroadcastControllerSmokeDestroy(roomId, smokeId);
+        }
+
+        if (!smokeIds.empty())
+        {
+            std::cout << "[CONTROLLER SMOKE CLEAR ROOM] roomId=" << roomId << " count=" << smokeIds.size() << std::endl;
+        }
+    }
+
     void ResetRound(uint32_t roomId)
     {
         Room room{};
@@ -2816,6 +3076,8 @@ namespace
         ClearBeastStealthInRoom(roomId);
         ClearEntrySmokesInRoom(roomId);
         ClearEntryBladesInRoom(roomId);
+        ClearControllerSwampsInRoom(roomId);
+        ClearControllerSmokesInRoom(roomId);
 
         ClearDronesInRoom(roomId, 2);
         ClearDroppedWeaponsInRoom(roomId);
@@ -4955,6 +5217,8 @@ namespace
             << static_cast<int>(stack)
             << std::endl;
     }
+
+
 }
 
 void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
@@ -10995,6 +11259,355 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             << " remaining="
             << static_cast<int>(remainingBlades)
             << std::endl;
+
+        break;
+    }
+
+        case PacketType::PKT_CS_CONTROLLER_SWAMP_THROW:
+        {
+            auto* pkt =
+                reinterpret_cast<CS_ControllerSwampThrow*>(header);
+
+            if (header->size != sizeof(CS_ControllerSwampThrow))
+            {
+                std::cout
+                    << "[CONTROLLER SWAMP THROW BLOCK] invalid size playerId="
+                    << session->GetPlayerId()
+                    << " receivedSize="
+                    << header->size
+                    << " expectedSize="
+                    << sizeof(CS_ControllerSwampThrow)
+                    << std::endl;
+
+                break;
+            }
+
+            if (session->GetState() != SessionState::IN_GAME)
+            {
+                std::cout
+                    << "[CONTROLLER SWAMP THROW BLOCK] not in game playerId="
+                    << session->GetPlayerId()
+                    << std::endl;
+
+                break;
+            }
+
+            if (session->IsDead())
+            {
+                std::cout
+                    << "[CONTROLLER SWAMP THROW BLOCK] dead playerId="
+                    << session->GetPlayerId()
+                    << std::endl;
+
+                break;
+            }
+
+            if (IsPlayerStunned(session->GetPlayerId()))
+            {
+                std::cout
+                    << "[CONTROLLER SWAMP THROW BLOCK] stunned playerId="
+                    << session->GetPlayerId()
+                    << std::endl;
+
+                break;
+            }
+
+            if (IsDroneBlockedAction(session, "CONTROLLER_SWAMP_THROW"))
+                break;
+
+            uint32_t roomId =
+                session->GetCurrentRoomId();
+
+            if (roomId == 0)
+            {
+                std::cout
+                    << "[CONTROLLER SWAMP THROW BLOCK] roomId=0 playerId="
+                    << session->GetPlayerId()
+                    << std::endl;
+
+                break;
+            }
+
+            uint32_t trapId =
+                g_nextControllerSwampTrapId.fetch_add(1);
+
+            ControllerSwampTrapState state{};
+            state.trapId = trapId;
+            state.roomId = roomId;
+            state.ownerPlayerId = session->GetPlayerId();
+            state.activated = false;
+
+            {
+                std::lock_guard<std::mutex> lock(
+                    g_controllerSwampMutex
+                );
+
+                g_controllerSwampTraps[trapId] = state;
+            }
+
+            BroadcastControllerSwampSpawn(
+                roomId,
+                trapId,
+                session->GetPlayerId(),
+                pkt->x,
+                pkt->y,
+                pkt->z,
+                pkt->vx,
+                pkt->vy,
+                pkt->vz
+            );
+
+            std::cout
+                << "[CONTROLLER SWAMP THROW APPLY] "
+                << "playerId=" << session->GetPlayerId()
+                << " trapId=" << trapId
+                << " pos=("
+                << pkt->x << ", " << pkt->y << ", " << pkt->z
+                << ") velocity=("
+                << pkt->vx << ", " << pkt->vy << ", " << pkt->vz
+                << ")"
+                << std::endl;
+
+            break;
+        }
+        case PacketType::PKT_CS_CONTROLLER_SWAMP_ACTIVATE:
+        {
+            auto* pkt =
+                reinterpret_cast<CS_ControllerSwampActivate*>(header);
+
+            if (header->size != sizeof(CS_ControllerSwampActivate))
+            {
+                std::cout
+                    << "[CONTROLLER SWAMP ACTIVATE BLOCK] invalid size playerId="
+                    << session->GetPlayerId()
+                    << " receivedSize="
+                    << header->size
+                    << " expectedSize="
+                    << sizeof(CS_ControllerSwampActivate)
+                    << std::endl;
+
+                break;
+            }
+
+            if (session->GetState() != SessionState::IN_GAME)
+            {
+                std::cout
+                    << "[CONTROLLER SWAMP ACTIVATE BLOCK] not in game playerId="
+                    << session->GetPlayerId()
+                    << std::endl;
+
+                break;
+            }
+
+            if (session->IsDead())
+            {
+                std::cout
+                    << "[CONTROLLER SWAMP ACTIVATE BLOCK] dead playerId="
+                    << session->GetPlayerId()
+                    << std::endl;
+
+                break;
+            }
+
+            uint32_t roomId = 0;
+            uint32_t ownerPlayerId = 0;
+
+            {
+                std::lock_guard<std::mutex> lock(
+                    g_controllerSwampMutex
+                );
+
+                auto it =
+                    g_controllerSwampTraps.find(pkt->trapId);
+
+                if (it == g_controllerSwampTraps.end())
+                {
+                    std::cout
+                        << "[CONTROLLER SWAMP ACTIVATE BLOCK] trap not found trapId="
+                        << pkt->trapId
+                        << std::endl;
+
+                    break;
+                }
+
+                ControllerSwampTrapState& state =
+                    it->second;
+
+                if (state.ownerPlayerId != session->GetPlayerId())
+                {
+                    std::cout
+                        << "[CONTROLLER SWAMP ACTIVATE BLOCK] not owner trapId="
+                        << pkt->trapId
+                        << " requester=" << session->GetPlayerId()
+                        << " owner=" << state.ownerPlayerId
+                        << std::endl;
+
+                    break;
+                }
+
+                if (state.activated)
+                {
+                    std::cout
+                        << "[CONTROLLER SWAMP ACTIVATE BLOCK] already activated trapId="
+                        << pkt->trapId
+                        << std::endl;
+
+                    break;
+                }
+
+                state.activated = true;
+
+                roomId =
+                    state.roomId;
+
+                ownerPlayerId =
+                    state.ownerPlayerId;
+            }
+
+            if (roomId == 0)
+                break;
+
+            BroadcastControllerSwampActivate(
+                roomId,
+                pkt->trapId,
+                ownerPlayerId,
+                pkt->x,
+                pkt->y,
+                pkt->z,
+                pkt->normalX,
+                pkt->normalY,
+                pkt->normalZ
+            );
+
+            std::thread(
+                [roomId, trapId = pkt->trapId]()
+                {
+                    std::this_thread::sleep_for(
+                        std::chrono::milliseconds(
+                            static_cast<int>(
+                                CONTROLLER_SWAMP_DURATION * 1000.0f
+                                )
+                        )
+                    );
+
+                    bool shouldDestroy = false;
+
+                    {
+                        std::lock_guard<std::mutex> lock(
+                            g_controllerSwampMutex
+                        );
+
+                        auto it =
+                            g_controllerSwampTraps.find(trapId);
+
+                        if (it != g_controllerSwampTraps.end())
+                        {
+                            g_controllerSwampTraps.erase(it);
+                            shouldDestroy = true;
+                        }
+                    }
+
+                    if (shouldDestroy)
+                    {
+                        BroadcastControllerSwampDestroy(
+                            roomId,
+                            trapId
+                        );
+                    }
+                }
+            ).detach();
+
+            std::cout
+                << "[CONTROLLER SWAMP ACTIVATE APPLY] "
+                << "trapId=" << pkt->trapId
+                << " owner=" << ownerPlayerId
+                << " pos=("
+                << pkt->x << ", " << pkt->y << ", " << pkt->z
+                << ") normal=("
+                << pkt->normalX << ", " << pkt->normalY << ", " << pkt->normalZ
+                << ")"
+                << std::endl;
+
+            break;
+        }
+    case PacketType::PKT_CS_CONTROLLER_SMOKE_DROP:
+    {
+        auto* pkt = reinterpret_cast<CS_ControllerSmokeDrop*>(header);
+
+        if (header->size != sizeof(CS_ControllerSmokeDrop))
+        {
+            std::cout << "[CONTROLLER SMOKE DROP BLOCK] invalid size playerId=" << session->GetPlayerId() << " receivedSize=" << header->size << " expectedSize=" << sizeof(CS_ControllerSmokeDrop) << std::endl;
+            break;
+        }
+
+        if (session->GetState() != SessionState::IN_GAME)
+        {
+            std::cout << "[CONTROLLER SMOKE DROP BLOCK] not in game playerId=" << session->GetPlayerId() << std::endl;
+            break;
+        }
+
+        if (session->IsDead())
+        {
+            std::cout << "[CONTROLLER SMOKE DROP BLOCK] dead playerId=" << session->GetPlayerId() << std::endl;
+            break;
+        }
+
+        if (IsPlayerStunned(session->GetPlayerId()))
+        {
+            std::cout << "[CONTROLLER SMOKE DROP BLOCK] stunned playerId=" << session->GetPlayerId() << std::endl;
+            break;
+        }
+
+        if (IsDroneBlockedAction(session, "CONTROLLER_SMOKE_DROP"))
+            break;
+
+        uint32_t roomId = session->GetCurrentRoomId();
+
+        if (roomId == 0)
+        {
+            std::cout << "[CONTROLLER SMOKE DROP BLOCK] roomId=0 playerId=" << session->GetPlayerId() << std::endl;
+            break;
+        }
+
+        uint32_t smokeId = g_nextControllerSmokeId.fetch_add(1);
+
+        ControllerSmokeState state{};
+        state.smokeId = smokeId;
+        state.roomId = roomId;
+        state.ownerPlayerId = session->GetPlayerId();
+
+        {
+            std::lock_guard<std::mutex> lock(g_controllerSmokeMutex);
+            g_controllerSmokes[smokeId] = state;
+        }
+
+        BroadcastControllerSmokeSpawn(roomId, smokeId, session->GetPlayerId(), pkt->x, pkt->y + 0.05f, pkt->z);
+
+        std::thread([roomId, smokeId]()
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(CONTROLLER_SMOKE_DURATION * 1000.0f)));
+
+                bool removed = false;
+
+                {
+                    std::lock_guard<std::mutex> lock(g_controllerSmokeMutex);
+
+                    auto it = g_controllerSmokes.find(smokeId);
+
+                    if (it != g_controllerSmokes.end())
+                    {
+                        g_controllerSmokes.erase(it);
+                        removed = true;
+                    }
+                }
+
+                if (removed)
+                {
+                    BroadcastControllerSmokeDestroy(roomId, smokeId);
+                }
+            }).detach();
+
+        std::cout << "[CONTROLLER SMOKE DROP APPLY] playerId=" << session->GetPlayerId() << " smokeId=" << smokeId << " pos=(" << pkt->x << "," << pkt->y << "," << pkt->z << ")" << std::endl;
 
         break;
     }

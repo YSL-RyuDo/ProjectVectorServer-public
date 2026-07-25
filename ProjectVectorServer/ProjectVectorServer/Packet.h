@@ -1699,4 +1699,267 @@ struct SC_ControllerSmokeDestroy
     PacketHeader header;
     uint32_t smokeId;
 };
+
+struct CS_ControllerDecoyThrow
+{
+    PacketHeader header;
+
+    float x;
+    float y;
+    float z;
+
+    float vx;
+    float vy;
+    float vz;
+};
+
+struct SC_ControllerDecoySpawn
+{
+    PacketHeader header;
+
+    uint32_t decoyId;
+    uint32_t ownerPlayerId;
+
+    float x;
+    float y;
+    float z;
+
+    float vx;
+    float vy;
+    float vz;
+};
+
+struct CS_ControllerDecoyActivate
+{
+    PacketHeader header;
+
+    uint32_t decoyId;
+
+    float x;
+    float y;
+    float z;
+
+    float normalX;
+    float normalY;
+    float normalZ;
+};
+
+struct SC_ControllerDecoyActivate
+{
+    PacketHeader header;
+
+    uint32_t decoyId;
+    uint32_t ownerPlayerId;
+
+    float x;
+    float y;
+    float z;
+
+    float normalX;
+    float normalY;
+    float normalZ;
+
+    float duration;
+};
+
+struct SC_ControllerDecoyDestroy
+{
+    PacketHeader header;
+
+    uint32_t decoyId;
+};
+
+struct CS_ControllerUltimateCast
+{
+    PacketHeader header;
+
+    float x;
+    float y;
+    float z;
+};
+
+struct SC_ControllerUltimateSpawn
+{
+    PacketHeader header;
+
+    uint32_t ultimateId;
+    uint32_t ownerPlayerId;
+
+    float x;
+    float y;
+    float z;
+
+    float radius;
+    float duration;
+};
+
+struct SC_ControllerUltimateDestroy
+{
+    PacketHeader header;
+
+    uint32_t ultimateId;
+};
+
+struct CS_SentinelCThrow
+{
+    PacketHeader header;
+
+    float x;
+    float y;
+    float z;
+
+    float vx;
+    float vy;
+    float vz;
+};
+
+struct SC_SentinelCSpawn
+{
+    PacketHeader header;
+
+    uint32_t trapId;
+    uint32_t ownerPlayerId;
+    uint8_t ownerTeam;
+
+    float x;
+    float y;
+    float z;
+
+    float vx;
+    float vy;
+    float vz;
+
+    float hp;
+};
+
+struct CS_SentinelCAnchor
+{
+    PacketHeader header;
+
+    uint32_t trapId;
+
+    float x;
+    float y;
+    float z;
+
+    float nx;
+    float ny;
+    float nz;
+};
+
+struct SC_SentinelCAnchor
+{
+    PacketHeader header;
+
+    uint32_t trapId;
+
+    float x;
+    float y;
+    float z;
+
+    float nx;
+    float ny;
+    float nz;
+};
+
+struct CS_SentinelCTrigger
+{
+    PacketHeader header;
+
+    uint32_t trapId;
+
+    float x;
+    float y;
+    float z;
+
+    float radius;
+    float revealDuration;
+};
+
+struct SC_SentinelCTrigger
+{
+    PacketHeader header;
+
+    uint32_t trapId;
+    uint32_t ownerPlayerId;
+    uint8_t ownerTeam;
+
+    float x;
+    float y;
+    float z;
+
+    float radius;
+    float revealDuration;
+};
+
+struct CS_SentinelCHit
+{
+    PacketHeader header;
+
+    uint32_t trapId;
+    float damage;
+};
+
+struct SC_SentinelCDestroy
+{
+    PacketHeader header;
+
+    uint32_t trapId;
+};
+
+struct CS_SentinelQPlace
+{
+    PacketHeader header;
+
+    float x;
+    float y;
+    float z;
+};
+
+struct SC_SentinelQSpawn
+{
+    PacketHeader header;
+
+    uint32_t trapId;
+    uint32_t ownerPlayerId;
+    uint8_t ownerTeam;
+
+    float x;
+    float y;
+    float z;
+
+    float hp;
+    float detectionRadius;
+    float zoneRadius;
+};
+
+struct CS_SentinelQActivate
+{
+    PacketHeader header;
+
+    uint32_t trapId;
+};
+
+struct SC_SentinelQActivate
+{
+    PacketHeader header;
+
+    uint32_t trapId;
+    float duration;
+    float slowMultiplier;
+};
+
+struct CS_SentinelQHit
+{
+    PacketHeader header;
+
+    uint32_t trapId;
+};
+
+struct SC_SentinelQDestroy
+{
+    PacketHeader header;
+
+    uint32_t trapId;
+};
 #pragma pack(pop)

@@ -367,6 +367,118 @@ namespace
         return g_nextSentinelQTrapId++;
     }
 
+    constexpr float SENTINEL_E_MAX_HP = 100.f;
+    constexpr float SENTINEL_E_PLACE_RANGE = 10.f;
+    constexpr float SENTINEL_E_EFFECT_RADIUS = 8.f;
+    constexpr float SENTINEL_E_SLOW_DURATION = 4.f;
+    constexpr float SENTINEL_E_SLOW_MULTIPLIER = 0.5f;
+    constexpr float SENTINEL_E_STUN_DURATION = 3.f;
+    constexpr float SENTINEL_E_REARM_SECONDS = 1.f;
+    constexpr float SENTINEL_E_RECALL_COOLDOWN = 20.f;
+    constexpr float SENTINEL_E_DESTROY_COOLDOWN = 60.f;
+
+    constexpr uint8_t SENTINEL_E_REMOVE_DESTROYED = 1;
+    constexpr uint8_t SENTINEL_E_REMOVE_RECALLED = 2;
+    constexpr uint8_t SENTINEL_E_REMOVE_ROUND_CLEANUP = 3;
+
+    struct SentinelETrapRuntime
+    {
+        uint32_t trapId = 0;
+        uint32_t roomId = 0;
+        uint32_t ownerPlayerId = 0;
+        uint8_t ownerTeam = 0;
+
+        float x = 0.f;
+        float y = 0.f;
+        float z = 0.f;
+
+        float nx = 0.f;
+        float ny = 0.f;
+        float nz = 1.f;
+
+        float hp = SENTINEL_E_MAX_HP;
+        std::chrono::steady_clock::time_point lastActivated{};
+    };
+
+    std::mutex g_sentinelEMutex;
+    std::unordered_map<uint32_t, SentinelETrapRuntime> g_sentinelETraps;
+    std::unordered_map<
+        uint64_t,
+        std::chrono::steady_clock::time_point
+    > g_sentinelECooldowns;
+    uint32_t g_nextSentinelETrapId = 1;
+
+    uint64_t MakeSentinelECooldownKey(
+        uint32_t roomId,
+        uint32_t playerId)
+    {
+        return
+            (static_cast<uint64_t>(roomId) << 32) |
+            static_cast<uint64_t>(playerId);
+    }
+
+    constexpr float SENTINEL_X_CAST_RANGE = 20.f;
+    constexpr float SENTINEL_X_RADIUS = 7.f;
+    constexpr float SENTINEL_X_DURATION = 5.f;
+    constexpr float SENTINEL_X_PROTECTION_DURATION = 10.f;
+    constexpr float SENTINEL_X_SLOW_MULTIPLIER = 0.5f;
+    constexpr int SENTINEL_X_TICK_MILLISECONDS = 200;
+    constexpr int32_t SENTINEL_X_DAMAGE_PER_TICK = 10;
+
+    struct SentinelXRuntime
+    {
+        uint32_t ultimateId = 0;
+        uint32_t roomId = 0;
+        uint32_t ownerPlayerId = 0;
+        uint8_t ownerTeam = 0;
+
+        float x = 0.f;
+        float y = 0.f;
+        float z = 0.f;
+    };
+
+    std::mutex g_sentinelXMutex;
+    std::unordered_map<uint32_t, SentinelXRuntime> g_sentinelXUltimates;
+    std::unordered_map<
+        uint64_t,
+        std::chrono::steady_clock::time_point
+    > g_sentinelXProtectionEnds;
+    std::atomic<uint32_t> g_nextSentinelXUltimateId{ 1 };
+
+    uint64_t MakeSentinelXProtectionKey(
+        uint32_t roomId,
+        uint32_t ownerPlayerId)
+    {
+        return
+            (static_cast<uint64_t>(roomId) << 32) |
+            static_cast<uint64_t>(ownerPlayerId);
+    }
+
+    bool IsSentinelSkillProtected(
+        uint32_t roomId,
+        uint32_t ownerPlayerId)
+    {
+        std::lock_guard<std::mutex> lock(g_sentinelXMutex);
+
+        uint64_t key =
+            MakeSentinelXProtectionKey(
+                roomId,
+                ownerPlayerId
+            );
+        auto it = g_sentinelXProtectionEnds.find(key);
+
+        if (it == g_sentinelXProtectionEnds.end())
+            return false;
+
+        if (std::chrono::steady_clock::now() >= it->second)
+        {
+            g_sentinelXProtectionEnds.erase(it);
+            return false;
+        }
+
+        return true;
+    }
+
     struct StoreWeaponData
     {
         int weaponId = 0;
@@ -1760,6 +1872,151 @@ namespace
         }
     }
 
+    void BroadcastSentinelEDestroy(
+        uint32_t roomId,
+        uint32_t trapId,
+        uint8_t reason,
+        float cooldownSeconds)
+    {
+        SC_SentinelEDestroy out{};
+        out.header.size = sizeof(out);
+        out.header.type =
+            static_cast<uint16_t>(
+                PacketType::PKT_SC_SENTINEL_E_DESTROY
+            );
+        out.trapId = trapId;
+        out.reason = reason;
+        out.cooldownSeconds = cooldownSeconds;
+
+        BroadcastPacketToRoomInternal(roomId, &out);
+
+        std::cout
+            << "[SENTINEL E DESTROY BROADCAST] roomId=" << roomId
+            << " trapId=" << trapId
+            << " reason=" << static_cast<int>(reason)
+            << " cooldown=" << cooldownSeconds
+            << std::endl;
+    }
+
+    void ClearSentinelETrapsInRoom(uint32_t roomId)
+    {
+        std::vector<uint32_t> trapIds;
+
+        {
+            std::lock_guard<std::mutex> lock(g_sentinelEMutex);
+
+            for (auto it = g_sentinelETraps.begin();
+                it != g_sentinelETraps.end();)
+            {
+                if (it->second.roomId == roomId)
+                {
+                    trapIds.push_back(it->first);
+                    it = g_sentinelETraps.erase(it);
+                }
+                else
+                {
+                    ++it;
+                }
+            }
+
+            for (auto it = g_sentinelECooldowns.begin();
+                it != g_sentinelECooldowns.end();)
+            {
+                uint32_t cooldownRoomId =
+                    static_cast<uint32_t>(it->first >> 32);
+
+                if (cooldownRoomId == roomId)
+                    it = g_sentinelECooldowns.erase(it);
+                else
+                    ++it;
+            }
+        }
+
+        for (uint32_t trapId : trapIds)
+        {
+            BroadcastSentinelEDestroy(
+                roomId,
+                trapId,
+                SENTINEL_E_REMOVE_ROUND_CLEANUP,
+                0.f
+            );
+        }
+
+        if (!trapIds.empty())
+        {
+            std::cout
+                << "[SENTINEL E CLEAR ROOM] roomId=" << roomId
+                << " count=" << trapIds.size()
+                << std::endl;
+        }
+    }
+
+    void BroadcastSentinelXDestroy(
+        uint32_t roomId,
+        uint32_t ultimateId)
+    {
+        SC_SentinelXDestroy out{};
+        out.header.size = sizeof(out);
+        out.header.type =
+            static_cast<uint16_t>(
+                PacketType::PKT_SC_SENTINEL_X_DESTROY
+            );
+        out.ultimateId = ultimateId;
+
+        BroadcastPacketToRoomInternal(roomId, &out);
+
+        std::cout
+            << "[SENTINEL X DESTROY BROADCAST] roomId=" << roomId
+            << " ultimateId=" << ultimateId
+            << std::endl;
+    }
+
+    void ClearSentinelXUltimatesInRoom(uint32_t roomId)
+    {
+        std::vector<uint32_t> ultimateIds;
+
+        {
+            std::lock_guard<std::mutex> lock(g_sentinelXMutex);
+
+            for (auto it = g_sentinelXUltimates.begin();
+                it != g_sentinelXUltimates.end();)
+            {
+                if (it->second.roomId == roomId)
+                {
+                    ultimateIds.push_back(it->first);
+                    it = g_sentinelXUltimates.erase(it);
+                }
+                else
+                {
+                    ++it;
+                }
+            }
+
+            for (auto it = g_sentinelXProtectionEnds.begin();
+                it != g_sentinelXProtectionEnds.end();)
+            {
+                uint32_t protectionRoomId =
+                    static_cast<uint32_t>(it->first >> 32);
+
+                if (protectionRoomId == roomId)
+                    it = g_sentinelXProtectionEnds.erase(it);
+                else
+                    ++it;
+            }
+        }
+
+        for (uint32_t ultimateId : ultimateIds)
+            BroadcastSentinelXDestroy(roomId, ultimateId);
+
+        if (!ultimateIds.empty())
+        {
+            std::cout
+                << "[SENTINEL X CLEAR ROOM] roomId=" << roomId
+                << " count=" << ultimateIds.size()
+                << std::endl;
+        }
+    }
+
     void BroadcastScannerSpawn(
         uint32_t roomId,
         uint32_t scannerId,
@@ -2544,6 +2801,8 @@ namespace
         BroadcastPacketToRoomInternal(roomId, &out);
         ClearSentinelCTrapsInRoom(roomId);
         ClearSentinelQTrapsInRoom(roomId);
+        ClearSentinelETrapsInRoom(roomId);
+        ClearSentinelXUltimatesInRoom(roomId);
 
         std::cout << "[ROUND RESULT] roomId="
             << roomId
@@ -3479,6 +3738,8 @@ namespace
         ClearControllerUltimatesInRoom(roomId);
         ClearSentinelCTrapsInRoom(roomId);
         ClearSentinelQTrapsInRoom(roomId);
+        ClearSentinelETrapsInRoom(roomId);
+        ClearSentinelXUltimatesInRoom(roomId);
 
         ClearDronesInRoom(roomId, 2);
         ClearDroppedWeaponsInRoom(roomId);
@@ -7702,6 +7963,31 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         // 이 시점부터 완료 또는 실패 모두 장전 상태를 종료한다.
         weaponState->isReloading = false;
 
+        if (IsBuyPhase(roomId) &&
+            weaponData->weaponType != ServerWeaponType::Knife)
+        {
+            weaponState->magAmmo = weaponData->magSize;
+            weaponState->reserveAmmo = weaponData->maxReserveAmmo;
+
+            SendAmmoUpdate(session, *weaponState);
+
+            BroadcastReloadVisualInternal(
+                roomId,
+                session->GetPlayerId(),
+                weaponId,
+                false
+            );
+
+            std::cout << "[BUY PHASE RELOAD REFILL] playerId="
+                << session->GetPlayerId()
+                << " weaponId=" << weaponId
+                << " ammo=" << weaponState->magAmmo
+                << "/" << weaponState->reserveAmmo
+                << std::endl;
+
+            break;
+        }
+
         if (weaponData->weaponType == ServerWeaponType::Knife ||
             weaponState->magAmmo >= weaponData->magSize ||
             weaponState->reserveAmmo <= 0)
@@ -9117,10 +9403,28 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             const ServerWeaponData* weaponData =
                 ServerWeaponTable::Find(pkt->weaponId);
 
-            if (weaponData == nullptr ||
-                weaponData->weaponType == ServerWeaponType::Knife ||
-                weaponState->magAmmo >= weaponData->magSize ||
-                weaponState->reserveAmmo <= 0)
+            bool isBuyPhase = IsBuyPhase(roomId);
+            bool cannotReload =
+                weaponData == nullptr ||
+                weaponData->weaponType == ServerWeaponType::Knife;
+
+            if (!cannotReload)
+            {
+                if (isBuyPhase)
+                {
+                    cannotReload =
+                        weaponState->magAmmo >= weaponData->magSize &&
+                        weaponState->reserveAmmo >= weaponData->maxReserveAmmo;
+                }
+                else
+                {
+                    cannotReload =
+                        weaponState->magAmmo >= weaponData->magSize ||
+                        weaponState->reserveAmmo <= 0;
+                }
+            }
+
+            if (cannotReload)
             {
                 weaponState->isReloading = false;
 
@@ -12673,6 +12977,18 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             if (static_cast<uint8_t>(attackerMember.team) == trap.ownerTeam)
                 break;
 
+            if (IsSentinelSkillProtected(
+                roomId,
+                trap.ownerPlayerId))
+            {
+                std::cout
+                    << "[SENTINEL C HIT BLOCK] protected by X trapId="
+                    << pkt->trapId
+                    << " owner=" << trap.ownerPlayerId
+                    << std::endl;
+                break;
+            }
+
             trap.hp -= static_cast<float>(weaponData->damage);
 
             std::cout << "[SENTINEL C HIT] trapId="
@@ -12973,6 +13289,18 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
                 break;
             }
 
+            if (IsSentinelSkillProtected(
+                roomId,
+                trap.ownerPlayerId))
+            {
+                std::cout
+                    << "[SENTINEL Q HIT BLOCK] protected by X trapId="
+                    << pkt->trapId
+                    << " owner=" << trap.ownerPlayerId
+                    << std::endl;
+                break;
+            }
+
             trap.hp -= static_cast<float>(weaponData->damage);
 
             std::cout
@@ -12992,6 +13320,806 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
         if (destroyed)
             BroadcastSentinelQDestroy(roomId, pkt->trapId);
+
+        break;
+    }
+
+    case PacketType::PKT_CS_SENTINEL_E_PLACE:
+    {
+        auto* pkt = reinterpret_cast<CS_SentinelEPlace*>(header);
+
+        if (header->size != sizeof(CS_SentinelEPlace))
+            break;
+
+        if (session->GetState() != SessionState::IN_GAME ||
+            session->IsDead())
+        {
+            break;
+        }
+
+        if (!std::isfinite(pkt->x) ||
+            !std::isfinite(pkt->y) ||
+            !std::isfinite(pkt->z) ||
+            !std::isfinite(pkt->nx) ||
+            !std::isfinite(pkt->ny) ||
+            !std::isfinite(pkt->nz))
+        {
+            break;
+        }
+
+        uint32_t roomId = session->GetCurrentRoomId();
+
+        if (roomId == 0)
+            break;
+
+        RoomMember ownerMember{};
+
+        if (!RoomManager::Instance().GetMember(
+            roomId,
+            session->GetPlayerId(),
+            ownerMember))
+        {
+            break;
+        }
+
+        Vector3 ownerPosition = session->GetPosition();
+        float dx = pkt->x - ownerPosition.x;
+        float dy = pkt->y - ownerPosition.y;
+        float dz = pkt->z - ownerPosition.z;
+        float placeDistanceSquared =
+            dx * dx + dy * dy + dz * dz;
+
+        if (placeDistanceSquared >
+            (SENTINEL_E_PLACE_RANGE + 0.75f) *
+            (SENTINEL_E_PLACE_RANGE + 0.75f))
+        {
+            std::cout
+                << "[SENTINEL E PLACE BLOCK] out of range playerId="
+                << session->GetPlayerId()
+                << std::endl;
+            break;
+        }
+
+        float normalLength = std::sqrt(
+            pkt->nx * pkt->nx +
+            pkt->ny * pkt->ny +
+            pkt->nz * pkt->nz
+        );
+
+        if (normalLength < 0.5f)
+            break;
+
+        float nx = pkt->nx / normalLength;
+        float ny = pkt->ny / normalLength;
+        float nz = pkt->nz / normalLength;
+
+        if (std::abs(ny) > 0.6f)
+        {
+            std::cout
+                << "[SENTINEL E PLACE BLOCK] not a wall playerId="
+                << session->GetPlayerId()
+                << std::endl;
+            break;
+        }
+
+        uint32_t trapId = 0;
+        uint8_t ownerTeam =
+            static_cast<uint8_t>(ownerMember.team);
+        uint64_t cooldownKey =
+            MakeSentinelECooldownKey(
+                roomId,
+                session->GetPlayerId()
+            );
+        auto now = std::chrono::steady_clock::now();
+
+        {
+            std::lock_guard<std::mutex> lock(g_sentinelEMutex);
+
+            bool alreadyPlaced = false;
+
+            for (const auto& pair : g_sentinelETraps)
+            {
+                const SentinelETrapRuntime& existing =
+                    pair.second;
+
+                if (existing.roomId == roomId &&
+                    existing.ownerPlayerId ==
+                    session->GetPlayerId())
+                {
+                    alreadyPlaced = true;
+                    break;
+                }
+            }
+
+            if (alreadyPlaced)
+                break;
+
+            auto cooldownIt =
+                g_sentinelECooldowns.find(cooldownKey);
+
+            if (cooldownIt != g_sentinelECooldowns.end())
+            {
+                if (now < cooldownIt->second)
+                    break;
+
+                g_sentinelECooldowns.erase(cooldownIt);
+            }
+
+            trapId = g_nextSentinelETrapId++;
+
+            SentinelETrapRuntime trap{};
+            trap.trapId = trapId;
+            trap.roomId = roomId;
+            trap.ownerPlayerId = session->GetPlayerId();
+            trap.ownerTeam = ownerTeam;
+            trap.x = pkt->x;
+            trap.y = pkt->y;
+            trap.z = pkt->z;
+            trap.nx = nx;
+            trap.ny = ny;
+            trap.nz = nz;
+            trap.hp = SENTINEL_E_MAX_HP;
+
+            g_sentinelETraps[trapId] = trap;
+        }
+
+        if (trapId == 0)
+            break;
+
+        SC_SentinelESpawn out{};
+        out.header.size = sizeof(out);
+        out.header.type =
+            static_cast<uint16_t>(
+                PacketType::PKT_SC_SENTINEL_E_SPAWN
+            );
+        out.trapId = trapId;
+        out.ownerPlayerId = session->GetPlayerId();
+        out.ownerTeam = ownerTeam;
+        out.x = pkt->x;
+        out.y = pkt->y;
+        out.z = pkt->z;
+        out.nx = nx;
+        out.ny = ny;
+        out.nz = nz;
+        out.hp = SENTINEL_E_MAX_HP;
+        out.radius = SENTINEL_E_EFFECT_RADIUS;
+
+        BroadcastPacketToRoomInternal(roomId, &out);
+
+        std::cout
+            << "[SENTINEL E PLACE] trapId=" << trapId
+            << " owner=" << session->GetPlayerId()
+            << " roomId=" << roomId
+            << " pos=(" << pkt->x << ", "
+            << pkt->y << ", " << pkt->z << ")"
+            << std::endl;
+
+        break;
+    }
+
+    case PacketType::PKT_CS_SENTINEL_E_ACTIVATE:
+    {
+        auto* pkt =
+            reinterpret_cast<CS_SentinelEActivate*>(header);
+
+        if (header->size != sizeof(CS_SentinelEActivate))
+            break;
+
+        if (session->GetState() != SessionState::IN_GAME ||
+            session->IsDead())
+        {
+            break;
+        }
+
+        uint32_t roomId = session->GetCurrentRoomId();
+
+        if (roomId == 0)
+            break;
+
+        SentinelETrapRuntime trapCopy{};
+        auto now = std::chrono::steady_clock::now();
+
+        {
+            std::lock_guard<std::mutex> lock(g_sentinelEMutex);
+
+            auto it = g_sentinelETraps.find(pkt->trapId);
+
+            if (it == g_sentinelETraps.end())
+                break;
+
+            const SentinelETrapRuntime& trap = it->second;
+
+            if (trap.roomId != roomId ||
+                trap.ownerPlayerId != session->GetPlayerId())
+            {
+                break;
+            }
+
+            if (trap.lastActivated !=
+                std::chrono::steady_clock::time_point{})
+            {
+                float elapsed =
+                    std::chrono::duration<float>(
+                        now - trap.lastActivated
+                    ).count();
+
+                if (elapsed < SENTINEL_E_REARM_SECONDS)
+                    break;
+            }
+
+            trapCopy = trap;
+        }
+
+        Room room{};
+
+        if (!RoomManager::Instance().GetRoom(roomId, room))
+            break;
+
+        bool enemyInRange = false;
+        float radiusSquared =
+            SENTINEL_E_EFFECT_RADIUS *
+            SENTINEL_E_EFFECT_RADIUS;
+
+        for (const RoomMember& member : room.members)
+        {
+            if (member.playerId == trapCopy.ownerPlayerId ||
+                static_cast<uint8_t>(member.team) ==
+                trapCopy.ownerTeam ||
+                member.team == RoomTeam::OBSERVER)
+            {
+                continue;
+            }
+
+            Session* target =
+                SessionManager::Instance().Find(member.playerId);
+
+            if (target == nullptr ||
+                target->GetState() != SessionState::IN_GAME ||
+                target->IsDead())
+            {
+                continue;
+            }
+
+            Vector3 targetPosition = target->GetPosition();
+            float targetDx = targetPosition.x - trapCopy.x;
+            float targetDy = targetPosition.y - trapCopy.y;
+            float targetDz = targetPosition.z - trapCopy.z;
+            float distanceSquared =
+                targetDx * targetDx +
+                targetDy * targetDy +
+                targetDz * targetDz;
+
+            if (distanceSquared <= radiusSquared)
+            {
+                enemyInRange = true;
+                break;
+            }
+        }
+
+        if (!enemyInRange)
+        {
+            std::cout
+                << "[SENTINEL E ACTIVATE BLOCK] no enemy trapId="
+                << pkt->trapId
+                << std::endl;
+            break;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(g_sentinelEMutex);
+
+            auto it = g_sentinelETraps.find(pkt->trapId);
+
+            if (it == g_sentinelETraps.end() ||
+                it->second.roomId != roomId ||
+                it->second.ownerPlayerId !=
+                session->GetPlayerId())
+            {
+                break;
+            }
+
+            it->second.lastActivated = now;
+        }
+
+        SC_SentinelEActivate out{};
+        out.header.size = sizeof(out);
+        out.header.type =
+            static_cast<uint16_t>(
+                PacketType::PKT_SC_SENTINEL_E_ACTIVATE
+            );
+        out.trapId = pkt->trapId;
+        out.radius = SENTINEL_E_EFFECT_RADIUS;
+        out.slowDuration = SENTINEL_E_SLOW_DURATION;
+        out.slowMultiplier = SENTINEL_E_SLOW_MULTIPLIER;
+        out.stunDuration = SENTINEL_E_STUN_DURATION;
+
+        BroadcastPacketToRoomInternal(roomId, &out);
+
+        std::cout
+            << "[SENTINEL E ACTIVATE] trapId=" << pkt->trapId
+            << " owner=" << session->GetPlayerId()
+            << std::endl;
+
+        break;
+    }
+
+    case PacketType::PKT_CS_SENTINEL_E_HIT:
+    {
+        auto* pkt = reinterpret_cast<CS_SentinelEHit*>(header);
+
+        if (header->size != sizeof(CS_SentinelEHit))
+            break;
+
+        if (session->GetState() != SessionState::IN_GAME ||
+            session->IsDead())
+        {
+            break;
+        }
+
+        uint32_t roomId = session->GetCurrentRoomId();
+
+        if (roomId == 0)
+            break;
+
+        int weaponId = session->GetCurrentWeaponId();
+
+        if (!session->HasWeapon(weaponId))
+            break;
+
+        const ServerWeaponData* weaponData =
+            ServerWeaponTable::Find(weaponId);
+
+        if (weaponData == nullptr)
+            break;
+
+        uint32_t attackerPlayerId = session->GetPlayerId();
+        RoomMember attackerMember{};
+
+        if (!RoomManager::Instance().GetMember(
+            roomId,
+            attackerPlayerId,
+            attackerMember))
+        {
+            break;
+        }
+
+        bool destroyed = false;
+        uint32_t ownerPlayerId = 0;
+
+        {
+            std::lock_guard<std::mutex> lock(g_sentinelEMutex);
+
+            auto it = g_sentinelETraps.find(pkt->trapId);
+
+            if (it == g_sentinelETraps.end())
+                break;
+
+            SentinelETrapRuntime& trap = it->second;
+
+            if (trap.roomId != roomId ||
+                trap.ownerPlayerId == attackerPlayerId ||
+                static_cast<uint8_t>(attackerMember.team) ==
+                trap.ownerTeam)
+            {
+                break;
+            }
+
+            if (IsSentinelSkillProtected(
+                roomId,
+                trap.ownerPlayerId))
+            {
+                std::cout
+                    << "[SENTINEL E HIT BLOCK] protected by X trapId="
+                    << pkt->trapId
+                    << " owner=" << trap.ownerPlayerId
+                    << std::endl;
+                break;
+            }
+
+            trap.hp -= static_cast<float>(weaponData->damage);
+
+            std::cout
+                << "[SENTINEL E HIT] trapId=" << pkt->trapId
+                << " attacker=" << attackerPlayerId
+                << " weaponId=" << weaponId
+                << " damage=" << weaponData->damage
+                << " hp=" << trap.hp
+                << std::endl;
+
+            if (trap.hp <= 0.f)
+            {
+                ownerPlayerId = trap.ownerPlayerId;
+                g_sentinelETraps.erase(it);
+
+                uint64_t cooldownKey =
+                    MakeSentinelECooldownKey(
+                        roomId,
+                        ownerPlayerId
+                    );
+
+                g_sentinelECooldowns[cooldownKey] =
+                    std::chrono::steady_clock::now() +
+                    std::chrono::milliseconds(
+                        static_cast<int>(
+                            SENTINEL_E_DESTROY_COOLDOWN *
+                            1000.f
+                        )
+                    );
+
+                destroyed = true;
+            }
+        }
+
+        if (destroyed)
+        {
+            BroadcastSentinelEDestroy(
+                roomId,
+                pkt->trapId,
+                SENTINEL_E_REMOVE_DESTROYED,
+                SENTINEL_E_DESTROY_COOLDOWN
+            );
+        }
+
+        break;
+    }
+
+    case PacketType::PKT_CS_SENTINEL_E_RECALL:
+    {
+        auto* pkt =
+            reinterpret_cast<CS_SentinelERecall*>(header);
+
+        if (header->size != sizeof(CS_SentinelERecall))
+            break;
+
+        if (session->GetState() != SessionState::IN_GAME ||
+            session->IsDead())
+        {
+            break;
+        }
+
+        uint32_t roomId = session->GetCurrentRoomId();
+
+        if (roomId == 0)
+            break;
+
+        bool recalled = false;
+
+        {
+            std::lock_guard<std::mutex> lock(g_sentinelEMutex);
+
+            auto it = g_sentinelETraps.find(pkt->trapId);
+
+            if (it == g_sentinelETraps.end())
+                break;
+
+            const SentinelETrapRuntime& trap = it->second;
+
+            if (trap.roomId != roomId ||
+                trap.ownerPlayerId != session->GetPlayerId())
+            {
+                break;
+            }
+
+            g_sentinelETraps.erase(it);
+
+            uint64_t cooldownKey =
+                MakeSentinelECooldownKey(
+                    roomId,
+                    session->GetPlayerId()
+                );
+
+            g_sentinelECooldowns[cooldownKey] =
+                std::chrono::steady_clock::now() +
+                std::chrono::milliseconds(
+                    static_cast<int>(
+                        SENTINEL_E_RECALL_COOLDOWN *
+                        1000.f
+                    )
+                );
+
+            recalled = true;
+        }
+
+        if (recalled)
+        {
+            BroadcastSentinelEDestroy(
+                roomId,
+                pkt->trapId,
+                SENTINEL_E_REMOVE_RECALLED,
+                SENTINEL_E_RECALL_COOLDOWN
+            );
+        }
+
+        break;
+    }
+
+    case PacketType::PKT_CS_SENTINEL_X_CAST:
+    {
+        auto* pkt =
+            reinterpret_cast<CS_SentinelXCast*>(header);
+
+        if (header->size != sizeof(CS_SentinelXCast))
+            break;
+
+        if (session->GetState() != SessionState::IN_GAME ||
+            session->IsDead() ||
+            IsPlayerStunned(session->GetPlayerId()) ||
+            IsDroneBlockedAction(session, "SENTINEL_X_CAST"))
+        {
+            break;
+        }
+
+        if (!std::isfinite(pkt->x) ||
+            !std::isfinite(pkt->y) ||
+            !std::isfinite(pkt->z))
+        {
+            break;
+        }
+
+        uint32_t roomId = session->GetCurrentRoomId();
+
+        if (roomId == 0)
+            break;
+
+        RoomMember ownerMember{};
+
+        if (!RoomManager::Instance().GetMember(
+            roomId,
+            session->GetPlayerId(),
+            ownerMember))
+        {
+            break;
+        }
+
+        if (ownerMember.team == RoomTeam::OBSERVER)
+            break;
+
+        Vector3 ownerPosition = session->GetPosition();
+        float dx = pkt->x - ownerPosition.x;
+        float dy = pkt->y - ownerPosition.y;
+        float dz = pkt->z - ownerPosition.z;
+        float distanceSquared = dx * dx + dy * dy + dz * dz;
+        float allowedRange = SENTINEL_X_CAST_RANGE + 0.75f;
+
+        if (distanceSquared > allowedRange * allowedRange)
+        {
+            std::cout
+                << "[SENTINEL X CAST BLOCK] out of range playerId="
+                << session->GetPlayerId()
+                << std::endl;
+            break;
+        }
+
+        uint32_t ultimateId =
+            g_nextSentinelXUltimateId.fetch_add(1);
+        uint8_t ownerTeam =
+            static_cast<uint8_t>(ownerMember.team);
+        std::vector<uint32_t> replacedUltimateIds;
+        auto now = std::chrono::steady_clock::now();
+        auto protectionEnd =
+            now +
+            std::chrono::milliseconds(
+                static_cast<int>(
+                    SENTINEL_X_PROTECTION_DURATION * 1000.f
+                )
+            );
+
+        {
+            std::lock_guard<std::mutex> lock(g_sentinelXMutex);
+
+            for (auto it = g_sentinelXUltimates.begin();
+                it != g_sentinelXUltimates.end();)
+            {
+                if (it->second.roomId == roomId &&
+                    it->second.ownerPlayerId ==
+                    session->GetPlayerId())
+                {
+                    replacedUltimateIds.push_back(it->first);
+                    it = g_sentinelXUltimates.erase(it);
+                }
+                else
+                {
+                    ++it;
+                }
+            }
+
+            SentinelXRuntime state{};
+            state.ultimateId = ultimateId;
+            state.roomId = roomId;
+            state.ownerPlayerId = session->GetPlayerId();
+            state.ownerTeam = ownerTeam;
+            state.x = pkt->x;
+            state.y = pkt->y;
+            state.z = pkt->z;
+
+            g_sentinelXUltimates[ultimateId] = state;
+
+            uint64_t protectionKey =
+                MakeSentinelXProtectionKey(
+                    roomId,
+                    session->GetPlayerId()
+                );
+            auto protectionIt =
+                g_sentinelXProtectionEnds.find(protectionKey);
+
+            if (protectionIt ==
+                    g_sentinelXProtectionEnds.end() ||
+                protectionIt->second < protectionEnd)
+            {
+                g_sentinelXProtectionEnds[protectionKey] =
+                    protectionEnd;
+            }
+        }
+
+        for (uint32_t replacedId : replacedUltimateIds)
+            BroadcastSentinelXDestroy(roomId, replacedId);
+
+        SC_SentinelXSpawn out{};
+        out.header.size = sizeof(out);
+        out.header.type =
+            static_cast<uint16_t>(
+                PacketType::PKT_SC_SENTINEL_X_SPAWN
+            );
+        out.ultimateId = ultimateId;
+        out.ownerPlayerId = session->GetPlayerId();
+        out.ownerTeam = ownerTeam;
+        out.x = pkt->x;
+        out.y = pkt->y;
+        out.z = pkt->z;
+        out.radius = SENTINEL_X_RADIUS;
+        out.duration = SENTINEL_X_DURATION;
+        out.slowMultiplier = SENTINEL_X_SLOW_MULTIPLIER;
+        out.protectionDuration =
+            SENTINEL_X_PROTECTION_DURATION;
+
+        BroadcastPacketToRoomInternal(roomId, &out);
+
+        uint32_t ownerPlayerId = session->GetPlayerId();
+        float areaX = pkt->x;
+        float areaY = pkt->y;
+        float areaZ = pkt->z;
+
+        std::thread(
+            [roomId,
+             ultimateId,
+             ownerPlayerId,
+             ownerTeam,
+             areaX,
+             areaY,
+             areaZ]()
+            {
+                constexpr int tickCount =
+                    static_cast<int>(
+                        SENTINEL_X_DURATION * 1000.f /
+                        SENTINEL_X_TICK_MILLISECONDS
+                    );
+
+                for (int tick = 0; tick < tickCount; ++tick)
+                {
+                    std::this_thread::sleep_for(
+                        std::chrono::milliseconds(
+                            SENTINEL_X_TICK_MILLISECONDS
+                        )
+                    );
+
+                    {
+                        std::lock_guard<std::mutex> lock(
+                            g_sentinelXMutex
+                        );
+
+                        auto it =
+                            g_sentinelXUltimates.find(ultimateId);
+
+                        if (it == g_sentinelXUltimates.end() ||
+                            it->second.roomId != roomId)
+                        {
+                            return;
+                        }
+                    }
+
+                    Room room{};
+
+                    if (!RoomManager::Instance().GetRoom(roomId, room))
+                        continue;
+
+                    float radiusSquared =
+                        SENTINEL_X_RADIUS * SENTINEL_X_RADIUS;
+
+                    for (const RoomMember& member : room.members)
+                    {
+                        if (member.playerId == ownerPlayerId ||
+                            member.team == RoomTeam::OBSERVER ||
+                            static_cast<uint8_t>(member.team) ==
+                            ownerTeam)
+                        {
+                            continue;
+                        }
+
+                        Session* target =
+                            SessionManager::Instance().Find(
+                                member.playerId
+                            );
+
+                        if (target == nullptr ||
+                            target->GetState() !=
+                            SessionState::IN_GAME ||
+                            target->IsDead())
+                        {
+                            continue;
+                        }
+
+                        Vector3 targetPosition =
+                            target->GetPosition();
+                        float targetDx =
+                            targetPosition.x - areaX;
+                        float targetDy =
+                            targetPosition.y - areaY;
+                        float targetDz =
+                            targetPosition.z - areaZ;
+                        float targetDistanceSquared =
+                            targetDx * targetDx +
+                            targetDy * targetDy +
+                            targetDz * targetDz;
+
+                        if (targetDistanceSquared > radiusSquared)
+                            continue;
+
+                        target->SetLastDamager(ownerPlayerId);
+                        target->AddAssistDamageRecord(
+                            ownerPlayerId,
+                            SENTINEL_X_DAMAGE_PER_TICK
+                        );
+                        target->Damage(
+                            SENTINEL_X_DAMAGE_PER_TICK
+                        );
+
+                        SC_HPUpdate hpPacket{};
+                        FillHPUpdatePacket(hpPacket, target);
+                        BroadcastPacketToRoomInternal(
+                            roomId,
+                            &hpPacket
+                        );
+
+                        if (target->IsDead())
+                            PacketDispatcher::HandleDeath(target);
+                    }
+                }
+
+                bool shouldDestroy = false;
+
+                {
+                    std::lock_guard<std::mutex> lock(
+                        g_sentinelXMutex
+                    );
+
+                    auto it =
+                        g_sentinelXUltimates.find(ultimateId);
+
+                    if (it != g_sentinelXUltimates.end() &&
+                        it->second.roomId == roomId)
+                    {
+                        g_sentinelXUltimates.erase(it);
+                        shouldDestroy = true;
+                    }
+                }
+
+                if (shouldDestroy)
+                {
+                    BroadcastSentinelXDestroy(
+                        roomId,
+                        ultimateId
+                    );
+                }
+            }
+        ).detach();
+
+        std::cout
+            << "[SENTINEL X CAST] ultimateId=" << ultimateId
+            << " owner=" << session->GetPlayerId()
+            << " roomId=" << roomId
+            << " pos=(" << pkt->x << ", "
+            << pkt->y << ", " << pkt->z << ")"
+            << std::endl;
 
         break;
     }

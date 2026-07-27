@@ -1962,4 +1962,112 @@ struct SC_SentinelQDestroy
 
     uint32_t trapId;
 };
+
+struct CS_SentinelEPlace
+{
+    PacketHeader header;
+
+    float x;
+    float y;
+    float z;
+
+    float nx;
+    float ny;
+    float nz;
+};
+
+struct SC_SentinelESpawn
+{
+    PacketHeader header;
+
+    uint32_t trapId;
+    uint32_t ownerPlayerId;
+    uint8_t ownerTeam;
+
+    float x;
+    float y;
+    float z;
+
+    float nx;
+    float ny;
+    float nz;
+
+    float hp;
+    float radius;
+};
+
+struct CS_SentinelEActivate
+{
+    PacketHeader header;
+
+    uint32_t trapId;
+};
+
+struct SC_SentinelEActivate
+{
+    PacketHeader header;
+
+    uint32_t trapId;
+    float radius;
+    float slowDuration;
+    float slowMultiplier;
+    float stunDuration;
+};
+
+struct CS_SentinelEHit
+{
+    PacketHeader header;
+
+    uint32_t trapId;
+};
+
+struct CS_SentinelERecall
+{
+    PacketHeader header;
+
+    uint32_t trapId;
+};
+
+struct SC_SentinelEDestroy
+{
+    PacketHeader header;
+
+    uint32_t trapId;
+    uint8_t reason;
+    float cooldownSeconds;
+};
+
+struct CS_SentinelXCast
+{
+    PacketHeader header;
+
+    float x;
+    float y;
+    float z;
+};
+
+struct SC_SentinelXSpawn
+{
+    PacketHeader header;
+
+    uint32_t ultimateId;
+    uint32_t ownerPlayerId;
+    uint8_t ownerTeam;
+
+    float x;
+    float y;
+    float z;
+
+    float radius;
+    float duration;
+    float slowMultiplier;
+    float protectionDuration;
+};
+
+struct SC_SentinelXDestroy
+{
+    PacketHeader header;
+
+    uint32_t ultimateId;
+};
 #pragma pack(pop)

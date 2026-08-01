@@ -759,6 +759,9 @@ struct RoundResetMemberInfo
     int knifeWeaponId;
     int knifeMagAmmo;
     int knifeReserveAmmo;
+
+    uint8_t purchasedSkillMask;
+    uint8_t usedSkillMask;
 };
 
 struct SC_RoundReset
@@ -1039,7 +1042,8 @@ struct SC_WeaponPickupNotify
 enum class StoreItemType : uint8_t
 {
     WEAPON = 0,
-    ARMOR = 1
+    ARMOR = 1,
+    SKILL = 2
 };
 
 enum class StoreBuyResult : uint8_t
@@ -1079,6 +1083,17 @@ struct SC_StoreBuyResult
 
     int32_t barrier;
     int32_t maxBarrier;
+
+    uint8_t purchasedSkillMask;
+    uint8_t usedSkillMask;
+};
+
+struct SC_SkillState
+{
+    PacketHeader header;
+
+    uint8_t purchasedSkillMask;
+    uint8_t usedSkillMask;
 };
 
 struct CS_KnifeAttack

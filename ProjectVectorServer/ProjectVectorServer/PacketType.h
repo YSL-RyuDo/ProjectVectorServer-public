@@ -144,6 +144,7 @@ enum class PacketType : uint16_t
 
     PKT_CS_IN_GAME_CHAT = 166,
     PKT_SC_IN_GAME_CHAT = 167,
+    PKT_SC_SKILL_STATE = 168,
 
     PKT_CS_DRONE_DEPLOY = 170,
     PKT_CS_DRONE_STATE = 171,

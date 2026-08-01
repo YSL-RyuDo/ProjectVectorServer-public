@@ -531,7 +531,74 @@ namespace
         { 0, { 0, 500,  50 } },  // 경량 베리어
         { 1, { 1, 1000, 100 } }  // 중량 베리어    
     };
+    std::once_flag g_skillPriceLoadOnce;
+    std::unordered_map<int, int> g_skillPrices;
 
+    constexpr const char* SKILL_PRICE_CSV_PATH = "SkillPriceTable.csv";
+
+    void CreateDefaultSkillPriceCsvIfMissing()
+    {
+        std::ifstream check(SKILL_PRICE_CSV_PATH);
+        if (check.good())
+            return;
+
+        std::ofstream out(SKILL_PRICE_CSV_PATH);
+        out << "slot,price\n";
+        out << "C,300\n";
+        out << "Q,400\n";
+        out << "E,400\n";
+        out << "X,700\n";
+    }
+
+    void LoadSkillPriceTable()
+    {
+        CreateDefaultSkillPriceCsvIfMissing();
+
+        std::ifstream file(SKILL_PRICE_CSV_PATH);
+        if (!file.is_open())
+            return;
+
+        std::string line;
+        std::getline(file, line);
+
+        while (std::getline(file, line))
+        {
+            if (!line.empty() && line.back() == '\r')
+                line.pop_back();
+
+            std::stringstream ss(line);
+            std::string slotText;
+            std::string priceText;
+            std::getline(ss, slotText, ',');
+            std::getline(ss, priceText, ',');
+
+            if (slotText.empty() || priceText.empty())
+                continue;
+
+            int slot = -1;
+            switch (slotText[0])
+            {
+            case 'C': slot = 0; break;
+            case 'Q': slot = 1; break;
+            case 'E': slot = 2; break;
+            case 'X': slot = 3; break;
+            default: break;
+            }
+
+            if (slot < 0)
+                continue;
+
+            g_skillPrices[slot] = std::max(0, std::stoi(priceText));
+        }
+    }
+
+    int GetSkillPrice(int slot)
+    {
+        std::call_once(g_skillPriceLoadOnce, LoadSkillPriceTable);
+
+        auto it = g_skillPrices.find(slot);
+        return it != g_skillPrices.end() ? it->second : -1;
+    }
     std::once_flag g_creditRewardLoadOnce;
 
     constexpr const char* CREDIT_REWARD_CSV_PATH = "CreditRewardTable.csv";
@@ -1632,6 +1699,7 @@ namespace
 
             playerSession->ClearLastDamager();
             playerSession->ClearAssistDamageRecords();
+            playerSession->ResetSkills();
             playerSession->InitRoundState();
             playerSession->SetState(SessionState::IN_GAME);
         }
@@ -3836,6 +3904,11 @@ namespace
                 playerSession->ResetRoundStateKeepInventory();
             }
 
+            if (forceDefaultInventoryReset)
+                playerSession->ResetSkills();
+            else
+                playerSession->PrepareSkillsForNextRound();
+
             playerSession->ClearLastDamager();
             playerSession->ClearAssistDamageRecords();
 
@@ -3874,6 +3947,8 @@ namespace
                 info.reserveAmmo = 0;
             }
             FillRoundResetWeaponSlots(info, playerSession);
+            info.purchasedSkillMask = playerSession->GetPurchasedSkillMask();
+            info.usedSkillMask = playerSession->GetUsedSkillMask();
             count++;
         }
 
@@ -5208,10 +5283,25 @@ namespace
 
         out.barrier = session->GetBarrier();
         out.maxBarrier = session->GetMaxBarrier();
+        out.purchasedSkillMask = session->GetPurchasedSkillMask();
+        out.usedSkillMask = session->GetUsedSkillMask();
 
         session->Send(&out);
     }
+    void SendSkillState(Session* session)
+    {
+        if (session == nullptr)
+            return;
 
+        SC_SkillState out{};
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(
+            PacketType::PKT_SC_SKILL_STATE
+        );
+        out.purchasedSkillMask = session->GetPurchasedSkillMask();
+        out.usedSkillMask = session->GetUsedSkillMask();
+        session->Send(&out);
+    }
     struct ServerDroneState
     {
         uint32_t droneId = 0;
@@ -6013,6 +6103,78 @@ namespace
 
 }
 
+namespace
+{
+    bool TryGetConsumingSkillSlot(
+        PacketType packetType,
+        PlayerSkillSlot& outSlot)
+    {
+        switch (packetType)
+        {
+        case PacketType::PKT_CS_SCANNER_THROW:
+        case PacketType::PKT_CS_ENTRY_DASH_CAST:
+        case PacketType::PKT_CS_CONTROLLER_DECOY_THROW:
+        case PacketType::PKT_CS_SENTINEL_C_THROW:
+            outSlot = PlayerSkillSlot::C;
+            return true;
+
+        case PacketType::PKT_CS_DRONE_DEPLOY:
+        case PacketType::PKT_CS_ENTRY_SMOKE_THROW:
+        case PacketType::PKT_CS_CONTROLLER_SWAMP_THROW:
+        case PacketType::PKT_CS_SENTINEL_Q_PLACE:
+            outSlot = PlayerSkillSlot::Q;
+            return true;
+
+        case PacketType::PKT_CS_EMP_CAST:
+        case PacketType::PKT_CS_BEAST_STEALTH_CAST:
+        case PacketType::PKT_CS_CONTROLLER_SMOKE_DROP:
+        case PacketType::PKT_CS_SENTINEL_E_PLACE:
+            outSlot = PlayerSkillSlot::E;
+            return true;
+
+        case PacketType::PKT_CS_ULTIMATE_CAST:
+        case PacketType::PKT_CS_ENTRY_BLADE_ACTIVATE:
+        case PacketType::PKT_CS_CONTROLLER_ULTIMATE_CAST:
+        case PacketType::PKT_CS_SENTINEL_X_CAST:
+            outSlot = PlayerSkillSlot::X;
+            return true;
+
+        default:
+            return false;
+        }
+    }
+
+    bool TryConsumeSkillForPacket(Session* session, PacketType packetType)
+    {
+        PlayerSkillSlot slot = PlayerSkillSlot::C;
+        if (!TryGetConsumingSkillSlot(packetType, slot))
+            return true;
+
+        bool validPlayer =
+            session != nullptr &&
+            session->GetState() == SessionState::IN_GAME &&
+            session->GetCurrentRoomId() != 0 &&
+            !session->IsDead();
+
+        if (!validPlayer || !session->ConsumeSkill(slot))
+        {
+            SendSkillState(session);
+            std::cout << "[SKILL USE BLOCK] playerId="
+                << (session != nullptr ? session->GetPlayerId() : 0)
+                << " slot=" << static_cast<int>(slot)
+                << std::endl;
+            return false;
+        }
+
+        SendSkillState(session);
+        std::cout << "[SKILL CONSUMED] playerId="
+            << session->GetPlayerId()
+            << " slot=" << static_cast<int>(slot)
+            << std::endl;
+        return true;
+    }
+}
+
 void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 {
     PacketType type = (PacketType)header->type;
@@ -6044,6 +6206,9 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         break;
     }
     }
+
+    if (!TryConsumeSkillForPacket(session, type))
+        return;
 
     switch (type)
     {
@@ -9342,6 +9507,86 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
                 << " credits=" << session->GetCredits()
                 << std::endl;
 
+            break;
+        }
+
+        if (itemType == StoreItemType::SKILL)
+        {
+            int price = GetSkillPrice(pkt->itemId);
+            bool validSlot =
+                pkt->itemId >= static_cast<int>(PlayerSkillSlot::C) &&
+                pkt->itemId <= static_cast<int>(PlayerSkillSlot::X);
+
+            if (!validSlot || price < 0)
+            {
+                SendStoreBuyResult(
+                    session,
+                    StoreBuyResult::INVALID_ITEM,
+                    itemType,
+                    pkt->itemId,
+                    0,
+                    0,
+                    0,
+                    0
+                );
+                break;
+            }
+
+            PlayerSkillSlot slot =
+                static_cast<PlayerSkillSlot>(pkt->itemId);
+
+            if (session->HasPurchasedSkill(slot))
+            {
+                SendStoreBuyResult(
+                    session,
+                    StoreBuyResult::ALREADY_OWNED,
+                    itemType,
+                    pkt->itemId,
+                    price,
+                    0,
+                    0,
+                    0
+                );
+                break;
+            }
+
+            if (session->GetCredits() < price)
+            {
+                SendStoreBuyResult(
+                    session,
+                    StoreBuyResult::NOT_ENOUGH_CREDIT,
+                    itemType,
+                    pkt->itemId,
+                    price,
+                    0,
+                    0,
+                    0
+                );
+                break;
+            }
+
+            session->AddCredits(-price);
+            session->PurchaseSkill(slot);
+
+            SendStoreBuyResult(
+                session,
+                StoreBuyResult::SUCCESS,
+                itemType,
+                pkt->itemId,
+                price,
+                0,
+                0,
+                0
+            );
+
+            BroadcastScoreboardUpdate(roomId);
+
+            std::cout << "[STORE BUY SKILL SUCCESS] playerId="
+                << session->GetPlayerId()
+                << " slot=" << pkt->itemId
+                << " price=" << price
+                << " credits=" << session->GetCredits()
+                << std::endl;
             break;
         }
 

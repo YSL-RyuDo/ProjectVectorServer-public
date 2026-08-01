@@ -27,6 +27,14 @@ struct PlayerWeaponState
     bool isReloading = false;
 };
 
+enum class PlayerSkillSlot : uint8_t
+{
+    C = 0,
+    Q = 1,
+    E = 2,
+    X = 3
+};
+
 struct PlayerMatchStats
 {
     int kills = 0;
@@ -169,6 +177,15 @@ public:
 
     void ResetCredits() { credits_ = 0; }
 
+    bool HasPurchasedSkill(PlayerSkillSlot slot) const;
+    bool HasAvailableSkill(PlayerSkillSlot slot) const;
+    bool PurchaseSkill(PlayerSkillSlot slot);
+    bool ConsumeSkill(PlayerSkillSlot slot);
+    void PrepareSkillsForNextRound();
+    void ResetSkills();
+    uint8_t GetPurchasedSkillMask() const { return purchasedSkillMask_; }
+    uint8_t GetUsedSkillMask() const { return usedSkillMask_; }
+
     void SetAnimIndex(uint8_t animIndex)
     {
         animIndex_ = animIndex;
@@ -207,6 +224,9 @@ private:
     int maxBarrier_ = 0;
     int barrier_ = 0;
     int credits_ = 0;
+
+    uint8_t purchasedSkillMask_ = 0;
+    uint8_t usedSkillMask_ = 0;
 
     bool isDead_ = false;
 

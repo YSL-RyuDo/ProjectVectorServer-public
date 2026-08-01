@@ -491,6 +491,67 @@ void Session::ClearAssistDamageRecords()
     assistDamageRecords_.clear();
 }
 
+bool Session::HasPurchasedSkill(PlayerSkillSlot slot) const
+{
+    uint8_t slotIndex = static_cast<uint8_t>(slot);
+    if (slotIndex > static_cast<uint8_t>(PlayerSkillSlot::X))
+        return false;
+
+    uint8_t bit = static_cast<uint8_t>(1u << slotIndex);
+    return (purchasedSkillMask_ & bit) != 0;
+}
+
+bool Session::HasAvailableSkill(PlayerSkillSlot slot) const
+{
+    uint8_t slotIndex = static_cast<uint8_t>(slot);
+    if (slotIndex > static_cast<uint8_t>(PlayerSkillSlot::X))
+        return false;
+
+    uint8_t bit = static_cast<uint8_t>(1u << slotIndex);
+    return (purchasedSkillMask_ & bit) != 0 &&
+        (usedSkillMask_ & bit) == 0;
+}
+
+bool Session::PurchaseSkill(PlayerSkillSlot slot)
+{
+    if (HasPurchasedSkill(slot))
+        return false;
+
+    uint8_t slotIndex = static_cast<uint8_t>(slot);
+    if (slotIndex > static_cast<uint8_t>(PlayerSkillSlot::X))
+        return false;
+
+    uint8_t bit = static_cast<uint8_t>(1u << slotIndex);
+    purchasedSkillMask_ |= bit;
+    usedSkillMask_ &= static_cast<uint8_t>(~bit);
+    return true;
+}
+
+bool Session::ConsumeSkill(PlayerSkillSlot slot)
+{
+    if (!HasAvailableSkill(slot))
+        return false;
+
+    uint8_t bit = static_cast<uint8_t>(
+        1u << static_cast<uint8_t>(slot)
+    );
+    usedSkillMask_ |= bit;
+    return true;
+}
+
+void Session::PrepareSkillsForNextRound()
+{
+    // Keep only purchased skills that were not used in the previous round.
+    purchasedSkillMask_ &= static_cast<uint8_t>(~usedSkillMask_);
+    usedSkillMask_ = 0;
+}
+
+void Session::ResetSkills()
+{
+    purchasedSkillMask_ = 0;
+    usedSkillMask_ = 0;
+}
+
 bool Session::RemoveWeapon(int weaponId)
 {
     auto it = weapons_.find(weaponId);

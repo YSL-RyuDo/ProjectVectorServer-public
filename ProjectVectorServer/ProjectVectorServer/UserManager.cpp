@@ -1,6 +1,7 @@
 #include "UserManager.h"
 #include "Common.h"
 #include "Session.h"
+#include "WeaponSkinManager.h"
 
 #include <fstream>
 #include <sstream>
@@ -323,6 +324,7 @@ int UserManager::Register(const std::string& id,const std::string& nick,const st
     SavePlayerDataUnlocked();
     SaveCharacterOwnedDataUnlocked();
     SaveCharacterAffinityDataUnlocked();
+    WeaponSkinManager::Instance().InitializeUser(id);
 
     return (int)RegisterResult::SUCCESS;
 }

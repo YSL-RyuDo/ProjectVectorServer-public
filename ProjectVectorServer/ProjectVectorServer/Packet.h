@@ -8,6 +8,7 @@ constexpr int HOST_NAME_LEN = 20;
 
 constexpr int MAX_ROOM_LIST_COUNT = 32;
 constexpr int MAX_LOBBY_CHARACTER_COUNT = 4;
+constexpr int MAX_WEAPON_SKIN_LOADOUT_COUNT = 14;
 constexpr int TEMP_GAME_MAX_PLAYER_COUNT = 3;
 
 constexpr int ROOM_A_TEAM_COUNT = 3;
@@ -136,6 +137,42 @@ struct SC_LobbyCharacterList
     uint16_t count;
     int currentCharacterModelId;
     LobbyCharacterSlot characters[MAX_LOBBY_CHARACTER_COUNT];
+};
+struct CS_WeaponSkinLoadoutRequest
+{
+    PacketHeader header;
+    int32_t characterId;
+};
+
+struct WeaponSkinLoadoutSlot
+{
+    int32_t weaponId;
+    int32_t skinId;
+};
+
+struct SC_WeaponSkinLoadout
+{
+    PacketHeader header;
+    int32_t characterId;
+    uint16_t count;
+    WeaponSkinLoadoutSlot slots[MAX_WEAPON_SKIN_LOADOUT_COUNT];
+};
+
+struct CS_WeaponSkinSelect
+{
+    PacketHeader header;
+    int32_t characterId;
+    int32_t weaponId;
+    int32_t skinId;
+};
+
+struct SC_WeaponSkinSelectResult
+{
+    PacketHeader header;
+    uint8_t result;
+    int32_t characterId;
+    int32_t weaponId;
+    int32_t skinId;
 };
 
 struct CS_TempGameRoomEnter
@@ -564,6 +601,7 @@ struct GameReadyMemberInfo
 
     int32_t characterId;
 	int32_t rankImageId;
+    int32_t weaponSkinIds[MAX_WEAPON_SKIN_LOADOUT_COUNT];
 };
 
 struct SC_GameAllReady
@@ -751,14 +789,17 @@ struct RoundResetMemberInfo
     int primaryWeaponId;
     int primaryMagAmmo;
     int primaryReserveAmmo;
+    int primarySkinId;
 
     int pistolWeaponId;
     int pistolMagAmmo;
     int pistolReserveAmmo;
+    int pistolSkinId;
 
     int knifeWeaponId;
     int knifeMagAmmo;
     int knifeReserveAmmo;
+    int knifeSkinId;
 
     uint8_t purchasedSkillMask;
     uint8_t usedSkillMask;
@@ -1010,6 +1051,7 @@ struct SC_WeaponDropped
     int32_t weaponId;
     int32_t magAmmo;
     int32_t reserveAmmo;
+    int32_t skinId;
 
     float x;
     float y;
@@ -1037,6 +1079,7 @@ struct SC_WeaponPickupNotify
     int32_t weaponId;
     int32_t magAmmo;
     int32_t reserveAmmo;
+    int32_t skinId;
 };
 
 enum class StoreItemType : uint8_t

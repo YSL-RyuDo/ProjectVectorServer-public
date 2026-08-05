@@ -22,6 +22,7 @@ struct PlayerWeaponState
     int weaponId = 0;
     int magAmmo = 0;
     int reserveAmmo = 0;
+    int skinId = 0;
 
     bool owned = false;
     bool isReloading = false;
@@ -134,6 +135,10 @@ public:
     void Damage(int amount);
 
     bool IsDead() const { return hp_ <= 0; }
+
+    void SetActiveCharacterId(int characterId) { activeCharacterId_ = characterId; }
+    int GetActiveCharacterId() const { return activeCharacterId_; }
+
     void InitRoundState();
     void ResetRoundStateKeepInventory();
 
@@ -142,7 +147,7 @@ public:
 
     bool HasWeapon(int weaponId) const;
     PlayerWeaponState* GetWeaponState(int weaponId);
-    void GiveWeapon(int weaponId, int magAmmo, int reserveAmmo);
+    void GiveWeapon(int weaponId, int magAmmo, int reserveAmmo, int skinId = 0);
 
     void Respawn();
 
@@ -230,7 +235,8 @@ private:
 
     bool isDead_ = false;
 
-    int currentWeaponId_ = 0;
+    int currentWeaponId_ = -1;
+    int activeCharacterId_ = 0;
     std::unordered_map<int, PlayerWeaponState> weapons_;
 
     PlayerMatchStats matchStats_;

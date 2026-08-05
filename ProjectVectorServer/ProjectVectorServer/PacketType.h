@@ -32,6 +32,9 @@ enum class PacketType : uint16_t
     PKT_CS_TEMP_GAME_START = 16,
     PKT_SC_TEMP_GAME_START_RESULT = 17,
 
+    PKT_CS_WEAPON_SKIN_LOADOUT_REQUEST = 18,
+    PKT_SC_WEAPON_SKIN_LOADOUT = 19,
+
     // 룸 리스트
     PKT_CS_ROOM_LIST = 20,
     PKT_SC_ROOM_LIST = 21,
@@ -82,6 +85,9 @@ enum class PacketType : uint16_t
     PKT_CS_GAME_LOAD_READY = 48,
     PKT_SC_GAME_ALL_READY = 49,
     PKT_SC_GAME_PREPARE_TIMER = 50,
+
+    PKT_CS_WEAPON_SKIN_SELECT = 51,
+    PKT_SC_WEAPON_SKIN_SELECT_RESULT = 52,
 
     // 인게임
     PKT_SC_HELLO = 100,

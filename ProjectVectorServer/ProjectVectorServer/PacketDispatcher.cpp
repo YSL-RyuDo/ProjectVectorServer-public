@@ -6,6 +6,7 @@
 #include "UserManager.h"
 #include "RoomManager.h"
 #include "ServerWeaponData.h"
+#include "WeaponSkinManager.h"
 
 #include<fstream>
 #include<sstream>
@@ -1493,6 +1494,12 @@ namespace
         out.slotIndex = member.slotIndex;
         out.characterId = member.lockedCharacterId;
         out.rankImageId = member.rankImageId;
+
+        std::array<int, WEAPON_SKIN_WEAPON_COUNT> equippedSkins{};
+        WeaponSkinManager::Instance().GetEquippedSkins(member.userId, member.lockedCharacterId, equippedSkins);
+
+        for (int weaponId = 0; weaponId < MAX_WEAPON_SKIN_LOADOUT_COUNT; ++weaponId)
+            out.weaponSkinIds[weaponId] = equippedSkins[weaponId];
     }
 
     void ResetGameLoadRuntimeState(uint32_t roomId)
@@ -1700,6 +1707,9 @@ namespace
             playerSession->ClearLastDamager();
             playerSession->ClearAssistDamageRecords();
             playerSession->ResetSkills();
+            playerSession->SetActiveCharacterId(
+                member.lockedCharacterId >= 0 ? member.lockedCharacterId : 0
+            );
             playerSession->InitRoundState();
             playerSession->SetState(SessionState::IN_GAME);
         }
@@ -4027,14 +4037,17 @@ namespace
         info.primaryWeaponId = -1;
         info.primaryMagAmmo = 0;
         info.primaryReserveAmmo = 0;
+        info.primarySkinId = 0;
 
         info.pistolWeaponId = -1;
         info.pistolMagAmmo = 0;
         info.pistolReserveAmmo = 0;
+        info.pistolSkinId = 0;
 
         info.knifeWeaponId = -1;
         info.knifeMagAmmo = 0;
         info.knifeReserveAmmo = 0;
+        info.knifeSkinId = 0;
 
         if (session == nullptr)
             return;
@@ -4046,6 +4059,7 @@ namespace
             info.primaryWeaponId = weapon.weaponId;
             info.primaryMagAmmo = weapon.magAmmo;
             info.primaryReserveAmmo = weapon.reserveAmmo;
+            info.primarySkinId = weapon.skinId;
         }
 
         if (FindOwnedWeaponByPredicate(session, IsPistolWeapon, weapon))
@@ -4053,6 +4067,7 @@ namespace
             info.pistolWeaponId = weapon.weaponId;
             info.pistolMagAmmo = weapon.magAmmo;
             info.pistolReserveAmmo = weapon.reserveAmmo;
+            info.pistolSkinId = weapon.skinId;
         }
 
         if (FindOwnedWeaponByPredicate(session, IsKnifeWeapon, weapon))
@@ -4060,6 +4075,7 @@ namespace
             info.knifeWeaponId = weapon.weaponId;
             info.knifeMagAmmo = weapon.magAmmo;
             info.knifeReserveAmmo = weapon.reserveAmmo;
+            info.knifeSkinId = weapon.skinId;
         }
     }
 
@@ -5026,6 +5042,7 @@ namespace
         int weaponId = 0;
         int magAmmo = 0;
         int reserveAmmo = 0;
+        int skinId = 0;
 
         float x = 0.f;
         float y = 0.f;
@@ -5102,6 +5119,19 @@ namespace
             data->weaponType == ServerWeaponType::DMR;
     }
 
+    int GetEquippedSkinIdForUser(const std::string& userId, int characterId, int weaponId)
+    {
+        if (weaponId < 0 || weaponId >= WEAPON_SKIN_WEAPON_COUNT)
+            return 0;
+
+        std::array<int, WEAPON_SKIN_WEAPON_COUNT> equippedSkins{};
+
+        if (!WeaponSkinManager::Instance().GetEquippedSkins(userId, characterId, equippedSkins))
+            return 0;
+
+        return equippedSkins[weaponId];
+    }
+
     int FindReplaceWeaponIdForPickup(Session* session, int pickedWeaponId)
     {
         if (session == nullptr)
@@ -5146,7 +5176,7 @@ namespace
         return -1;
     }
 
-    uint32_t CreateDroppedWeapon(uint32_t roomId, uint32_t dropperPlayerId, int weaponId, int magAmmo, int reserveAmmo, float x, float y, float z, float dirX, float dirY, float dirZ)
+    uint32_t CreateDroppedWeapon(uint32_t roomId, uint32_t dropperPlayerId, int weaponId, int magAmmo, int reserveAmmo, int skinId, float x, float y, float z, float dirX, float dirY, float dirZ)
     {
         uint32_t dropId = 0;
 
@@ -5161,6 +5191,7 @@ namespace
             state.weaponId = weaponId;
             state.magAmmo = magAmmo;
             state.reserveAmmo = reserveAmmo;
+            state.skinId = skinId;
             state.x = x;
             state.y = y;
             state.z = z;
@@ -5180,6 +5211,7 @@ namespace
         out.weaponId = weaponId;
         out.magAmmo = magAmmo;
         out.reserveAmmo = reserveAmmo;
+        out.skinId = skinId;
 
         out.x = x;
         out.y = y;
@@ -5196,12 +5228,13 @@ namespace
             << " dropId=" << dropId
             << " weaponId=" << weaponId
             << " ammo=" << magAmmo << "/" << reserveAmmo
+            << " skinId=" << skinId
             << std::endl;
 
         return dropId;
     }
 
-    void BroadcastWeaponPickupNotify(uint32_t roomId, uint32_t dropId, uint32_t pickerPlayerId, int weaponId, int magAmmo, int reserveAmmo)
+    void BroadcastWeaponPickupNotify(uint32_t roomId, uint32_t dropId, uint32_t pickerPlayerId, int weaponId, int magAmmo, int reserveAmmo, int skinId)
     {
         SC_WeaponPickupNotify out{};
 
@@ -5215,6 +5248,7 @@ namespace
         out.weaponId = weaponId;
         out.magAmmo = magAmmo;
         out.reserveAmmo = reserveAmmo;
+        out.skinId = skinId;
 
         BroadcastPacketToRoomInternal(roomId, &out);
     }
@@ -6388,6 +6422,84 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         break;
     }
 
+    case PacketType::PKT_CS_WEAPON_SKIN_LOADOUT_REQUEST:
+    {
+        if (header->size != sizeof(CS_WeaponSkinLoadoutRequest))
+            break;
+
+        auto* pkt = reinterpret_cast<CS_WeaponSkinLoadoutRequest*>(header);
+        std::array<int, WEAPON_SKIN_WEAPON_COUNT> equippedSkins{};
+        bool ok = WeaponSkinManager::Instance().GetEquippedSkins(
+            session->GetUserId(),
+            pkt->characterId,
+            equippedSkins
+        );
+
+        if (!ok)
+        {
+            WeaponSkinManager::Instance().InitializeUser(session->GetUserId());
+            ok = WeaponSkinManager::Instance().GetEquippedSkins(
+                session->GetUserId(),
+                pkt->characterId,
+                equippedSkins
+            );
+        }
+
+        SC_WeaponSkinLoadout out{};
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(
+            PacketType::PKT_SC_WEAPON_SKIN_LOADOUT
+        );
+        out.characterId = pkt->characterId;
+        out.count = ok ? MAX_WEAPON_SKIN_LOADOUT_COUNT : 0;
+
+        for (int weaponId = 0; weaponId < MAX_WEAPON_SKIN_LOADOUT_COUNT; ++weaponId)
+        {
+            out.slots[weaponId].weaponId = weaponId;
+            out.slots[weaponId].skinId = equippedSkins[weaponId];
+        }
+
+        session->Send(&out);
+        break;
+    }
+
+    case PacketType::PKT_CS_WEAPON_SKIN_SELECT:
+    {
+        if (header->size != sizeof(CS_WeaponSkinSelect))
+            break;
+
+        auto* pkt = reinterpret_cast<CS_WeaponSkinSelect*>(header);
+        SessionState state = session->GetState();
+        bool stateAllowsLoadoutChange = state != SessionState::IN_GAME;
+        bool ok = stateAllowsLoadoutChange &&
+            WeaponSkinManager::Instance().SetEquippedSkin(
+            session->GetUserId(),
+            pkt->characterId,
+            pkt->weaponId,
+            pkt->skinId
+        );
+
+        SC_WeaponSkinSelectResult out{};
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(
+            PacketType::PKT_SC_WEAPON_SKIN_SELECT_RESULT
+        );
+        out.result = ok ? 1 : 0;
+        out.characterId = pkt->characterId;
+        out.weaponId = pkt->weaponId;
+        out.skinId = pkt->skinId;
+
+        session->Send(&out);
+
+        std::cout << "[WEAPON SKIN SELECT] userId=" << session->GetUserId()
+            << " characterId=" << pkt->characterId
+            << " state=" << static_cast<int>(state)
+            << " weaponId=" << pkt->weaponId
+            << " skinId=" << pkt->skinId
+            << " success=" << ok
+            << std::endl;
+        break;
+    }
     case PacketType::PKT_CS_LOBBY_CHAT:
     {
         if (session->GetState() != SessionState::IN_LOBBY)
@@ -9036,6 +9148,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
         int magAmmo = weaponState->magAmmo;
         int reserveAmmo = weaponState->reserveAmmo;
+        int skinId = weaponState->skinId;
 
         session->RemoveWeapon(weaponId);
 
@@ -9045,6 +9158,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             weaponId,
             magAmmo,
             reserveAmmo,
+            skinId,
             pkt->x,
             pkt->y,
             pkt->z,
@@ -9060,7 +9174,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         if (currentState != nullptr)
             SendAmmoUpdate(session, *currentState);
 
-        if (currentWeaponId > 0)
+        if (currentWeaponId >= 0 && session->HasWeapon(currentWeaponId))
         {
             BroadcastWeaponSwitchNotify(
                 roomId,
@@ -9132,6 +9246,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             {
                 int oldMag = replaceState->magAmmo;
                 int oldReserve = replaceState->reserveAmmo;
+                int oldSkinId = replaceState->skinId;
 
                 session->RemoveWeapon(replaceWeaponId);
 
@@ -9152,6 +9267,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
                     replaceWeaponId,
                     oldMag,
                     oldReserve,
+                    oldSkinId,
                     dropX,
                     dropY,
                     dropZ,
@@ -9165,7 +9281,8 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         session->GiveWeapon(
             dropped.weaponId,
             dropped.magAmmo,
-            dropped.reserveAmmo
+            dropped.reserveAmmo,
+            dropped.skinId
         );
 
         session->SetCurrentWeaponId(dropped.weaponId);
@@ -9185,6 +9302,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         out.weaponId = dropped.weaponId;
         out.magAmmo = dropped.magAmmo;
         out.reserveAmmo = dropped.reserveAmmo;
+        out.skinId = dropped.skinId;
 
         BroadcastPacketToRoomInternal(roomId, &out);
 
@@ -9192,6 +9310,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             << session->GetPlayerId()
             << " weaponId=" << dropped.weaponId
             << " ammo=" << dropped.magAmmo << "/" << dropped.reserveAmmo
+            << " skinId=" << dropped.skinId
             << std::endl;
 
         break;
@@ -9330,11 +9449,13 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
                 int oldMagAmmo = 0;
                 int oldReserveAmmo = 0;
+                int oldSkinId = 0;
 
                 if (oldWeaponState != nullptr)
                 {
                     oldMagAmmo = oldWeaponState->magAmmo;
                     oldReserveAmmo = oldWeaponState->reserveAmmo;
+                    oldSkinId = oldWeaponState->skinId;
                 }
 
                 Vector3 pos = session->GetPosition();
@@ -9354,6 +9475,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
                     replaceWeaponId,
                     oldMagAmmo,
                     oldReserveAmmo,
+                    oldSkinId,
                     dropX,
                     dropY,
                     dropZ,
@@ -9367,10 +9489,17 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
             session->AddCredits(-storeData.price);
 
+            int purchasedSkinId = GetEquippedSkinIdForUser(
+                session->GetUserId(),
+                session->GetActiveCharacterId(),
+                storeData.weaponId
+            );
+
             session->GiveWeapon(
                 storeData.weaponId,
                 weaponData->magSize,
-                weaponData->maxReserveAmmo
+                weaponData->maxReserveAmmo,
+                purchasedSkinId
             );
 
             session->SetCurrentWeaponId(storeData.weaponId);
@@ -9400,7 +9529,8 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
                 session->GetPlayerId(),
                 storeData.weaponId,
                 weaponData->magSize,
-                weaponData->maxReserveAmmo
+                weaponData->maxReserveAmmo,
+                purchasedSkinId
             );
 
             BroadcastWeaponSwitchNotify(
@@ -14603,6 +14733,7 @@ void PacketDispatcher::HandleDeath(Session* target)
             weapon.weaponId,
             weapon.magAmmo,
             weapon.reserveAmmo,
+            weapon.skinId,
             deathPos.x + 0.3f * dropOffset,
             deathPos.y + 0.5f,
             deathPos.z,

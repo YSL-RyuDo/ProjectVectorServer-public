@@ -31,6 +31,7 @@
     <ClInclude Include="Session.h" />
     <ClInclude Include="SessionManager.h" />
     <ClInclude Include="UserManager.h" />
+    <ClInclude Include="WeaponSkinManager.h" />
     <ClInclude Include="WorkerThread.h" />
   </ItemGroup>
   <ItemGroup>
@@ -46,7 +47,13 @@
     <ClCompile Include="Session.cpp" />
     <ClCompile Include="SessionManager.cpp" />
     <ClCompile Include="UserManager.cpp" />
+    <ClCompile Include="WeaponSkinManager.cpp" />
     <ClCompile Include="WorkerThread.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="weapon_skins.csv" />
+    <None Include="user_weapon_skins.csv" />
+    <None Include="user_weapon_skin_loadouts.csv" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>

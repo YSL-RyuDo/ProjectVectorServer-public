@@ -1,5 +1,6 @@
 #include "Server.h"
 #include "UserManager.h"
+#include "WeaponSkinManager.h"
 #include <Ws2tcpip.h>  
 
 bool Server::Start()
@@ -23,6 +24,7 @@ bool Server::Start()
     UserManager::Instance().LoadLevelExpTable();
     UserManager::Instance().LoadCharacterOwnedData();
     UserManager::Instance().LoadCharacterAffinityData();
+    WeaponSkinManager::Instance().Load();
 
     listenerThread.join();
     return true;

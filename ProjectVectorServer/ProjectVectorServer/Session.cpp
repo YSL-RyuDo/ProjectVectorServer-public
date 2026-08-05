@@ -6,6 +6,7 @@
 #include "Packet.h"
 #include "RoomManager.h"
 #include "ServerWeaponData.h"
+#include "WeaponSkinManager.h"
 
 namespace
 {
@@ -267,18 +268,23 @@ void Session::InitRoundState()
 
     weapons_.clear();
 
+    std::array<int, WEAPON_SKIN_WEAPON_COUNT> equippedSkins{};
+    WeaponSkinManager::Instance().GetEquippedSkins(userId_, activeCharacterId_, equippedSkins);
+
     // 기본 권총 P92
     GiveWeapon(
         static_cast<int>(ServerWeaponId::P92),
         12,
-        36
+        36,
+        equippedSkins[static_cast<int>(ServerWeaponId::P92)]
     );
 
     // 기본 나이프
     GiveWeapon(
         static_cast<int>(ServerWeaponId::Knife),
         0,
-        0
+        0,
+        equippedSkins[static_cast<int>(ServerWeaponId::Knife)]
     );
 
     currentWeaponId_ = SelectBestCurrentWeaponId();
@@ -317,36 +323,70 @@ void Session::ResetRoundStateKeepInventory()
         weapon.reserveAmmo = data->maxReserveAmmo;
     }
 
-    if (weapons_.empty())
+    bool hasFirearm = false;
+    bool hasKnife = false;
+
+    for (const auto& pair : weapons_)
+    {
+        const PlayerWeaponState& weapon = pair.second;
+        if (!weapon.owned)
+            continue;
+
+        const ServerWeaponData* data = ServerWeaponTable::Find(weapon.weaponId);
+        if (data == nullptr)
+            continue;
+
+        if (data->weaponType == ServerWeaponType::Knife)
+            hasKnife = true;
+        else
+            hasFirearm = true;
+    }
+
+    std::array<int, WEAPON_SKIN_WEAPON_COUNT> equippedSkins{};
+    WeaponSkinManager::Instance().GetEquippedSkins(
+        userId_,
+        activeCharacterId_,
+        equippedSkins
+    );
+
+    // A knife does not count as a gun. Restore weapon 0 (P92) when the
+    // player ended the previous round without any firearm.
+    if (!hasFirearm)
     {
         GiveWeapon(
             static_cast<int>(ServerWeaponId::P92),
             12,
-            36
+            36,
+            equippedSkins[static_cast<int>(ServerWeaponId::P92)]
         );
+    }
 
+    if (!hasKnife)
+    {
         GiveWeapon(
             static_cast<int>(ServerWeaponId::Knife),
             0,
-            0
+            0,
+            equippedSkins[static_cast<int>(ServerWeaponId::Knife)]
         );
     }
 
     currentWeaponId_ = SelectBestCurrentWeaponId();
 }
 
-void Session::GiveWeapon(int weaponId, int magAmmo, int reserveAmmo)
+void Session::GiveWeapon(int weaponId, int magAmmo, int reserveAmmo, int skinId)
 {
     PlayerWeaponState state{};
     state.weaponId = weaponId;
     state.magAmmo = magAmmo;
     state.reserveAmmo = reserveAmmo;
+    state.skinId = skinId;
     state.owned = true;
     state.isReloading = false;
 
     weapons_[weaponId] = state;
 
-    if (currentWeaponId_ <= 0)
+    if (currentWeaponId_ < 0)
     {
         currentWeaponId_ = SelectBestCurrentWeaponId();
     }

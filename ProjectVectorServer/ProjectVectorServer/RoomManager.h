@@ -14,7 +14,14 @@ public:
 
     std::vector<Room> GetRoomList();
 
-    uint32_t CreateRoom(const std::string& roomName,const std::string& mapName,const std::string& hostName,const RoomMember& leaderMember,uint16_t maxPlayerCount = 8);
+    uint32_t CreateRoom(
+        const std::string& roomName,
+        const std::string& mapName,
+        const std::string& hostName,
+        const RoomMember& leaderMember,
+        uint16_t maxPlayerCount = 8,
+        int matchType = 0,
+        bool isMatchmade = false);
 
     bool GetRoom(uint32_t roomId, Room& outRoom);
 

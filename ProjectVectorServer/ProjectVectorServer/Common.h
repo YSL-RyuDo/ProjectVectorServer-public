@@ -14,6 +14,7 @@
 #include <atomic>
 #include <unordered_map>
 #include <mutex>
+#include <memory>
 
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "bcrypt.lib")

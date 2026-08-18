@@ -1,4 +1,5 @@
 #include "UserManager.h"
+#include "CareerManager.h"
 #include "Common.h"
 #include "Session.h"
 #include "WeaponSkinManager.h"
@@ -325,6 +326,7 @@ int UserManager::Register(const std::string& id,const std::string& nick,const st
     SaveCharacterOwnedDataUnlocked();
     SaveCharacterAffinityDataUnlocked();
     WeaponSkinManager::Instance().InitializeUser(id);
+    CareerManager::Instance().InitializeUser(id, nick);
 
     return (int)RegisterResult::SUCCESS;
 }
@@ -603,6 +605,30 @@ bool UserManager::SetRankImage(const std::string& id, int rankImageId)
     SavePlayerDataUnlocked();
     return true;
 }
+
+void UserManager::SetRankImages(
+    const std::vector<std::pair<std::string, int>>& rankImages)
+{
+    std::lock_guard<std::mutex> lock(userManagerMutex_);
+
+    bool changed = false;
+    for (const auto& rankImage : rankImages)
+    {
+        auto it = playerData_.find(rankImage.first);
+        if (it == playerData_.end() ||
+            it->second.rankImageId == rankImage.second)
+        {
+            continue;
+        }
+
+        it->second.rankImageId = rankImage.second;
+        changed = true;
+    }
+
+    if (changed)
+        SavePlayerDataUnlocked();
+}
+
 int UserManager::GetRequiredExpForLevel(int level)
 {
     std::lock_guard<std::mutex> lock(userManagerMutex_);

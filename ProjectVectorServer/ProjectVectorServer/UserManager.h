@@ -2,6 +2,8 @@
 #include <string>
 #include <unordered_map>
 #include <mutex>
+#include <utility>
+#include <vector>
 
 class Session;
 
@@ -74,6 +76,8 @@ public:
     bool SetPlayerIcon(const std::string& id, int iconId);
     bool SetLogoBorder(const std::string& id, int borderId);
     bool SetRankImage(const std::string& id, int rankImageId);
+    void SetRankImages(
+        const std::vector<std::pair<std::string, int>>& rankImages);
 
     int GetRequiredExpForLevel(int level);
     bool AddExp(const std::string& id, int amount, int& outLevel, int& outCurrentExp, int& outRequiredExp);

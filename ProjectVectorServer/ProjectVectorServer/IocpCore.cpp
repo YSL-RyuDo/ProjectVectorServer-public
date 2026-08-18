@@ -1,5 +1,6 @@
 #include "IocpCore.h"
 #include "Session.h"
+#include "SessionManager.h"
 #include "OverlappedEx.h"
 
 bool IocpCore::Init()
@@ -17,20 +18,28 @@ bool IocpCore::RegisterHandle(HANDLE handle, ULONG_PTR key)
 
 void IocpCore::Dispatch()
 {
-    DWORD bytes;
-    ULONG_PTR key;
-    OverlappedEx* ov;
+    DWORD bytes = 0;
+    ULONG_PTR key = 0;
+    OverlappedEx* ov = nullptr;
 
     BOOL ok = GetQueuedCompletionStatus(
         iocp_, &bytes, &key,
         (LPOVERLAPPED*)&ov, INFINITE);
 
-    Session* session = (Session*)key;
+    Session* sessionKey = reinterpret_cast<Session*>(key);
+    std::shared_ptr<Session> session =
+        SessionManager::Instance().FindConnection(sessionKey);
+
+    if (session == nullptr)
+    {
+        delete ov;
+        return;
+    }
 
     if (!ok || bytes == 0)
     {
         session->Disconnect();
-        delete session;
+        SessionManager::Instance().RemoveConnection(session.get());
         delete ov;
         return;
     }
@@ -38,7 +47,11 @@ void IocpCore::Dispatch()
     if (ov->type == IOType::Recv)
     {
         session->OnRecv(bytes, ov);
-        session->PostRecv();
+        if (!session->PostRecv())
+        {
+            session->Disconnect();
+            SessionManager::Instance().RemoveConnection(session.get());
+        }
     }
 
     delete ov;

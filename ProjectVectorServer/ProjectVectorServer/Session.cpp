@@ -54,7 +54,7 @@ namespace
 
         for (const RoomMember& member : room.members)
         {
-            Session* target = SessionManager::Instance().Find(member.playerId);
+            std::shared_ptr<Session> target = SessionManager::Instance().Find(member.playerId);
             if (target == nullptr)
                 continue;
 
@@ -75,14 +75,37 @@ Session::Session(SOCKET socket)
 
 Session::~Session()
 {
-    closesocket(socket_);
+    std::lock_guard<std::mutex> lock(sendMutex_);
+    if (socket_ != INVALID_SOCKET)
+    {
+        closesocket(socket_);
+        socket_ = INVALID_SOCKET;
+    }
 }
 
-void Session::PostRecv()
+bool Session::PostRecv()
 {
+    if (disconnected_.load())
+        return false;
+
     auto* ov = new OverlappedEx(IOType::Recv);
     DWORD flags = 0;
-    WSARecv(socket_, &ov->wsaBuf, 1, nullptr, &flags, &ov->overlapped, nullptr);
+    int result = WSARecv(
+        socket_,
+        &ov->wsaBuf,
+        1,
+        nullptr,
+        &flags,
+        &ov->overlapped,
+        nullptr);
+
+    if (result == SOCKET_ERROR && WSAGetLastError() != WSA_IO_PENDING)
+    {
+        delete ov;
+        return false;
+    }
+
+    return true;
 }
 
 void Session::OnRecv(int bytes, OverlappedEx* ov)
@@ -94,21 +117,45 @@ void Session::OnRecv(int bytes, OverlappedEx* ov)
 
 void Session::Send(void* packet)
 {
+    if (packet == nullptr || disconnected_.load())
+        return;
+
     PacketHeader* header =
         reinterpret_cast<PacketHeader*>(packet);
 
-    send(socket_, reinterpret_cast<char*>(packet), header->size, 0);
+    std::lock_guard<std::mutex> lock(sendMutex_);
+    if (disconnected_.load() || socket_ == INVALID_SOCKET)
+        return;
+
+    int sentBytes = 0;
+    const int packetSize = static_cast<int>(header->size);
+    const char* bytes = reinterpret_cast<const char*>(packet);
+
+    while (sentBytes < packetSize)
+    {
+        int result = send(socket_, bytes + sentBytes, packetSize - sentBytes, 0);
+        if (result == SOCKET_ERROR || result == 0)
+            break;
+
+        sentBytes += result;
+    }
 }
 
 void Session::Disconnect()
 {
+    bool expected = false;
+    if (!disconnected_.compare_exchange_strong(expected, true))
+        return;
+
     std::cout << "[DISCONNECT] playerId=" << GetPlayerId()
         << " userId=" << GetUserId()
         << " state=" << static_cast<int>(GetState())
         << " roomId=" << GetCurrentRoomId()
         << std::endl;
 
-    if (GetState() == SessionState::IN_ROOM && GetCurrentRoomId() != 0)
+    SessionState state = GetState();
+    if ((state == SessionState::IN_ROOM || state == SessionState::IN_GAME) &&
+        GetCurrentRoomId() != 0)
     {
         uint32_t roomId = GetCurrentRoomId();
 
@@ -150,7 +197,13 @@ void Session::Disconnect()
     UserManager::Instance().OnLogout(this);
     SessionManager::Instance().Remove(GetPlayerId());
 
-    closesocket(socket_);
+    std::lock_guard<std::mutex> lock(sendMutex_);
+    if (socket_ != INVALID_SOCKET)
+    {
+        shutdown(socket_, SD_BOTH);
+        closesocket(socket_);
+        socket_ = INVALID_SOCKET;
+    }
 }
 
 void Session::ProcessPackets()
@@ -436,13 +489,15 @@ void Session::SendSpawn(uint32_t playerId, float x, float y, float z)
     send(socket_, (char*)&pkt, sizeof(pkt), 0);
 }
 
-void Session::Damage(int amount)
+int Session::Damage(int amount)
 {
     if (hp_ <= 0)
-        return;
+        return 0;
 
     if (amount <= 0)
-        return;
+        return 0;
+
+    int healthBefore = hp_ + barrier_;
 
     if (barrier_ > 0)
     {
@@ -464,6 +519,8 @@ void Session::Damage(int amount)
         hp_ = 0;
         isDead_ = true;
     }
+
+    return healthBefore - (hp_ + barrier_);
 }
 
 void Session::Respawn()

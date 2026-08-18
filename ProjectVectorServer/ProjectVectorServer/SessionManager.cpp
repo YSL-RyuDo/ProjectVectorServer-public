@@ -14,10 +14,46 @@ uint32_t SessionManager::AllocatePlayerId()
 	return nextPlayerId_.fetch_add(1);
 }
 
+void SessionManager::RegisterConnection(const std::shared_ptr<Session>& session)
+{
+    if (session == nullptr)
+        return;
+
+    std::lock_guard<std::mutex> lock(sessionManagerMutex_);
+    connections_[session.get()] = session;
+}
+
+void SessionManager::RemoveConnection(Session* session)
+{
+    if (session == nullptr)
+        return;
+
+    std::lock_guard<std::mutex> lock(sessionManagerMutex_);
+    connections_.erase(session);
+}
+
+std::shared_ptr<Session> SessionManager::FindConnection(Session* session)
+{
+    std::lock_guard<std::mutex> lock(sessionManagerMutex_);
+    auto it = connections_.find(session);
+    if (it == connections_.end())
+        return nullptr;
+
+    return it->second;
+}
+
 void SessionManager::Add(Session* session)
 {
     std::lock_guard<std::mutex> lock(sessionManagerMutex_);
-    sessions_[session->GetPlayerId()] = session;
+    auto connectionIt = connections_.find(session);
+    if (connectionIt == connections_.end())
+    {
+        std::cerr << "[SESSION ADD FAIL] unregistered connection="
+            << session << std::endl;
+        return;
+    }
+
+    sessions_[session->GetPlayerId()] = connectionIt->second;
 
     std::cout << "[SESSION ADD] playerId="
         << session->GetPlayerId()
@@ -30,7 +66,7 @@ void SessionManager::Remove(uint32_t playerId)
     sessions_.erase(playerId);
 }
 
-Session* SessionManager::Find(uint32_t playerId)
+std::shared_ptr<Session> SessionManager::Find(uint32_t playerId)
 {
     std::lock_guard<std::mutex> lock(sessionManagerMutex_);
     auto it = sessions_.find(playerId);
@@ -40,11 +76,11 @@ Session* SessionManager::Find(uint32_t playerId)
     return it->second;
 }
 
-std::vector<Session*> SessionManager::GetAll()
+std::vector<std::shared_ptr<Session>> SessionManager::GetAll()
 {
     std::lock_guard<std::mutex> lock(sessionManagerMutex_);
 
-    std::vector<Session*> list;
+    std::vector<std::shared_ptr<Session>> list;
 	list.reserve(sessions_.size());
 
     for (auto& pair : sessions_)
@@ -55,16 +91,16 @@ std::vector<Session*> SessionManager::GetAll()
     return list;
 }
 
-std::vector<Session*> SessionManager::GetLobbySessions()
+std::vector<std::shared_ptr<Session>> SessionManager::GetLobbySessions()
 {
     std::lock_guard<std::mutex> lock(sessionManagerMutex_);
 
-    std::vector<Session*> list;
+    std::vector<std::shared_ptr<Session>> list;
     list.reserve(sessions_.size());
 
     for (auto& pair : sessions_)
     {
-        Session* session = pair.second;
+        const std::shared_ptr<Session>& session = pair.second;
         if (session != nullptr && session->GetState() == SessionState::IN_LOBBY)
             list.push_back(session);
     }
@@ -74,9 +110,9 @@ std::vector<Session*> SessionManager::GetLobbySessions()
 
 void SessionManager::Broadcast(void* packet)
 {
-	std::vector<Session*> copied = GetAll();
+	std::vector<std::shared_ptr<Session>> copied = GetAll();
 
-	for (Session* session : copied)
+	for (const std::shared_ptr<Session>& session : copied)
 	{
 		session->Send(packet);
 	}
@@ -84,7 +120,7 @@ void SessionManager::Broadcast(void* packet)
 
 void SessionManager::BroadcastLobby(void* packet)
 {
-    std::vector<Session*> copied = GetLobbySessions();
+    std::vector<std::shared_ptr<Session>> copied = GetLobbySessions();
 
     PacketHeader* header = reinterpret_cast<PacketHeader*>(packet);
 
@@ -93,7 +129,7 @@ void SessionManager::BroadcastLobby(void* packet)
         << " targetCount=" << copied.size()
         << std::endl;
 
-    for (Session* session : copied)
+    for (const std::shared_ptr<Session>& session : copied)
     {
         if (session == nullptr)
             continue;

@@ -69,6 +69,10 @@ std::vector<Room> RoomManager::GetRoomList()
 
     for (auto& pair : rooms_)
     {
+        // 자동 매칭으로 생성된 방은 사용자 설정 방 목록에 노출하지 않는다.
+        if (pair.second.isMatchmade)
+            continue;
+
         result.push_back(pair.second);
     }
 
@@ -84,7 +88,14 @@ std::vector<Room> RoomManager::GetRoomList()
     return result;
 }
 
-uint32_t RoomManager::CreateRoom(const std::string& roomName,const std::string& mapName,const std::string& hostName,const RoomMember& leaderMember,uint16_t maxPlayerCount)
+uint32_t RoomManager::CreateRoom(
+    const std::string& roomName,
+    const std::string& mapName,
+    const std::string& hostName,
+    const RoomMember& leaderMember,
+    uint16_t maxPlayerCount,
+    int matchType,
+    bool isMatchmade)
 {
     std::lock_guard<std::mutex> lock(roomManagerMutex_);
 
@@ -95,6 +106,8 @@ uint32_t RoomManager::CreateRoom(const std::string& roomName,const std::string& 
     room.hostName = hostName;
     room.maxPlayerCount = maxPlayerCount;
     room.state = RoomState::WAITING;
+    room.matchType = matchType == 1 ? 1 : 0;
+    room.isMatchmade = isMatchmade;
     room.pickRemainingSeconds = 20;
     room.pickFinished = false;
 

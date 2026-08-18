@@ -19,9 +19,17 @@ bool Listener::Start(short port, IocpCore& iocp)
     while (true)
     {
         SOCKET client = accept(listenSocket_, nullptr, nullptr);
-        auto* session = new Session(client);
+        if (client == INVALID_SOCKET)
+            continue;
 
-        iocp.RegisterHandle((HANDLE)client, (ULONG_PTR)session);
-        session->PostRecv();
+        auto session = std::make_shared<Session>(client);
+        SessionManager::Instance().RegisterConnection(session);
+
+        if (!iocp.RegisterHandle((HANDLE)client, (ULONG_PTR)session.get()) ||
+            !session->PostRecv())
+        {
+            session->Disconnect();
+            SessionManager::Instance().RemoveConnection(session.get());
+        }
     }
 }

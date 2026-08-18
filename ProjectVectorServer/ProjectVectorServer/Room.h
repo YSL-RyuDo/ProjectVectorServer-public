@@ -27,6 +27,8 @@ struct RoomMember
     int level = 1;
     int playerIconId = 0;
     int rankImageId = 0;
+    uint64_t matchmakingPartyId = 0;
+    uint8_t matchmakingPartySize = 1;
 
     RoomTeam team = RoomTeam::A;
     uint8_t slotIndex = 0;
@@ -53,6 +55,11 @@ struct Room
     uint16_t maxPlayerCount = 8;
 
     RoomState state = RoomState::WAITING;
+
+    // 0: normal/private, 1: ranked. Matchmade rooms grant rewards;
+    // manually created private rooms do not.
+    int matchType = 0;
+    bool isMatchmade = false;
 
     uint32_t leaderPlayerId = 0;
     std::vector<RoomMember> members;

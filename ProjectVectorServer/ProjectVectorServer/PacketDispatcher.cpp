@@ -1,4 +1,6 @@
 #include "PacketDispatcher.h"
+#include "CareerManager.h"
+#include "RankRatingCalculator.h"
 #include "PacketType.h"
 #include "Packet.h"
 #include "Session.h"
@@ -16,7 +18,9 @@
 #include <mutex>
 #include <thread>
 #include <chrono>
+#include <ctime>
 #include <algorithm>
+#include <limits>
 #include <vector>
 #include <unordered_set>
 #include <cmath>
@@ -171,6 +175,9 @@ namespace
         bool isOvertime = false;
         bool roundResolving = false;
         bool matchEnded = false;
+
+        int64_t startedAtUnix = 0;
+        std::chrono::steady_clock::time_point startedAtSteady;
     };
 
     std::mutex g_matchStateMutex;
@@ -182,6 +189,24 @@ namespace
 
     std::mutex g_resultLeaveMutex;
     std::unordered_map<uint32_t, std::unordered_set<uint32_t>> g_resultLeavePlayers;
+
+    struct MatchmakingEntry
+    {
+        uint32_t playerId = 0;
+        uint8_t mode = 0;
+        int matchmakingRating = 0;
+        int visibleTierId = 0;
+        // The current client queues solo players. Future friend-party queues
+        // populate the same fields so duos/trios stay together and are valued
+        // as coordinated groups by the existing team optimizer.
+        uint64_t partyId = 0;
+        uint8_t partySize = 1;
+        std::chrono::steady_clock::time_point queuedAt;
+    };
+
+    std::mutex g_matchmakingMutex;
+    std::vector<MatchmakingEntry> g_matchmakingQueue;
+    std::once_flag g_matchmakingWorkerOnce;
 
     std::unordered_map<std::string, int> g_creditRewards;
 
@@ -530,7 +555,7 @@ namespace
     const std::unordered_map<int, StoreArmorData> g_storeArmors =
     {
         { 0, { 0, 500,  50 } },  // 경량 베리어
-        { 1, { 1, 1000, 100 } }  // 중량 베리어    
+        { 1, { 1, 1000, 100 } }  // 중량 베리어
     };
     std::once_flag g_skillPriceLoadOnce;
     std::unordered_map<int, int> g_skillPrices;
@@ -754,6 +779,8 @@ namespace
         state.isOvertime = false;
         state.roundResolving = false;
         state.matchEnded = false;
+        state.startedAtUnix = static_cast<int64_t>(std::time(nullptr));
+        state.startedAtSteady = std::chrono::steady_clock::now();
 
         g_matchStates[roomId] = state;
 
@@ -780,7 +807,7 @@ namespace
 
         for (const RoomMember& member : room.members)
         {
-            Session* target = SessionManager::Instance().Find(member.playerId);
+            auto target = SessionManager::Instance().Find(member.playerId);
             if (target == nullptr)
                 continue;
 
@@ -913,7 +940,7 @@ namespace
 
         for (const RoomMember& member : room.members)
         {
-            Session* target = SessionManager::Instance().Find(member.playerId);
+            auto target = SessionManager::Instance().Find(member.playerId);
             if (target == nullptr)
                 continue;
 
@@ -947,7 +974,7 @@ namespace
 
         for (const RoomMember& member : room.members)
         {
-            Session* target = SessionManager::Instance().Find(member.playerId);
+            auto target = SessionManager::Instance().Find(member.playerId);
             if (target == nullptr)
                 continue;
 
@@ -1214,7 +1241,7 @@ namespace
             if (member.team != team)
                 continue;
 
-            Session* target = SessionManager::Instance().Find(member.playerId);
+            auto target = SessionManager::Instance().Find(member.playerId);
             if (target == nullptr)
                 continue;
 
@@ -1266,7 +1293,7 @@ namespace
             if (member.team == RoomTeam::OBSERVER)
                 continue;
 
-            Session* target = SessionManager::Instance().Find(member.playerId);
+            auto target = SessionManager::Instance().Find(member.playerId);
             if (target == nullptr)
                 continue;
 
@@ -1435,7 +1462,7 @@ namespace
 
         for (const RoomMember& member : room.members)
         {
-            Session* target = SessionManager::Instance().Find(member.playerId);
+            auto target = SessionManager::Instance().Find(member.playerId);
             if (target == nullptr)
                 continue;
 
@@ -1458,7 +1485,7 @@ namespace
 
         for (const RoomMember& member : room.members)
         {
-            Session* target = SessionManager::Instance().Find(member.playerId);
+            auto target = SessionManager::Instance().Find(member.playerId);
             if (target == nullptr)
                 continue;
 
@@ -1586,19 +1613,19 @@ namespace
             if (hpOwner.team == RoomTeam::OBSERVER)
                 continue;
 
-            Session* ownerSession = SessionManager::Instance().Find(hpOwner.playerId);
+            auto ownerSession = SessionManager::Instance().Find(hpOwner.playerId);
             if (ownerSession == nullptr)
                 continue;
 
             SC_HPUpdate hpPkt{};
-            FillHPUpdatePacket(hpPkt, ownerSession);
+            FillHPUpdatePacket(hpPkt, ownerSession.get());
 
             for (const RoomMember& receiver : room.members)
             {
                 if (receiver.team == RoomTeam::OBSERVER)
                     continue;
 
-                Session* receiverSession = SessionManager::Instance().Find(receiver.playerId);
+                auto receiverSession = SessionManager::Instance().Find(receiver.playerId);
                 if (receiverSession == nullptr)
                     continue;
 
@@ -1624,7 +1651,7 @@ namespace
             if (receiver.team == RoomTeam::OBSERVER)
                 continue;
 
-            Session* receiverSession = SessionManager::Instance().Find(receiver.playerId);
+            auto receiverSession = SessionManager::Instance().Find(receiver.playerId);
             if (receiverSession == nullptr)
                 continue;
 
@@ -1649,7 +1676,7 @@ namespace
                 if (count >= GAME_MEMBER_COUNT)
                     break;
 
-                Session* memberSession = SessionManager::Instance().Find(member.playerId);
+                auto memberSession = SessionManager::Instance().Find(member.playerId);
                 if (memberSession == nullptr)
                     continue;
 
@@ -1696,7 +1723,7 @@ namespace
             if (member.team == RoomTeam::OBSERVER)
                 continue;
 
-            Session* playerSession = SessionManager::Instance().Find(member.playerId);
+            auto playerSession = SessionManager::Instance().Find(member.playerId);
             if (playerSession == nullptr)
                 continue;
 
@@ -1736,7 +1763,7 @@ namespace
 
         for (const RoomMember& member : room.members)
         {
-            Session* target = SessionManager::Instance().Find(member.playerId);
+            auto target = SessionManager::Instance().Find(member.playerId);
 
             if (target == nullptr)
                 continue;
@@ -1791,7 +1818,7 @@ namespace
             if (member.team == RoomTeam::OBSERVER)
                 continue;
 
-            Session* target = SessionManager::Instance().Find(member.playerId);
+            auto target = SessionManager::Instance().Find(member.playerId);
             if (target == nullptr)
                 continue;
 
@@ -1828,7 +1855,7 @@ namespace
             if (member.team == RoomTeam::OBSERVER)
                 continue;
 
-            Session* receiver =
+            auto receiver =
                 SessionManager::Instance().Find(member.playerId);
 
             if (receiver == nullptr)
@@ -1974,6 +2001,589 @@ namespace
             << " reason=" << static_cast<int>(reason)
             << " cooldown=" << cooldownSeconds
             << std::endl;
+    }
+
+    constexpr int MATCHMAKING_PLAYER_COUNT = 6;
+    constexpr int MATCHMAKING_MIN_WAIT_SECONDS = 5;
+    constexpr int MATCHMAKING_RANKED_INITIAL_RANGE = 2;
+    constexpr int MATCHMAKING_NORMAL_INITIAL_RANGE = 3;
+    constexpr int MATCHMAKING_RANKED_MAX_RANGE = 8;
+    constexpr int MATCHMAKING_NORMAL_MAX_RANGE = 25;
+    constexpr int MATCHMAKING_EXPAND_SECONDS = 10;
+
+    uint8_t GetInitialMatchmakingRange(uint8_t mode)
+    {
+        return static_cast<uint8_t>(mode == 1
+            ? MATCHMAKING_RANKED_INITIAL_RANGE
+            : MATCHMAKING_NORMAL_INITIAL_RANGE);
+    }
+
+    uint8_t GetMatchmakingTierRange(
+        const MatchmakingEntry& entry,
+        std::chrono::steady_clock::time_point now)
+    {
+        int elapsedSeconds = static_cast<int>(
+            std::chrono::duration_cast<std::chrono::seconds>(
+                now - entry.queuedAt).count());
+        int initialRange = GetInitialMatchmakingRange(entry.mode);
+        int maxRange = entry.mode == 1
+            ? MATCHMAKING_RANKED_MAX_RANGE
+            : MATCHMAKING_NORMAL_MAX_RANGE;
+        int expanded = initialRange +
+            elapsedSeconds / MATCHMAKING_EXPAND_SECONDS;
+        return static_cast<uint8_t>(std::min(expanded, maxRange));
+    }
+
+    uint16_t GetMatchmakingElapsedSeconds(
+        const MatchmakingEntry& entry,
+        std::chrono::steady_clock::time_point now)
+    {
+        int64_t elapsed =
+            std::chrono::duration_cast<std::chrono::seconds>(
+                now - entry.queuedAt).count();
+        return static_cast<uint16_t>(
+            std::max<int64_t>(0, std::min<int64_t>(elapsed, 65535)));
+    }
+
+    void SendMatchmakingState(
+        Session* session,
+        uint8_t result,
+        uint8_t state,
+        uint8_t mode,
+        uint16_t elapsedSeconds,
+        uint8_t tierRange,
+        uint32_t roomId)
+    {
+        if (session == nullptr)
+            return;
+
+        SC_TempGameStartResult out{};
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(
+            PacketType::PKT_SC_TEMP_GAME_START_RESULT);
+        out.result = result;
+        out.state = state;
+        out.mode = mode;
+        out.elapsedSeconds = elapsedSeconds;
+        out.tierRange = tierRange;
+        out.roomId = roomId;
+        session->Send(&out);
+    }
+
+    bool BuildMatchmakingRoomMember(
+        Session* session,
+        RoomMember& outMember)
+    {
+        if (session == nullptr || session->GetState() != SessionState::IN_LOBBY)
+            return false;
+
+        PlayerData data{};
+        if (!UserManager::Instance().GetPlayerData(
+                session->GetUserId(),
+                data))
+        {
+            return false;
+        }
+
+        outMember = RoomMember{};
+        outMember.playerId = session->GetPlayerId();
+        outMember.userId = session->GetUserId();
+        outMember.nickname = data.nickname;
+        outMember.level = data.level;
+        outMember.playerIconId = data.playerIconId;
+        outMember.rankImageId = data.rankImageId;
+        return true;
+    }
+
+    bool AreMatchmakingEntriesCompatible(
+        const MatchmakingEntry& lhs,
+        const MatchmakingEntry& rhs,
+        std::chrono::steady_clock::time_point now)
+    {
+        int allowedRange = std::min(
+            static_cast<int>(GetMatchmakingTierRange(lhs, now)),
+            static_cast<int>(GetMatchmakingTierRange(rhs, now)));
+        int ratingDifference = std::abs(
+            lhs.matchmakingRating - rhs.matchmakingRating);
+        if (ratingDifference > allowedRange * 100)
+            return false;
+
+        if (lhs.mode == 1)
+        {
+            int visibleTierDifference = std::abs(
+                lhs.visibleTierId - rhs.visibleTierId);
+            if (visibleTierDifference > allowedRange)
+                return false;
+        }
+
+        return true;
+    }
+
+    int CountSelectedPlayers(uint32_t mask)
+    {
+        int count = 0;
+        while (mask != 0)
+        {
+            count += static_cast<int>(mask & 1u);
+            mask >>= 1u;
+        }
+        return count;
+    }
+
+    bool DoesTeamMaskSplitParty(
+        const std::vector<MatchmakingEntry>& group,
+        uint32_t teamAMask)
+    {
+        for (size_t i = 0; i < group.size(); ++i)
+        {
+            if (group[i].partyId == 0 || group[i].partySize <= 1)
+                continue;
+
+            bool iOnTeamA = (teamAMask & (1u << i)) != 0;
+            for (size_t j = i + 1; j < group.size(); ++j)
+            {
+                if (group[j].partyId != group[i].partyId)
+                    continue;
+                bool jOnTeamA = (teamAMask & (1u << j)) != 0;
+                if (iOnTeamA != jOnTeamA)
+                    return true;
+            }
+        }
+        return false;
+    }
+
+    int CalculateTeamPartyRatingBonus(
+        const std::vector<MatchmakingEntry>& group,
+        uint32_t teamAMask,
+        bool forTeamA)
+    {
+        std::unordered_map<uint64_t, int> partySizes;
+        for (size_t i = 0; i < group.size(); ++i)
+        {
+            bool isOnTeamA = (teamAMask & (1u << i)) != 0;
+            if (isOnTeamA != forTeamA ||
+                group[i].partyId == 0 ||
+                group[i].partySize <= 1)
+            {
+                continue;
+            }
+
+            partySizes[group[i].partyId] = std::max(
+                partySizes[group[i].partyId],
+                static_cast<int>(group[i].partySize));
+        }
+
+        int bonus = 0;
+        for (const auto& pair : partySizes)
+        {
+            if (pair.second == 2)
+                bonus += 35;
+            else if (pair.second >= 3)
+                bonus += 70;
+        }
+        return std::min(bonus, 70);
+    }
+
+    bool BuildBalancedMatchmakingGroup(
+        const std::vector<MatchmakingEntry>& group,
+        std::vector<MatchmakingEntry>& outBalancedGroup,
+        double& outTeamAExpectedWinRate)
+    {
+        if (group.size() != MATCHMAKING_PLAYER_COUNT)
+            return false;
+
+        double bestCost = std::numeric_limits<double>::max();
+        uint32_t bestTeamAMask = 0;
+        double bestExpectedWinRate = 0.5;
+        uint32_t maskLimit = 1u << MATCHMAKING_PLAYER_COUNT;
+
+        for (uint32_t teamAMask = 0; teamAMask < maskLimit; ++teamAMask)
+        {
+            if ((teamAMask & 1u) == 0 ||
+                CountSelectedPlayers(teamAMask) != 3 ||
+                DoesTeamMaskSplitParty(group, teamAMask))
+            {
+                continue;
+            }
+
+            double teamATotal = 0.0;
+            double teamBTotal = 0.0;
+            for (size_t i = 0; i < group.size(); ++i)
+            {
+                if ((teamAMask & (1u << i)) != 0)
+                    teamATotal += group[i].matchmakingRating;
+                else
+                    teamBTotal += group[i].matchmakingRating;
+            }
+
+            int teamAPartyBonus = CalculateTeamPartyRatingBonus(
+                group,
+                teamAMask,
+                true);
+            int teamBPartyBonus = CalculateTeamPartyRatingBonus(
+                group,
+                teamAMask,
+                false);
+            double teamAEffectiveAverage =
+                teamATotal / 3.0 + teamAPartyBonus;
+            double teamBEffectiveAverage =
+                teamBTotal / 3.0 + teamBPartyBonus;
+            double expectedWinRate =
+                RankRatingCalculator::CalculateExpectedWinRate(
+                    teamAEffectiveAverage,
+                    teamBEffectiveAverage);
+            double partyMismatch = std::abs(
+                teamAPartyBonus - teamBPartyBonus);
+            double cost =
+                std::abs(0.5 - expectedWinRate) * 1000.0 +
+                partyMismatch * 0.25;
+
+            if (cost < bestCost)
+            {
+                bestCost = cost;
+                bestTeamAMask = teamAMask;
+                bestExpectedWinRate = expectedWinRate;
+            }
+        }
+
+        if (bestTeamAMask == 0)
+            return false;
+
+        std::vector<MatchmakingEntry> teamA;
+        std::vector<MatchmakingEntry> teamB;
+        for (size_t i = 0; i < group.size(); ++i)
+        {
+            if ((bestTeamAMask & (1u << i)) != 0)
+                teamA.push_back(group[i]);
+            else
+                teamB.push_back(group[i]);
+        }
+
+        outBalancedGroup.clear();
+        outBalancedGroup.reserve(MATCHMAKING_PLAYER_COUNT);
+        for (size_t i = 0; i < teamA.size(); ++i)
+        {
+            outBalancedGroup.push_back(teamA[i]);
+            outBalancedGroup.push_back(teamB[i]);
+        }
+        outTeamAExpectedWinRate = bestExpectedWinRate;
+        return true;
+    }
+
+    bool ContainsCompleteMatchmakingParties(
+        const std::vector<MatchmakingEntry>& group)
+    {
+        std::unordered_map<uint64_t, int> selectedPartyMembers;
+        std::unordered_map<uint64_t, int> declaredPartySizes;
+        for (const MatchmakingEntry& entry : group)
+        {
+            if (entry.partyId == 0 || entry.partySize <= 1)
+                continue;
+            selectedPartyMembers[entry.partyId]++;
+            declaredPartySizes[entry.partyId] = std::max(
+                declaredPartySizes[entry.partyId],
+                static_cast<int>(entry.partySize));
+        }
+
+        for (const auto& pair : declaredPartySizes)
+        {
+            if (selectedPartyMembers[pair.first] != pair.second)
+                return false;
+        }
+        return true;
+    }
+
+    double GetAllowedWinRateDeviation(
+        const std::vector<MatchmakingEntry>& group,
+        std::chrono::steady_clock::time_point now)
+    {
+        int longestWait = 0;
+        for (const MatchmakingEntry& entry : group)
+        {
+            longestWait = std::max(
+                longestWait,
+                static_cast<int>(GetMatchmakingElapsedSeconds(entry, now)));
+        }
+
+        double expansion = std::clamp(
+            static_cast<double>(
+                std::max(0, longestWait - MATCHMAKING_MIN_WAIT_SECONDS)) /
+                120.0,
+            0.0,
+            1.0);
+        return 0.05 + expansion * 0.07;
+    }
+
+    bool TryTakeMatchmakingGroup(
+        uint8_t mode,
+        std::vector<MatchmakingEntry>& outGroup)
+    {
+        std::lock_guard<std::mutex> lock(g_matchmakingMutex);
+        auto now = std::chrono::steady_clock::now();
+
+        g_matchmakingQueue.erase(
+            std::remove_if(
+                g_matchmakingQueue.begin(),
+                g_matchmakingQueue.end(),
+                [](const MatchmakingEntry& entry)
+                {
+                    auto session =
+                        SessionManager::Instance().Find(entry.playerId);
+                    return session == nullptr ||
+                        session->GetState() != SessionState::IN_LOBBY;
+                }),
+            g_matchmakingQueue.end());
+
+        for (size_t anchorIndex = 0;
+            anchorIndex < g_matchmakingQueue.size();
+            ++anchorIndex)
+        {
+            const MatchmakingEntry& anchor =
+                g_matchmakingQueue[anchorIndex];
+            if (anchor.mode != mode ||
+                GetMatchmakingElapsedSeconds(anchor, now) <
+                    MATCHMAKING_MIN_WAIT_SECONDS)
+            {
+                continue;
+            }
+
+            std::vector<size_t> selectedIndices{ anchorIndex };
+            for (size_t candidateIndex = 0;
+                candidateIndex < g_matchmakingQueue.size() &&
+                    selectedIndices.size() < MATCHMAKING_PLAYER_COUNT;
+                ++candidateIndex)
+            {
+                if (candidateIndex == anchorIndex)
+                    continue;
+
+                const MatchmakingEntry& candidate =
+                    g_matchmakingQueue[candidateIndex];
+                if (candidate.mode != mode ||
+                    GetMatchmakingElapsedSeconds(candidate, now) <
+                        MATCHMAKING_MIN_WAIT_SECONDS)
+                {
+                    continue;
+                }
+
+                bool compatible = true;
+                for (size_t selectedIndex : selectedIndices)
+                {
+                    if (!AreMatchmakingEntriesCompatible(
+                            candidate,
+                            g_matchmakingQueue[selectedIndex],
+                            now))
+                    {
+                        compatible = false;
+                        break;
+                    }
+                }
+
+                if (compatible)
+                    selectedIndices.push_back(candidateIndex);
+            }
+
+            if (selectedIndices.size() != MATCHMAKING_PLAYER_COUNT)
+                continue;
+
+            std::vector<MatchmakingEntry> selectedGroup;
+            selectedGroup.reserve(MATCHMAKING_PLAYER_COUNT);
+            for (size_t selectedIndex : selectedIndices)
+                selectedGroup.push_back(g_matchmakingQueue[selectedIndex]);
+
+            if (!ContainsCompleteMatchmakingParties(selectedGroup))
+                continue;
+
+            std::vector<MatchmakingEntry> balancedGroup;
+            double teamAExpectedWinRate = 0.5;
+            if (!BuildBalancedMatchmakingGroup(
+                    selectedGroup,
+                    balancedGroup,
+                    teamAExpectedWinRate))
+            {
+                continue;
+            }
+
+            double allowedDeviation =
+                GetAllowedWinRateDeviation(balancedGroup, now);
+            if (std::abs(teamAExpectedWinRate - 0.5) > allowedDeviation)
+                continue;
+
+            std::unordered_set<uint32_t> selectedPlayerIds;
+            for (const MatchmakingEntry& entry : balancedGroup)
+            {
+                outGroup.push_back(entry);
+                selectedPlayerIds.insert(entry.playerId);
+            }
+
+            g_matchmakingQueue.erase(
+                std::remove_if(
+                    g_matchmakingQueue.begin(),
+                    g_matchmakingQueue.end(),
+                    [&selectedPlayerIds](const MatchmakingEntry& entry)
+                    {
+                        return selectedPlayerIds.count(entry.playerId) > 0;
+                    }),
+                g_matchmakingQueue.end());
+            return true;
+        }
+
+        return false;
+    }
+
+    bool CreateMatchmakingRoom(
+        const std::vector<MatchmakingEntry>& group)
+    {
+        if (group.size() != MATCHMAKING_PLAYER_COUNT)
+            return false;
+
+        std::vector<std::shared_ptr<Session>> sessions;
+        std::vector<RoomMember> members;
+        sessions.reserve(group.size());
+        members.reserve(group.size());
+
+        for (const MatchmakingEntry& entry : group)
+        {
+            auto session = SessionManager::Instance().Find(entry.playerId);
+            RoomMember member{};
+            if (!BuildMatchmakingRoomMember(session.get(), member))
+                return false;
+            member.matchmakingPartyId = entry.partyId;
+            member.matchmakingPartySize = entry.partySize;
+            sessions.push_back(session);
+            members.push_back(member);
+        }
+
+        uint8_t mode = group[0].mode == 1 ? 1 : 0;
+        std::string roomName = mode == 1
+            ? "Ranked Match"
+            : "Normal Match";
+        uint32_t roomId = RoomManager::Instance().CreateRoom(
+            roomName,
+            "Default Map",
+            members[0].nickname,
+            members[0],
+            MATCHMAKING_PLAYER_COUNT,
+            mode,
+            true);
+        if (roomId == 0)
+            return false;
+
+        Room room{};
+        for (size_t i = 1; i < members.size(); ++i)
+        {
+            if (!RoomManager::Instance().EnterRoom(roomId, members[i], room))
+                return false;
+        }
+
+        for (const std::shared_ptr<Session>& session : sessions)
+        {
+            session->SetCurrentRoomId(roomId);
+            session->SetState(SessionState::IN_ROOM);
+        }
+
+        Room startedRoom{};
+        if (!RoomManager::Instance().StartGame(
+                roomId,
+                members[0].playerId,
+                startedRoom))
+        {
+            return false;
+        }
+
+        ResetGameLoadRuntimeState(roomId);
+        {
+            std::lock_guard<std::mutex> lock(g_resultLeaveMutex);
+            g_resultLeavePlayers.erase(roomId);
+        }
+
+        auto now = std::chrono::steady_clock::now();
+        for (size_t i = 0; i < sessions.size(); ++i)
+        {
+            SendMatchmakingState(
+                sessions[i].get(),
+                0,
+                1,
+                mode,
+                GetMatchmakingElapsedSeconds(group[i], now),
+                GetMatchmakingTierRange(group[i], now),
+                roomId);
+        }
+
+        uint32_t teamAMask = 0;
+        for (size_t i = 0; i < group.size(); i += 2)
+            teamAMask |= 1u << i;
+        double teamATotal = 0.0;
+        double teamBTotal = 0.0;
+        for (size_t i = 0; i < group.size(); ++i)
+        {
+            if ((teamAMask & (1u << i)) != 0)
+                teamATotal += group[i].matchmakingRating;
+            else
+                teamBTotal += group[i].matchmakingRating;
+        }
+        double teamAEffectiveAverage = teamATotal / 3.0 +
+            CalculateTeamPartyRatingBonus(group, teamAMask, true);
+        double teamBEffectiveAverage = teamBTotal / 3.0 +
+            CalculateTeamPartyRatingBonus(group, teamAMask, false);
+        int expectedWinRatePermille = static_cast<int>(std::lround(
+            RankRatingCalculator::CalculateExpectedWinRate(
+                teamAEffectiveAverage,
+                teamBEffectiveAverage) * 1000.0));
+
+        std::cout << "[MATCHMAKING FOUND] roomId=" << roomId
+            << " mode=" << static_cast<int>(mode)
+            << " players=" << sessions.size()
+            << " teamAMmr=" << static_cast<int>(std::lround(
+                teamAEffectiveAverage))
+            << " teamBMmr=" << static_cast<int>(std::lround(
+                teamBEffectiveAverage))
+            << " teamAExpectedPermille=" << expectedWinRatePermille
+            << std::endl;
+        return true;
+    }
+
+    void RunMatchmakingWorker()
+    {
+        while (true)
+        {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+            for (uint8_t mode = 0; mode <= 1; ++mode)
+            {
+                while (true)
+                {
+                    std::vector<MatchmakingEntry> group;
+                    if (!TryTakeMatchmakingGroup(mode, group))
+                        break;
+
+                    if (!CreateMatchmakingRoom(group))
+                    {
+                        for (const MatchmakingEntry& entry : group)
+                        {
+                            auto session =
+                                SessionManager::Instance().Find(entry.playerId);
+                            SendMatchmakingState(
+                                session.get(),
+                                1,
+                                3,
+                                entry.mode,
+                                0,
+                                GetInitialMatchmakingRange(entry.mode),
+                                0);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    void EnsureMatchmakingWorkerStarted()
+    {
+        std::call_once(
+            g_matchmakingWorkerOnce,
+            []()
+            {
+                std::thread(RunMatchmakingWorker).detach();
+            });
     }
 
     void ClearSentinelETrapsInRoom(uint32_t roomId)
@@ -2912,6 +3522,7 @@ namespace
         out.winnerTeam = static_cast<uint8_t>(winnerTeam);
         out.scoreA = scoreA;
         out.scoreB = scoreB;
+        out.matchType = room.matchType == 1 ? 1 : 0;
 
         int bestScore = -999999;
         uint32_t mvpPlayerId = 0;
@@ -2924,7 +3535,7 @@ namespace
             if (member.team != winnerTeam)
                 continue;
 
-            Session* s = SessionManager::Instance().Find(member.playerId);
+            auto s = SessionManager::Instance().Find(member.playerId);
             if (s == nullptr)
                 continue;
 
@@ -2938,6 +3549,9 @@ namespace
         }
 
         uint8_t count = 0;
+        std::vector<CareerMatchPlayer> careerPlayers;
+        std::vector<std::string> resultUserIds;
+        std::unordered_map<std::string, CareerOverview> rankOverviewBefore;
 
         for (const RoomMember& member : room.members)
         {
@@ -2947,7 +3561,7 @@ namespace
             if (count >= GAME_MEMBER_COUNT)
                 break;
 
-            Session* s = SessionManager::Instance().Find(member.playerId);
+            auto s = SessionManager::Instance().Find(member.playerId);
             if (s == nullptr)
                 continue;
 
@@ -2981,10 +3595,152 @@ namespace
 
             info.isMvp = member.playerId == mvpPlayerId ? 1 : 0;
 
+            if (room.matchType == 1)
+            {
+                CareerOverview beforeOverview{};
+                if (CareerManager::Instance().GetOverview(
+                        member.userId,
+                        beforeOverview))
+                {
+                    rankOverviewBefore[member.userId] = beforeOverview;
+                    info.rankPointsBefore = beforeOverview.stats.rankPoints;
+                    info.rankPointsAfter = beforeOverview.stats.rankPoints;
+                    info.rankTierIdBefore = beforeOverview.tier.tierId;
+                    info.rankTierIdAfter = beforeOverview.tier.tierId;
+                }
+            }
+
+            if (room.isMatchmade)
+            {
+                bool won = member.team == winnerTeam;
+                CareerMatchReward reward =
+                    CareerManager::Instance().GrantMatchReward(
+                        member.userId,
+                        won);
+                info.freeCurrencyReward = reward.freeCurrencyReward;
+                info.victoryCurrencyReward = reward.victoryCurrencyReward;
+                info.totalFreeCurrency = reward.totalFreeCurrency;
+                info.totalVictoryCurrency = reward.totalVictoryCurrency;
+            }
+
+            CareerMatchPlayer careerPlayer{};
+            careerPlayer.userId = member.userId;
+            careerPlayer.nickname = member.nickname;
+            careerPlayer.team = static_cast<int>(member.team);
+            careerPlayer.characterId = member.lockedCharacterId;
+            careerPlayer.combatScore = GetKdaScore(stats);
+            careerPlayer.attackScore = stats.kills * 100;
+            careerPlayer.skillScore = 0;
+            careerPlayer.teamworkScore = stats.assists * 50;
+            careerPlayer.kills = stats.kills;
+            careerPlayer.deaths = stats.deaths;
+            careerPlayer.assists = stats.assists;
+            careerPlayer.damage = stats.damageDealt;
+            careerPlayer.isMvp = member.playerId == mvpPlayerId;
+            careerPlayer.partyId = member.matchmakingPartyId;
+            careerPlayer.partySize = member.matchmakingPartySize;
+            careerPlayers.push_back(careerPlayer);
+            resultUserIds.push_back(member.userId);
+
             count++;
         }
 
         out.memberCount = count;
+
+        int64_t startedAtUnix = static_cast<int64_t>(std::time(nullptr));
+        int durationSeconds = 0;
+
+        {
+            std::lock_guard<std::mutex> lock(g_matchStateMutex);
+            auto stateIt = g_matchStates.find(roomId);
+            if (stateIt != g_matchStates.end())
+            {
+                startedAtUnix = stateIt->second.startedAtUnix;
+                durationSeconds = static_cast<int>(
+                    std::chrono::duration_cast<std::chrono::seconds>(
+                        std::chrono::steady_clock::now() -
+                        stateIt->second.startedAtSteady
+                    ).count()
+                );
+            }
+        }
+
+        std::vector<CareerRankAdjustment> rankAdjustments;
+        CareerManager::Instance().RecordMatch(
+            room.mapName,
+            startedAtUnix,
+            durationSeconds,
+            scoreA,
+            scoreB,
+            static_cast<int>(winnerTeam),
+            careerPlayers,
+            room.matchType,
+            room.isMatchmade,
+            &rankAdjustments
+        );
+
+        std::unordered_map<std::string, CareerRankAdjustment>
+            rankAdjustmentsByUser;
+        for (const CareerRankAdjustment& adjustment : rankAdjustments)
+            rankAdjustmentsByUser[adjustment.userId] = adjustment;
+
+        if (room.matchType == 1)
+        {
+            for (size_t i = 0;
+                i < resultUserIds.size() && i < count;
+                ++i)
+            {
+                MatchResultMemberInfo& info = out.members[i];
+                CareerOverview afterOverview{};
+                if (!CareerManager::Instance().GetOverview(
+                        resultUserIds[i],
+                        afterOverview))
+                {
+                    continue;
+                }
+
+                auto beforeIt = rankOverviewBefore.find(resultUserIds[i]);
+                int rankPointsBefore = beforeIt != rankOverviewBefore.end()
+                    ? beforeIt->second.stats.rankPoints
+                    : afterOverview.stats.rankPoints;
+                int rankTierBefore = beforeIt != rankOverviewBefore.end()
+                    ? beforeIt->second.tier.tierId
+                    : afterOverview.tier.tierId;
+
+                info.rankPointsBefore = rankPointsBefore;
+                info.rankPointsAfter = afterOverview.stats.rankPoints;
+                info.rankPointDelta =
+                    info.rankPointsAfter - info.rankPointsBefore;
+                info.rankTierIdBefore = rankTierBefore;
+                info.rankTierIdAfter = afterOverview.tier.tierId;
+
+                auto adjustmentIt =
+                    rankAdjustmentsByUser.find(resultUserIds[i]);
+                if (adjustmentIt != rankAdjustmentsByUser.end())
+                {
+                    info.rankExpectedWinRatePermille =
+                        adjustmentIt->second.expectedWinRatePermille;
+                    info.rankModifierFlags =
+                        adjustmentIt->second.modifierFlags;
+                }
+            }
+        }
+
+        std::vector<CareerRankingEntry> refreshedRankings =
+            CareerManager::Instance().GetRankings(
+                std::numeric_limits<size_t>::max()
+            );
+
+        std::vector<std::pair<std::string, int>> refreshedRankImages;
+        refreshedRankImages.reserve(refreshedRankings.size());
+        for (const CareerRankingEntry& ranking : refreshedRankings)
+        {
+            refreshedRankImages.emplace_back(
+                ranking.userId,
+                ranking.tier.rankImageId
+            );
+        }
+        UserManager::Instance().SetRankImages(refreshedRankImages);
 
         BroadcastPacketToRoomInternal(roomId, &out);
 
@@ -3081,7 +3837,7 @@ namespace
 
         for (const RoomMember& member : room.members)
         {
-            Session* target = SessionManager::Instance().Find(member.playerId);
+            auto target = SessionManager::Instance().Find(member.playerId);
             if (target == nullptr)
                 continue;
 
@@ -3111,7 +3867,7 @@ namespace
 
         for (const RoomMember& member : room.members)
         {
-            Session* target = SessionManager::Instance().Find(member.playerId);
+            auto target = SessionManager::Instance().Find(member.playerId);
             if (target == nullptr)
                 continue;
 
@@ -3259,7 +4015,7 @@ namespace
 
         for (const RoomMember& member : room.members)
         {
-            Session* target = SessionManager::Instance().Find(member.playerId);
+            auto target = SessionManager::Instance().Find(member.playerId);
             if (target == nullptr)
                 continue;
 
@@ -3895,7 +4651,7 @@ namespace
             if (count >= GAME_MEMBER_COUNT)
                 break;
 
-            Session* playerSession =
+            auto playerSession =
                 SessionManager::Instance().Find(member.playerId);
 
             if (playerSession == nullptr)
@@ -3956,7 +4712,7 @@ namespace
                 info.magAmmo = 0;
                 info.reserveAmmo = 0;
             }
-            FillRoundResetWeaponSlots(info, playerSession);
+            FillRoundResetWeaponSlots(info, playerSession.get());
             info.purchasedSkillMask = playerSession->GetPurchasedSkillMask();
             info.usedSkillMask = playerSession->GetUsedSkillMask();
             count++;
@@ -4133,7 +4889,7 @@ namespace
 
             teamPlayerCount++;
 
-            Session* playerSession =
+            auto playerSession =
                 SessionManager::Instance().Find(member.playerId);
 
             if (playerSession == nullptr)
@@ -4379,7 +5135,7 @@ namespace
 
         for (const RoomMember& member : room.members)
         {
-            Session* target = SessionManager::Instance().Find(member.playerId);
+            auto target = SessionManager::Instance().Find(member.playerId);
             if (target == nullptr)
                 continue;
 
@@ -4430,7 +5186,7 @@ namespace
 
         for (const RoomMember& member : room.members)
         {
-            Session* target = SessionManager::Instance().Find(member.playerId);
+            auto target = SessionManager::Instance().Find(member.playerId);
             if (target == nullptr)
                 continue;
 
@@ -4493,7 +5249,7 @@ namespace
             if (receiver.team == RoomTeam::OBSERVER)
                 continue;
 
-            Session* target = SessionManager::Instance().Find(receiver.playerId);
+            auto target = SessionManager::Instance().Find(receiver.playerId);
             if (target == nullptr)
                 continue;
 
@@ -4918,7 +5674,7 @@ namespace
             if (member.team == RoomTeam::OBSERVER)
                 continue;
 
-            Session* s = SessionManager::Instance().Find(member.playerId);
+            auto s = SessionManager::Instance().Find(member.playerId);
 
             if (s == nullptr)
                 continue;
@@ -4987,7 +5743,7 @@ namespace
             if (member.team == RoomTeam::OBSERVER)
                 continue;
 
-            Session* s = SessionManager::Instance().Find(member.playerId);
+            auto s = SessionManager::Instance().Find(member.playerId);
 
             if (s == nullptr)
                 continue;
@@ -6500,6 +7256,259 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             << std::endl;
         break;
     }
+
+    case PacketType::PKT_CS_CAREER_OVERVIEW_REQUEST:
+    {
+        if (header->size != sizeof(CS_CareerOverviewRequest))
+            break;
+
+        CareerOverview overview{};
+        bool ok = CareerManager::Instance().GetOverview(
+            session->GetUserId(),
+            overview
+        );
+
+        SC_CareerOverview out{};
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(
+            PacketType::PKT_SC_CAREER_OVERVIEW
+        );
+
+        if (ok)
+        {
+            out.seasonId = overview.season.seasonId;
+            strncpy_s(
+                out.seasonName,
+                sizeof(out.seasonName),
+                overview.season.seasonName.c_str(),
+                _TRUNCATE
+            );
+            out.seasonEndUnix = overview.season.endUnix;
+            out.remainingSeasonDays = overview.remainingSeasonDays;
+            out.tierId = overview.tier.tierId;
+            strncpy_s(
+                out.tierName,
+                sizeof(out.tierName),
+                overview.tier.tierName.c_str(),
+                _TRUNCATE
+            );
+            out.rankImageId = overview.tier.rankImageId;
+            out.tierMinPoints = overview.tier.minPoints;
+            out.tierMaxPoints = overview.tier.maxPoints;
+            out.rankPoints = overview.stats.rankPoints;
+            out.rankedMatches = overview.stats.rankedMatches;
+            out.wins = overview.stats.wins;
+            out.roundsPlayed = overview.stats.roundsPlayed;
+            out.kills = overview.stats.kills;
+            out.totalDamage = overview.stats.totalDamage;
+            out.mvpCount = overview.stats.mvpCount;
+        }
+
+        session->Send(&out);
+        break;
+    }
+
+    case PacketType::PKT_CS_CAREER_RANKING_REQUEST:
+    {
+        if (header->size != sizeof(CS_CareerRankingRequest))
+            break;
+
+        const CS_CareerRankingRequest* request =
+            reinterpret_cast<const CS_CareerRankingRequest*>(header);
+        size_t queryLength = 0;
+        while (queryLength < CAREER_RANKING_QUERY_LEN &&
+            request->searchQuery[queryLength] != '\0')
+        {
+            ++queryLength;
+        }
+
+        CareerRankingPage rankingPage =
+            CareerManager::Instance().GetRankingPage(
+                request->rankingType,
+                request->characterId,
+                request->page,
+                CAREER_RANKING_COUNT,
+                std::string(request->searchQuery, queryLength)
+            );
+
+        SC_CareerRanking out{};
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(
+            PacketType::PKT_SC_CAREER_RANKING
+        );
+        out.rankingType = static_cast<uint8_t>(rankingPage.rankingType);
+        out.characterId = rankingPage.characterId;
+        out.page = static_cast<uint8_t>(rankingPage.page);
+        out.totalPages = static_cast<uint8_t>(std::max(
+            1,
+            std::min(rankingPage.totalPages, 255)));
+        out.totalEntries = rankingPage.totalEntries;
+        out.count = static_cast<uint8_t>(rankingPage.entries.size());
+
+        for (size_t i = 0; i < rankingPage.entries.size(); ++i)
+        {
+            const CareerRankingEntry& source = rankingPage.entries[i];
+            CareerRankingPacketEntry& destination = out.entries[i];
+            destination.position = source.position;
+            strncpy_s(
+                destination.userId,
+                sizeof(destination.userId),
+                source.userId.c_str(),
+                _TRUNCATE
+            );
+            strncpy_s(
+                destination.nickname,
+                sizeof(destination.nickname),
+                source.nickname.c_str(),
+                _TRUNCATE
+            );
+            destination.tierId = source.tier.tierId;
+            strncpy_s(
+                destination.tierName,
+                sizeof(destination.tierName),
+                source.tier.tierName.c_str(),
+                _TRUNCATE
+            );
+            destination.rankImageId = source.tier.rankImageId;
+            destination.rankPoints = source.score;
+            destination.rankedMatches = source.matches;
+            destination.wins = source.wins;
+        }
+
+        session->Send(&out);
+        break;
+    }
+
+    case PacketType::PKT_CS_CAREER_MATCH_HISTORY_REQUEST:
+    {
+        if (header->size != sizeof(CS_CareerMatchHistoryRequest))
+            break;
+
+        const auto* request =
+            reinterpret_cast<const CS_CareerMatchHistoryRequest*>(header);
+        int filterType = std::max(
+            0,
+            std::min(static_cast<int>(request->filterType), 2));
+
+        std::vector<CareerMatchHistoryEntry> history =
+            CareerManager::Instance().GetMatchHistory(
+                session->GetUserId(),
+                filterType,
+                CAREER_MATCH_HISTORY_COUNT
+            );
+
+        SC_CareerMatchHistory out{};
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(
+            PacketType::PKT_SC_CAREER_MATCH_HISTORY
+        );
+        out.filterType = static_cast<uint8_t>(filterType);
+        out.count = static_cast<uint8_t>(history.size());
+
+        for (size_t i = 0; i < history.size(); ++i)
+        {
+            const CareerMatchHistoryEntry& source = history[i];
+            CareerMatchPacketEntry& destination = out.matches[i];
+            destination.matchId = source.match.matchId;
+            strncpy_s(
+                destination.mapName,
+                sizeof(destination.mapName),
+                source.match.mapName.c_str(),
+                _TRUNCATE
+            );
+            destination.startedAtUnix = source.match.startedAtUnix;
+            destination.durationSeconds = source.match.durationSeconds;
+            destination.scoreA = static_cast<uint8_t>(source.match.scoreA);
+            destination.scoreB = static_cast<uint8_t>(source.match.scoreB);
+            destination.winnerTeam = static_cast<uint8_t>(source.match.winnerTeam);
+            destination.myTeam = static_cast<uint8_t>(source.myTeam);
+
+            size_t playerCount = std::min(
+                source.players.size(),
+                static_cast<size_t>(CAREER_MATCH_PLAYER_COUNT)
+            );
+            destination.playerCount = static_cast<uint8_t>(playerCount);
+
+            for (size_t playerIndex = 0; playerIndex < playerCount; ++playerIndex)
+            {
+                const CareerMatchPlayer& playerSource = source.players[playerIndex];
+                CareerMatchPlayerPacketEntry& playerDestination =
+                    destination.players[playerIndex];
+
+                strncpy_s(
+                    playerDestination.userId,
+                    sizeof(playerDestination.userId),
+                    playerSource.userId.c_str(),
+                    _TRUNCATE
+                );
+                strncpy_s(
+                    playerDestination.nickname,
+                    sizeof(playerDestination.nickname),
+                    playerSource.nickname.c_str(),
+                    _TRUNCATE
+                );
+                playerDestination.team = static_cast<uint8_t>(playerSource.team);
+                playerDestination.characterId = playerSource.characterId;
+                playerDestination.combatScore = playerSource.combatScore;
+                playerDestination.attackScore = playerSource.attackScore;
+                playerDestination.skillScore = playerSource.skillScore;
+                playerDestination.teamworkScore = playerSource.teamworkScore;
+                playerDestination.kills = playerSource.kills;
+                playerDestination.deaths = playerSource.deaths;
+                playerDestination.assists = playerSource.assists;
+                playerDestination.damage = playerSource.damage;
+                playerDestination.isMvp = playerSource.isMvp ? 1 : 0;
+            }
+        }
+
+        session->Send(&out);
+        break;
+    }
+
+    case PacketType::PKT_CS_CAREER_INVENTORY_REQUEST:
+    {
+        if (header->size != sizeof(CS_CareerInventoryRequest))
+            break;
+
+        std::vector<CareerInventoryEntry> inventory =
+            CareerManager::Instance().GetInventory(
+                session->GetUserId(),
+                CAREER_INVENTORY_COUNT
+            );
+
+        SC_CareerInventory out{};
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(
+            PacketType::PKT_SC_CAREER_INVENTORY
+        );
+        out.count = static_cast<uint8_t>(inventory.size());
+
+        for (size_t i = 0; i < inventory.size(); ++i)
+        {
+            const CareerInventoryEntry& source = inventory[i];
+            CareerInventoryPacketEntry& destination = out.entries[i];
+            destination.itemId = source.item.itemId;
+            strncpy_s(
+                destination.itemName,
+                sizeof(destination.itemName),
+                source.item.itemName.c_str(),
+                _TRUNCATE
+            );
+            strncpy_s(
+                destination.description,
+                sizeof(destination.description),
+                source.item.description.c_str(),
+                _TRUNCATE
+            );
+            destination.iconId = source.item.iconId;
+            destination.quantity = source.quantity;
+            destination.acquiredAtUnix = source.acquiredAtUnix;
+        }
+
+        session->Send(&out);
+        break;
+    }
+
     case PacketType::PKT_CS_LOBBY_CHAT:
     {
         if (session->GetState() != SessionState::IN_LOBBY)
@@ -6599,12 +7608,161 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
     case PacketType::PKT_CS_TEMP_GAME_START:
     {
-        SC_TempGameStartResult out{};
-        out.header.size = sizeof(out);
-        out.header.type = (uint16_t)PacketType::PKT_SC_TEMP_GAME_START_RESULT;
-        out.result = 0;
+        if (header->size != sizeof(CS_TempGameStart))
+            break;
 
-        session->Send(&out);
+        const auto* request =
+            reinterpret_cast<const CS_TempGameStart*>(header);
+        uint8_t mode = request->mode == 1 ? 1 : 0;
+
+        if (session->GetState() != SessionState::IN_LOBBY ||
+            session->GetCurrentRoomId() != 0)
+        {
+            SendMatchmakingState(
+                session,
+                1,
+                3,
+                mode,
+                0,
+                GetInitialMatchmakingRange(mode),
+                0);
+            break;
+        }
+
+        CareerOverview overview{};
+        if (!CareerManager::Instance().GetOverview(
+                session->GetUserId(),
+                overview))
+        {
+            SendMatchmakingState(
+                session,
+                1,
+                3,
+                mode,
+                0,
+                GetInitialMatchmakingRange(mode),
+                0);
+            break;
+        }
+
+        CareerMatchmakingRating matchmakingRating{};
+        if (!CareerManager::Instance().GetMatchmakingRating(
+                session->GetUserId(),
+                mode,
+                matchmakingRating))
+        {
+            SendMatchmakingState(
+                session,
+                1,
+                3,
+                mode,
+                0,
+                GetInitialMatchmakingRange(mode),
+                0);
+            break;
+        }
+
+        MatchmakingEntry queuedEntry{};
+        bool alreadyQueued = false;
+        {
+            std::lock_guard<std::mutex> lock(g_matchmakingMutex);
+            auto entryIt = std::find_if(
+                g_matchmakingQueue.begin(),
+                g_matchmakingQueue.end(),
+                [session](const MatchmakingEntry& entry)
+                {
+                    return entry.playerId == session->GetPlayerId();
+                });
+
+            if (entryIt != g_matchmakingQueue.end())
+            {
+                queuedEntry = *entryIt;
+                alreadyQueued = true;
+            }
+            else
+            {
+                queuedEntry.playerId = session->GetPlayerId();
+                queuedEntry.mode = mode;
+                queuedEntry.matchmakingRating =
+                    matchmakingRating.matchmakingRating;
+                queuedEntry.visibleTierId = overview.tier.tierId;
+                queuedEntry.partyId = session->GetPlayerId();
+                queuedEntry.partySize = 1;
+                queuedEntry.queuedAt = std::chrono::steady_clock::now();
+                g_matchmakingQueue.push_back(queuedEntry);
+            }
+        }
+
+        EnsureMatchmakingWorkerStarted();
+        auto now = std::chrono::steady_clock::now();
+        SendMatchmakingState(
+            session,
+            0,
+            0,
+            queuedEntry.mode,
+            GetMatchmakingElapsedSeconds(queuedEntry, now),
+            GetMatchmakingTierRange(queuedEntry, now),
+            0);
+
+        std::cout << "[MATCHMAKING QUEUE] playerId="
+            << session->GetPlayerId()
+            << " mode=" << static_cast<int>(queuedEntry.mode)
+            << " mmr=" << queuedEntry.matchmakingRating
+            << " visibleTierId=" << queuedEntry.visibleTierId
+            << " partySize=" << static_cast<int>(queuedEntry.partySize)
+            << " alreadyQueued=" << alreadyQueued
+            << std::endl;
+
+        break;
+    }
+
+    case PacketType::PKT_CS_MATCHMAKING_CANCEL:
+    {
+        if (header->size != sizeof(CS_MatchmakingCancel))
+            break;
+
+        MatchmakingEntry removedEntry{};
+        bool removed = false;
+        {
+            std::lock_guard<std::mutex> lock(g_matchmakingMutex);
+            auto entryIt = std::find_if(
+                g_matchmakingQueue.begin(),
+                g_matchmakingQueue.end(),
+                [session](const MatchmakingEntry& entry)
+                {
+                    return entry.playerId == session->GetPlayerId();
+                });
+            if (entryIt != g_matchmakingQueue.end())
+            {
+                removedEntry = *entryIt;
+                g_matchmakingQueue.erase(entryIt);
+                removed = true;
+            }
+        }
+
+        if (removed)
+        {
+            auto now = std::chrono::steady_clock::now();
+            SendMatchmakingState(
+                session,
+                0,
+                2,
+                removedEntry.mode,
+                GetMatchmakingElapsedSeconds(removedEntry, now),
+                GetMatchmakingTierRange(removedEntry, now),
+                0);
+        }
+        else
+        {
+            SendMatchmakingState(
+                session,
+                2,
+                3,
+                0,
+                0,
+                GetInitialMatchmakingRange(0),
+                0);
+        }
 
         break;
     }
@@ -7118,7 +8276,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             break;
         }
 
-        Session* targetSession = SessionManager::Instance().Find(targetMember.playerId);
+        auto targetSession = SessionManager::Instance().Find(targetMember.playerId);
         if (targetSession == nullptr)
         {
             SendRoomSlotChangeResult(
@@ -7217,7 +8375,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             break;
         }
 
-        Session* requesterSession = SessionManager::Instance().Find(requesterPlayerId);
+        auto requesterSession = SessionManager::Instance().Find(requesterPlayerId);
 
         RoomMember targetMember{};
         RoomManager::Instance().GetMember(
@@ -7231,7 +8389,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             if (requesterSession != nullptr)
             {
                 SendRoomSlotChangeResult(
-                    requesterSession,
+                    requesterSession.get(),
                     RoomSlotChangeResult::REJECTED,
                     pending.targetTeam,
                     pending.targetSlotIndex,
@@ -7259,7 +8417,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             if (requesterSession != nullptr)
             {
                 SendRoomSlotChangeResult(
-                    requesterSession,
+                    requesterSession.get(),
                     RoomSlotChangeResult::FAILED,
                     pending.targetTeam,
                     pending.targetSlotIndex,
@@ -7283,7 +8441,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         if (requesterSession != nullptr)
         {
             SendRoomSlotChangeResult(
-                requesterSession,
+                requesterSession.get(),
                 RoomSlotChangeResult::SUCCESS,
                 pending.targetTeam,
                 pending.targetSlotIndex,
@@ -7502,14 +8660,14 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             break;
         }
 
-        Session* targetSession = SessionManager::Instance().Find(targetPlayerId);
+        auto targetSession = SessionManager::Instance().Find(targetPlayerId);
         if (targetSession != nullptr)
         {
             targetSession->SetState(SessionState::IN_LOBBY);
             targetSession->SetCurrentRoomId(0);
 
             SendRoomKicked(
-                targetSession,
+                targetSession.get(),
                 roomId,
                 leaderNickname
             );
@@ -7930,7 +9088,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             break;
         }
 
-        Session* target = SessionManager::Instance().Find(pkt->targetId);
+        auto target = SessionManager::Instance().Find(pkt->targetId);
         if (target == nullptr)
             break;
 
@@ -8024,10 +9182,11 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             weaponData->damage
         );
 
-        target->Damage(weaponData->damage);
+        int appliedDamage = target->Damage(weaponData->damage);
+        session->GetMatchStats().damageDealt += appliedDamage;
 
         SC_HPUpdate hpPkt{};
-        FillHPUpdatePacket(hpPkt, target);
+        FillHPUpdatePacket(hpPkt, target.get());
 
         BroadcastPacketToRoomInternal(roomId, &hpPkt);
 
@@ -8044,7 +9203,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
         if (target->IsDead())
         {
-            HandleDeath(target);
+            HandleDeath(target.get());
         }
 
         break;
@@ -8591,6 +9750,38 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         {
             std::cout << "[RESULT LEAVE BLOCK] roomId is 0 playerId="
                 << session->GetPlayerId()
+                << std::endl;
+            break;
+        }
+
+        Room currentRoom{};
+        if (!RoomManager::Instance().GetRoom(roomId, currentRoom))
+            break;
+
+        if (currentRoom.isMatchmade)
+        {
+            bool roomDeleted = false;
+            Room remainingRoom{};
+            RoomManager::Instance().LeaveRoom(
+                roomId,
+                session->GetPlayerId(),
+                roomDeleted,
+                remainingRoom);
+
+            session->SetState(SessionState::IN_LOBBY);
+            session->SetCurrentRoomId(0);
+
+            SC_ResultLeaveDone out{};
+            out.header.size = sizeof(out);
+            out.header.type = static_cast<uint16_t>(
+                PacketType::PKT_SC_RESULT_LEAVE_DONE);
+            out.roomId = 0;
+            session->Send(&out);
+
+            std::cout << "[MATCHMAKING RESULT LEAVE] playerId="
+                << session->GetPlayerId()
+                << " roomId=" << roomId
+                << " roomDeleted=" << roomDeleted
                 << std::endl;
             break;
         }
@@ -10002,7 +11193,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
                 continue;
             }
 
-            Session* receiver =
+            auto receiver =
                 SessionManager::Instance().Find(
                     receiverMember.playerId
                 );
@@ -10528,7 +11719,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
         if (pkt->targetPlayerId != 0)
         {
-            Session* target =
+            auto target =
                 SessionManager::Instance().Find(pkt->targetPlayerId);
 
             if (target != nullptr &&
@@ -10589,14 +11780,15 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
                             DRONE_TASER_DAMAGE
                         );
 
-                        target->Damage(
+                        int appliedDamage = target->Damage(
                             DRONE_TASER_DAMAGE
                         );
+                        session->GetMatchStats().damageDealt += appliedDamage;
 
                         SC_HPUpdate hpPkt{};
                         FillHPUpdatePacket(
                             hpPkt,
-                            target
+                            target.get()
                         );
 
                         BroadcastPacketToRoomInternal(
@@ -10617,7 +11809,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
                         if (target->IsDead())
                         {
-                            HandleDeath(target);
+                            HandleDeath(target.get());
                         }
                     }
                 }
@@ -11092,7 +12284,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
                 if (member.team == casterMember.team)
                     continue;
 
-                Session* target =
+                auto target =
                     SessionManager::Instance().Find(member.playerId);
 
                 if (target == nullptr)
@@ -11264,7 +12456,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             if (member.team == casterMember.team)
                 continue;
 
-            Session* target =
+            auto target =
                 SessionManager::Instance().Find(
                     member.playerId
                 );
@@ -11320,15 +12512,16 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
                 ULTIMATE_DAMAGE
             );
 
-            target->Damage(
+            int appliedDamage = target->Damage(
                 ULTIMATE_DAMAGE
             );
+            session->GetMatchStats().damageDealt += appliedDamage;
 
             SC_HPUpdate hpPkt{};
 
             FillHPUpdatePacket(
                 hpPkt,
-                target
+                target.get()
             );
 
             BroadcastPacketToRoomInternal(
@@ -11364,7 +12557,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
             if (target->IsDead())
             {
-                HandleDeath(target);
+                HandleDeath(target.get());
             }
         }
 
@@ -12300,7 +13493,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
         if (pkt->targetPlayerId != 0)
         {
-            Session* target =
+            auto target =
                 SessionManager::Instance().Find(
                     pkt->targetPlayerId
                 );
@@ -12398,15 +13591,16 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
                                     ENTRY_BLADE_DAMAGE
                                 );
 
-                                target->Damage(
+                                int appliedDamage = target->Damage(
                                     ENTRY_BLADE_DAMAGE
                                 );
+                                session->GetMatchStats().damageDealt += appliedDamage;
 
                                 SC_HPUpdate hpPkt{};
 
                                 FillHPUpdatePacket(
                                     hpPkt,
-                                    target
+                                    target.get()
                                 );
 
                                 BroadcastPacketToRoomInternal(
@@ -12427,7 +13621,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
                                 if (target->IsDead())
                                 {
-                                    HandleDeath(target);
+                                    HandleDeath(target.get());
                                 }
                             }
                         }
@@ -13945,7 +15139,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
                 continue;
             }
 
-            Session* target =
+            auto target =
                 SessionManager::Instance().Find(member.playerId);
 
             if (target == nullptr ||
@@ -14410,7 +15604,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
                             continue;
                         }
 
-                        Session* target =
+                        auto target =
                             SessionManager::Instance().Find(
                                 member.playerId
                             );
@@ -14444,19 +15638,24 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
                             ownerPlayerId,
                             SENTINEL_X_DAMAGE_PER_TICK
                         );
-                        target->Damage(
+                        int appliedDamage = target->Damage(
                             SENTINEL_X_DAMAGE_PER_TICK
                         );
 
+                        auto owner =
+                            SessionManager::Instance().Find(ownerPlayerId);
+                        if (owner != nullptr)
+                            owner->GetMatchStats().damageDealt += appliedDamage;
+
                         SC_HPUpdate hpPacket{};
-                        FillHPUpdatePacket(hpPacket, target);
+                        FillHPUpdatePacket(hpPacket, target.get());
                         BroadcastPacketToRoomInternal(
                             roomId,
                             &hpPacket
                         );
 
                         if (target->IsDead())
-                            PacketDispatcher::HandleDeath(target);
+                            PacketDispatcher::HandleDeath(target.get());
                     }
                 }
 
@@ -14605,7 +15804,7 @@ void PacketDispatcher::HandleDeath(Session* target)
     constexpr int ASSIST_VALID_SECONDS = 10;
 
     uint32_t killerId = target->GetLastDamager();
-    Session* killer = SessionManager::Instance().Find(killerId);
+    auto killer = SessionManager::Instance().Find(killerId);
 
     SC_Die diePkt{};
     diePkt.header.size = sizeof(diePkt);
@@ -14642,7 +15841,7 @@ void PacketDispatcher::HandleDeath(Session* target)
     }
 
     // 킬러가 정상적으로 존재할 때만 킬러 정보 입력
-    if (killer != nullptr && killer != target)
+    if (killer != nullptr && killer.get() != target)
     {
         diePkt.killerPlayerId =
             killer->GetPlayerId();
@@ -14669,9 +15868,9 @@ void PacketDispatcher::HandleDeath(Session* target)
         }
     }
 
-    if (killer != nullptr && killer != target)
+    if (killer != nullptr && killer.get() != target)
     {
-        AddKillStatByRound(killer, roomId);
+        AddKillStatByRound(killer.get(), roomId);
         killer->AddCredits(GetCreditReward("KILL"));
 
         AddDeathStatByRound(target, roomId);
@@ -14687,7 +15886,7 @@ void PacketDispatcher::HandleDeath(Session* target)
 
         for (uint32_t assistPlayerId : assistPlayerIds)
         {
-            Session* assister = SessionManager::Instance().Find(assistPlayerId);
+            auto assister = SessionManager::Instance().Find(assistPlayerId);
 
             if (assister == nullptr)
                 continue;
@@ -14695,10 +15894,10 @@ void PacketDispatcher::HandleDeath(Session* target)
             if (assister == killer)
                 continue;
 
-            if (assister == target)
+            if (assister.get() == target)
                 continue;
 
-            AddAssistStatByRound(assister, roomId);
+            AddAssistStatByRound(assister.get(), roomId);
 
             std::cout << "[ASSIST UPDATE] assister="
                 << assister->GetPlayerId()

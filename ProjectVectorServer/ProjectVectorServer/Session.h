@@ -41,6 +41,7 @@ struct PlayerMatchStats
     int kills = 0;
     int deaths = 0;
     int assists = 0;
+    int damageDealt = 0;
 
     int firstHalfKills = 0;
     int firstHalfDeaths = 0;
@@ -68,7 +69,7 @@ public:
     explicit Session(SOCKET socket);
     ~Session();
 
-    void PostRecv();
+    bool PostRecv();
     void OnRecv(int bytes, OverlappedEx* ov);
     SOCKET GetSocket() const { return socket_; }
     void Send(void* packet);
@@ -77,6 +78,7 @@ public:
     std::string GetUserId() const { return userId_; }
 
     void Disconnect();
+    bool IsDisconnected() const { return disconnected_.load(); }
 
     void SetAuthenticated(bool val) { isAuthenticated_ = val; }
     bool IsAuthenticated() const { return isAuthenticated_; }
@@ -132,7 +134,7 @@ public:
             barrier_ = 0;
     }
 
-    void Damage(int amount);
+    int Damage(int amount);
 
     bool IsDead() const { return hp_ <= 0; }
 
@@ -244,4 +246,7 @@ private:
     std::unordered_map<uint32_t, AssistDamageRecord> assistDamageRecords_;
 
     uint8_t animIndex_ = 0;
+
+    std::atomic<bool> disconnected_{ false };
+    std::mutex sendMutex_;
 };

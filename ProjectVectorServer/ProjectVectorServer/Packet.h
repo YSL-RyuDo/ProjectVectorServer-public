@@ -25,6 +25,15 @@ constexpr int USER_ID_LEN = 20;
 constexpr int GAME_MEMBER_COUNT = 6;
 constexpr int GAME_READY_MEMBER_COUNT = 6;
 constexpr int GAME_READY_NICKNAME_LEN = 20;
+constexpr int CAREER_SEASON_NAME_LEN = 32;
+constexpr int CAREER_TIER_NAME_LEN = 32;
+constexpr int CAREER_RANKING_COUNT = 10;
+constexpr int CAREER_RANKING_QUERY_LEN = 64;
+constexpr int CAREER_MATCH_HISTORY_COUNT = 5;
+constexpr int CAREER_MATCH_PLAYER_COUNT = 6;
+constexpr int CAREER_INVENTORY_COUNT = 20;
+constexpr int CAREER_ITEM_NAME_LEN = 32;
+constexpr int CAREER_ITEM_DESCRIPTION_LEN = 96;
 #pragma pack(push, 1)
 
 struct PacketHeader
@@ -200,12 +209,23 @@ struct SC_TempGameRoomEnter
 struct CS_TempGameStart
 {
     PacketHeader header;
+    uint8_t mode; // 0: normal, 1: ranked
 };
 
 struct SC_TempGameStartResult
 {
     PacketHeader header;
     uint8_t result;
+    uint8_t state; // 0: queued, 1: found, 2: cancelled, 3: rejected
+    uint8_t mode;
+    uint16_t elapsedSeconds;
+    uint8_t tierRange;
+    uint32_t roomId;
+};
+
+struct CS_MatchmakingCancel
+{
+    PacketHeader header;
 };
 
 struct CS_RoomList
@@ -863,7 +883,22 @@ struct MatchResultMemberInfo
     int overtimeAssists;
 
     uint8_t isMvp;
+    int32_t freeCurrencyReward;
+    int32_t victoryCurrencyReward;
+    int32_t rankPointDelta;
+    int32_t rankPointsBefore;
+    int32_t rankPointsAfter;
+    int32_t rankTierIdBefore;
+    int32_t rankTierIdAfter;
+    uint16_t rankExpectedWinRatePermille;
+    uint8_t rankModifierFlags;
+    int32_t totalFreeCurrency;
+    int32_t totalVictoryCurrency;
 };
+
+static_assert(
+    sizeof(MatchResultMemberInfo) == 118,
+    "MatchResultMemberInfo wire size must match the Unity parser.");
 
 struct SC_MatchResultDetail
 {
@@ -872,6 +907,7 @@ struct SC_MatchResultDetail
     uint8_t winnerTeam;
     uint8_t scoreA;
     uint8_t scoreB;
+    uint8_t matchType; // 0: normal/private, 1: ranked
 
     uint8_t memberCount;
     MatchResultMemberInfo members[6];
@@ -1964,6 +2000,138 @@ struct SC_SentinelCDestroy
 
     uint32_t trapId;
 };
+
+struct CS_CareerOverviewRequest
+{
+    PacketHeader header;
+};
+
+struct SC_CareerOverview
+{
+    PacketHeader header;
+    int32_t seasonId;
+    char seasonName[CAREER_SEASON_NAME_LEN];
+    int64_t seasonEndUnix;
+    int32_t remainingSeasonDays;
+    int32_t tierId;
+    char tierName[CAREER_TIER_NAME_LEN];
+    int32_t rankImageId;
+    int32_t tierMinPoints;
+    int32_t tierMaxPoints;
+    int32_t rankPoints;
+    int32_t rankedMatches;
+    int32_t wins;
+    int32_t roundsPlayed;
+    int32_t kills;
+    int32_t totalDamage;
+    int32_t mvpCount;
+};
+
+struct CS_CareerRankingRequest
+{
+    PacketHeader header;
+    uint8_t rankingType;
+    int32_t characterId;
+    uint8_t page;
+    char searchQuery[CAREER_RANKING_QUERY_LEN];
+};
+
+struct CareerRankingPacketEntry
+{
+    int32_t position;
+    char userId[USER_ID_LEN];
+    char nickname[MATCH_MEMBER_NICKNAME_LEN];
+    int32_t tierId;
+    char tierName[CAREER_TIER_NAME_LEN];
+    int32_t rankImageId;
+    int32_t rankPoints;
+    int32_t rankedMatches;
+    int32_t wins;
+};
+
+struct SC_CareerRanking
+{
+    PacketHeader header;
+    uint8_t rankingType;
+    int32_t characterId;
+    uint8_t page;
+    uint8_t totalPages;
+    int32_t totalEntries;
+    uint8_t count;
+    CareerRankingPacketEntry entries[CAREER_RANKING_COUNT];
+};
+
+struct CS_CareerMatchHistoryRequest
+{
+    PacketHeader header;
+    uint8_t filterType;
+};
+
+struct CareerMatchPlayerPacketEntry
+{
+    char userId[USER_ID_LEN];
+    char nickname[MATCH_MEMBER_NICKNAME_LEN];
+    uint8_t team;
+    int32_t characterId;
+    int32_t combatScore;
+    int32_t attackScore;
+    int32_t skillScore;
+    int32_t teamworkScore;
+    int32_t kills;
+    int32_t deaths;
+    int32_t assists;
+    int32_t damage;
+    uint8_t isMvp;
+};
+
+struct CareerMatchPacketEntry
+{
+    uint64_t matchId;
+    char mapName[MAP_NAME_LEN];
+    int64_t startedAtUnix;
+    int32_t durationSeconds;
+    uint8_t scoreA;
+    uint8_t scoreB;
+    uint8_t winnerTeam;
+    uint8_t myTeam;
+    uint8_t playerCount;
+    CareerMatchPlayerPacketEntry players[CAREER_MATCH_PLAYER_COUNT];
+};
+
+struct SC_CareerMatchHistory
+{
+    PacketHeader header;
+    uint8_t filterType;
+    uint8_t count;
+    CareerMatchPacketEntry matches[CAREER_MATCH_HISTORY_COUNT];
+};
+
+struct CS_CareerInventoryRequest
+{
+    PacketHeader header;
+};
+
+struct CareerInventoryPacketEntry
+{
+    int32_t itemId;
+    char itemName[CAREER_ITEM_NAME_LEN];
+    char description[CAREER_ITEM_DESCRIPTION_LEN];
+    int32_t iconId;
+    int32_t quantity;
+    int64_t acquiredAtUnix;
+};
+
+struct SC_CareerInventory
+{
+    PacketHeader header;
+    uint8_t count;
+    CareerInventoryPacketEntry entries[CAREER_INVENTORY_COUNT];
+};
+
+static_assert(sizeof(SC_CareerOverview) <= 4096);
+static_assert(sizeof(SC_CareerRanking) <= 4096);
+static_assert(sizeof(SC_CareerMatchHistory) <= 4096);
+static_assert(sizeof(SC_CareerInventory) <= 4096);
 
 struct CS_SentinelQPlace
 {

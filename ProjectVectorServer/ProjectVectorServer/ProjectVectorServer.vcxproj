@@ -19,10 +19,12 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="CareerManager.h" />
     <ClInclude Include="Common.h" />
     <ClInclude Include="IocpCore.h" />
     <ClInclude Include="Listener.h" />
     <ClInclude Include="OverlappedEx.h" />
+    <ClInclude Include="RankRatingCalculator.h" />
     <ClInclude Include="PacketDispatcher.h" />
     <ClInclude Include="Room.h" />
     <ClInclude Include="RoomManager.h" />
@@ -35,12 +37,14 @@
     <ClInclude Include="WorkerThread.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="CareerManager.cpp" />
     <ClCompile Include="IocpCore.cpp" />
     <ClCompile Include="Listener.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="PacketDispatcher.cpp" />
     <ClCompile Include="Packet.h" />
     <ClCompile Include="PacketType.h" />
+    <ClCompile Include="RankRatingCalculator.cpp" />
     <ClCompile Include="RoomManager.cpp" />
     <ClCompile Include="Server.cpp" />
     <ClCompile Include="ServerWeaponData.cpp" />
@@ -51,6 +55,16 @@
     <ClCompile Include="WorkerThread.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <None Include="CAREER_DATA_SCHEMA.md" />
+    <None Include="career_character_stats.csv" />
+    <None Include="career_items.csv" />
+    <None Include="career_matches.csv" />
+    <None Include="career_matchmaking_ratings.csv" />
+    <None Include="career_match_players.csv" />
+    <None Include="career_rank_tiers.csv" />
+    <None Include="career_seasons.csv" />
+    <None Include="career_season_stats.csv" />
+    <None Include="career_user_inventory.csv" />
     <None Include="weapon_skins.csv" />
     <None Include="user_weapon_skins.csv" />
     <None Include="user_weapon_skin_loadouts.csv" />
@@ -145,6 +159,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp20</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -159,6 +174,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp20</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>

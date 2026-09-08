@@ -34,6 +34,17 @@ constexpr int CAREER_MATCH_PLAYER_COUNT = 6;
 constexpr int CAREER_INVENTORY_COUNT = 20;
 constexpr int CAREER_ITEM_NAME_LEN = 32;
 constexpr int CAREER_ITEM_DESCRIPTION_LEN = 96;
+constexpr int ROOM_CHAT_MESSAGE_LEN = 128;
+constexpr int FRIEND_CHAT_MESSAGE_LEN = 128;
+constexpr int FRIEND_USER_ID_LEN = 20;
+constexpr int FRIEND_NICKNAME_LEN = 20;
+constexpr int FRIEND_MEMO_LEN = 32;
+constexpr int FRIEND_SEARCH_QUERY_LEN = 40;
+constexpr int FRIEND_MAX_CONTACT_COUNT = 50;
+constexpr int FRIEND_MAX_SEARCH_COUNT = 10;
+constexpr int FRIEND_RECOMMEND_COUNT = 3;
+constexpr int FRIEND_MAX_REQUEST_COUNT = 30;
+constexpr int FRIEND_MAX_RECENT_COUNT = 20;
 #pragma pack(push, 1)
 
 struct PacketHeader
@@ -87,6 +98,9 @@ struct SC_LobbyEnter
     int playerIconId;
     int lobbyCharacterModelId;
     int lobbyBackgroundId;
+
+    int freeCurrency;
+    int victoryCurrency;
 };
 
 struct CS_LobbyChat
@@ -101,6 +115,161 @@ struct SC_LobbyChat
     uint32_t playerId;
     char nickname[20];
     char message[128];
+};
+
+struct CS_RoomChat
+{
+    PacketHeader header;
+    char message[ROOM_CHAT_MESSAGE_LEN];
+};
+
+struct SC_RoomChat
+{
+    PacketHeader header;
+    uint32_t roomId;
+    uint32_t playerId;
+    char nickname[20];
+    char message[ROOM_CHAT_MESSAGE_LEN];
+};
+
+struct CS_FriendChat
+{
+    PacketHeader header;
+    uint32_t targetPlayerId;
+    char message[FRIEND_CHAT_MESSAGE_LEN];
+};
+
+struct SC_FriendChat
+{
+    PacketHeader header;
+    uint32_t senderPlayerId;
+    uint32_t targetPlayerId;
+    char senderNickname[20];
+    char message[FRIEND_CHAT_MESSAGE_LEN];
+};
+
+enum class FriendOperation : uint8_t
+{
+    SEND_REQUEST = 0,
+    CANCEL_REQUEST = 1,
+    ACCEPT_REQUEST = 2,
+    REJECT_REQUEST = 3,
+    BLOCK = 4,
+    UNBLOCK = 5,
+    DELETE_FRIEND = 6
+};
+
+struct FriendUserInfo
+{
+    uint32_t playerId;
+    char userId[FRIEND_USER_ID_LEN];
+    char nickname[FRIEND_NICKNAME_LEN];
+    int32_t level;
+    int32_t playerIconId;
+    int32_t rankImageId;
+    uint8_t presenceStatus;
+    char memo[FRIEND_MEMO_LEN];
+};
+
+struct CS_FriendOverviewRequest { PacketHeader header; };
+
+struct SC_FriendOverview
+{
+    PacketHeader header;
+    uint8_t presenceMode;
+    uint8_t friendCount;
+    uint8_t blockedCount;
+    FriendUserInfo friends[FRIEND_MAX_CONTACT_COUNT];
+    FriendUserInfo blocked[FRIEND_MAX_CONTACT_COUNT];
+};
+
+struct CS_FriendPresenceSet
+{
+    PacketHeader header;
+    uint8_t presenceMode;
+};
+
+struct SC_FriendPresenceSetResult
+{
+    PacketHeader header;
+    uint8_t result;
+    uint8_t presenceMode;
+};
+
+struct CS_FriendSearch
+{
+    PacketHeader header;
+    char query[FRIEND_SEARCH_QUERY_LEN];
+};
+
+struct SC_FriendSearch
+{
+    PacketHeader header;
+    uint8_t count;
+    FriendUserInfo users[FRIEND_MAX_SEARCH_COUNT];
+};
+
+struct CS_FriendRecommendRequest { PacketHeader header; };
+
+struct SC_FriendRecommend
+{
+    PacketHeader header;
+    uint8_t count;
+    FriendUserInfo users[FRIEND_RECOMMEND_COUNT];
+};
+
+struct CS_FriendOperation
+{
+    PacketHeader header;
+    uint8_t operation;
+    char targetUserId[FRIEND_USER_ID_LEN];
+};
+
+struct SC_FriendOperationResult
+{
+    PacketHeader header;
+    uint8_t operation;
+    uint8_t result;
+    char targetUserId[FRIEND_USER_ID_LEN];
+};
+
+struct CS_FriendRequestListRequest { PacketHeader header; };
+
+struct FriendRequestInfo
+{
+    uint8_t direction;
+    FriendUserInfo user;
+};
+
+struct SC_FriendRequestList
+{
+    PacketHeader header;
+    uint8_t count;
+    FriendRequestInfo requests[FRIEND_MAX_REQUEST_COUNT];
+};
+
+struct CS_FriendRecentRequest { PacketHeader header; };
+
+struct SC_FriendRecent
+{
+    PacketHeader header;
+    uint8_t count;
+    FriendUserInfo users[FRIEND_MAX_RECENT_COUNT];
+};
+
+struct CS_FriendMemoSet
+{
+    PacketHeader header;
+    char targetUserId[FRIEND_USER_ID_LEN];
+    char memo[FRIEND_MEMO_LEN];
+};
+
+struct SC_FriendMemoSetResult
+{
+    PacketHeader header;
+    uint8_t result;
+    char targetUserId[FRIEND_USER_ID_LEN];
+    char memo[FRIEND_MEMO_LEN];
 };
 
 struct CS_LobbyCharacterSelect

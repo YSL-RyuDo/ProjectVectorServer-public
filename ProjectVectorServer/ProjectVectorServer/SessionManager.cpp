@@ -76,6 +76,19 @@ std::shared_ptr<Session> SessionManager::Find(uint32_t playerId)
     return it->second;
 }
 
+std::shared_ptr<Session> SessionManager::FindByUserId(
+    const std::string& userId)
+{
+    std::lock_guard<std::mutex> lock(sessionManagerMutex_);
+    for (const auto& pair : sessions_)
+    {
+        const std::shared_ptr<Session>& session = pair.second;
+        if (session != nullptr && session->GetUserId() == userId)
+            return session;
+    }
+    return nullptr;
+}
+
 std::vector<std::shared_ptr<Session>> SessionManager::GetAll()
 {
     std::lock_guard<std::mutex> lock(sessionManagerMutex_);

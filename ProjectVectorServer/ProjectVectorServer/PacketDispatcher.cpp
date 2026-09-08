@@ -1,5 +1,7 @@
 #include "PacketDispatcher.h"
 #include "CareerManager.h"
+#include "FriendManager.h"
+#include "FriendPacketService.h"
 #include "RankRatingCalculator.h"
 #include "PacketType.h"
 #include "Packet.h"
@@ -3679,6 +3681,17 @@ namespace
             &rankAdjustments
         );
 
+        for (const std::string& userId : resultUserIds)
+        {
+            std::shared_ptr<Session> recentOwner =
+                SessionManager::Instance().FindByUserId(userId);
+            if (recentOwner == nullptr)
+                continue;
+
+            for (const std::string& peerUserId : resultUserIds)
+                recentOwner->AddRecentPlayerUserId(peerUserId);
+        }
+
         std::unordered_map<std::string, CareerRankAdjustment>
             rankAdjustmentsByUser;
         for (const CareerRankAdjustment& adjustment : rankAdjustments)
@@ -7118,6 +7131,13 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         out.lobbyCharacterModelId = data.lobbyCharacterModelId;
         out.lobbyBackgroundId = data.lobbyBackgroundId;
 
+        CareerWallet wallet{};
+        if (CareerManager::Instance().GetWallet(session->GetUserId(), wallet))
+        {
+            out.freeCurrency = wallet.freeCurrency;
+            out.victoryCurrency = wallet.victoryCurrency;
+        }
+
         session->Send(&out);
 
         std::cout << "[LOBBY ENTER] playerId=" << session->GetPlayerId()
@@ -7511,12 +7531,30 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
     case PacketType::PKT_CS_LOBBY_CHAT:
     {
-        if (session->GetState() != SessionState::IN_LOBBY)
+        SessionState lobbyChatState = session->GetState();
+
+        if (lobbyChatState != SessionState::IN_LOBBY &&
+            lobbyChatState != SessionState::IN_ROOM)
         {
             std::cout << "[LOBBY CHAT BLOCK] not in lobby playerId="
                 << session->GetPlayerId()
                 << std::endl;
             break;
+        }
+
+        if (lobbyChatState == SessionState::IN_ROOM)
+        {
+            Room waitingRoom{};
+            if (!RoomManager::Instance().GetRoom(
+                    session->GetCurrentRoomId(),
+                    waitingRoom) ||
+                waitingRoom.state != RoomState::WAITING)
+            {
+                std::cout << "[LOBBY CHAT BLOCK] room is not waiting playerId="
+                    << session->GetPlayerId()
+                    << std::endl;
+                break;
+            }
         }
 
         auto* pkt = reinterpret_cast<CS_LobbyChat*>(header);
@@ -7534,10 +7572,270 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         strncpy_s(out.nickname, data.nickname.c_str(), _TRUNCATE);
         strncpy_s(out.message, pkt->message, _TRUNCATE);
 
-        SessionManager::Instance().BroadcastLobby(&out);
+        std::vector<std::shared_ptr<Session>> lobbyTargets =
+            SessionManager::Instance().GetAll();
+
+        for (const std::shared_ptr<Session>& target : lobbyTargets)
+        {
+            if (target == nullptr)
+                continue;
+
+            bool canReceive = target->GetState() == SessionState::IN_LOBBY;
+
+            if (target->GetState() == SessionState::IN_ROOM)
+            {
+                Room targetRoom{};
+                canReceive = RoomManager::Instance().GetRoom(
+                    target->GetCurrentRoomId(),
+                    targetRoom
+                ) && targetRoom.state == RoomState::WAITING;
+            }
+
+            if (canReceive)
+                target->Send(&out);
+        }
 
         break;
     }
+
+    case PacketType::PKT_CS_ROOM_CHAT:
+    {
+        if (header->size != sizeof(CS_RoomChat))
+        {
+            std::cout << "[ROOM CHAT BLOCK] invalid size="
+                << header->size
+                << std::endl;
+            break;
+        }
+
+        SessionState state = session->GetState();
+        if (state != SessionState::IN_LOBBY &&
+            state != SessionState::IN_ROOM)
+        {
+            std::cout << "[ROOM CHAT BLOCK] invalid state playerId="
+                << session->GetPlayerId()
+                << " state=" << static_cast<int>(state)
+                << std::endl;
+            break;
+        }
+
+        auto* pkt = reinterpret_cast<CS_RoomChat*>(header);
+        size_t messageLength = strnlen_s(
+            pkt->message,
+            ROOM_CHAT_MESSAGE_LEN
+        );
+
+        if (messageLength == 0 ||
+            messageLength >= ROOM_CHAT_MESSAGE_LEN)
+        {
+            std::cout << "[ROOM CHAT BLOCK] invalid message length="
+                << messageLength
+                << std::endl;
+            break;
+        }
+
+        PlayerData data{};
+        if (!UserManager::Instance().GetPlayerData(
+                session->GetUserId(),
+                data))
+        {
+            break;
+        }
+
+        SC_RoomChat out{};
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(
+            PacketType::PKT_SC_ROOM_CHAT
+        );
+        out.playerId = session->GetPlayerId();
+
+        strncpy_s(
+            out.nickname,
+            sizeof(out.nickname),
+            data.nickname.c_str(),
+            _TRUNCATE
+        );
+        strncpy_s(
+            out.message,
+            sizeof(out.message),
+            pkt->message,
+            _TRUNCATE
+        );
+
+        // The temporary ready room has no server Room yet. Until party
+        // support is added, keep that channel alive as a private self echo.
+        if (state == SessionState::IN_LOBBY)
+        {
+            out.roomId = 0;
+            session->Send(&out);
+            break;
+        }
+
+        uint32_t roomId = session->GetCurrentRoomId();
+        Room room{};
+        RoomMember sender{};
+
+        if (roomId == 0 ||
+            !RoomManager::Instance().GetRoom(roomId, room) ||
+            !RoomManager::Instance().GetMember(
+                roomId,
+                session->GetPlayerId(),
+                sender))
+        {
+            std::cout << "[ROOM CHAT BLOCK] room membership missing playerId="
+                << session->GetPlayerId()
+                << " roomId=" << roomId
+                << std::endl;
+            break;
+        }
+
+        out.roomId = roomId;
+
+        for (const RoomMember& member : room.members)
+        {
+            std::shared_ptr<Session> target =
+                SessionManager::Instance().Find(member.playerId);
+
+            if (target != nullptr)
+                target->Send(&out);
+        }
+
+        std::cout << "[ROOM CHAT] roomId=" << roomId
+            << " sender=" << session->GetPlayerId()
+            << " targetCount=" << room.members.size()
+            << std::endl;
+
+        break;
+    }
+
+    case PacketType::PKT_CS_FRIEND_CHAT:
+    {
+        if (header->size != sizeof(CS_FriendChat))
+        {
+            std::cout << "[FRIEND CHAT BLOCK] invalid size="
+                << header->size
+                << std::endl;
+            break;
+        }
+
+        SessionState senderState = session->GetState();
+        if (senderState != SessionState::IN_LOBBY &&
+            senderState != SessionState::IN_ROOM)
+        {
+            std::cout << "[FRIEND CHAT BLOCK] invalid sender state playerId="
+                << session->GetPlayerId()
+                << " state=" << static_cast<int>(senderState)
+                << std::endl;
+            break;
+        }
+
+        auto* pkt = reinterpret_cast<CS_FriendChat*>(header);
+        if (pkt->targetPlayerId == 0 ||
+            pkt->targetPlayerId == session->GetPlayerId())
+        {
+            std::cout << "[FRIEND CHAT BLOCK] invalid target sender="
+                << session->GetPlayerId()
+                << " target=" << pkt->targetPlayerId
+                << std::endl;
+            break;
+        }
+
+        size_t messageLength = strnlen_s(
+            pkt->message,
+            FRIEND_CHAT_MESSAGE_LEN
+        );
+        if (messageLength == 0 ||
+            messageLength >= FRIEND_CHAT_MESSAGE_LEN)
+        {
+            std::cout << "[FRIEND CHAT BLOCK] invalid message length="
+                << messageLength
+                << std::endl;
+            break;
+        }
+
+        std::shared_ptr<Session> target =
+            SessionManager::Instance().Find(pkt->targetPlayerId);
+        if (target == nullptr)
+        {
+            std::cout << "[FRIEND CHAT BLOCK] offline target="
+                << pkt->targetPlayerId
+                << std::endl;
+            break;
+        }
+
+        SessionState targetState = target->GetState();
+        if (targetState != SessionState::IN_LOBBY &&
+            targetState != SessionState::IN_ROOM)
+        {
+            std::cout << "[FRIEND CHAT BLOCK] unavailable target="
+                << pkt->targetPlayerId
+                << " state=" << static_cast<int>(targetState)
+                << std::endl;
+            break;
+        }
+
+        if (!FriendManager::Instance().AreFriends(
+                session->GetUserId(),
+                target->GetUserId()) ||
+            FriendManager::Instance().IsBlockedEitherWay(
+                session->GetUserId(),
+                target->GetUserId()))
+        {
+            std::cout << "[FRIEND CHAT BLOCK] not friends sender="
+                << session->GetUserId()
+                << " target=" << target->GetUserId()
+                << std::endl;
+            break;
+        }
+
+        PlayerData senderData{};
+        if (!UserManager::Instance().GetPlayerData(
+                session->GetUserId(),
+                senderData))
+        {
+            break;
+        }
+
+        SC_FriendChat out{};
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(
+            PacketType::PKT_SC_FRIEND_CHAT
+        );
+        out.senderPlayerId = session->GetPlayerId();
+        out.targetPlayerId = pkt->targetPlayerId;
+
+        strncpy_s(
+            out.senderNickname,
+            sizeof(out.senderNickname),
+            senderData.nickname.c_str(),
+            _TRUNCATE
+        );
+        strncpy_s(
+            out.message,
+            sizeof(out.message),
+            pkt->message,
+            _TRUNCATE
+        );
+
+        target->Send(&out);
+        session->Send(&out);
+
+        std::cout << "[FRIEND CHAT] sender="
+            << out.senderPlayerId
+            << " target=" << out.targetPlayerId
+            << std::endl;
+        break;
+    }
+    case PacketType::PKT_CS_FRIEND_OVERVIEW_REQUEST:
+    case PacketType::PKT_CS_FRIEND_PRESENCE_SET:
+    case PacketType::PKT_CS_FRIEND_SEARCH:
+    case PacketType::PKT_CS_FRIEND_RECOMMEND_REQUEST:
+    case PacketType::PKT_CS_FRIEND_OPERATION:
+    case PacketType::PKT_CS_FRIEND_REQUEST_LIST_REQUEST:
+    case PacketType::PKT_CS_FRIEND_RECENT_REQUEST:
+    case PacketType::PKT_CS_FRIEND_MEMO_SET:
+        FriendPacketService::Dispatch(session, header);
+        break;
 
     case PacketType::PKT_CS_LOBBY_CHARACTER_LIST:
     {

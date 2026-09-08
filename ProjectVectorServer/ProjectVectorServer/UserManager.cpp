@@ -1,5 +1,6 @@
 #include "UserManager.h"
 #include "CareerManager.h"
+#include "FriendManager.h"
 #include "Common.h"
 #include "Session.h"
 #include "WeaponSkinManager.h"
@@ -327,6 +328,7 @@ int UserManager::Register(const std::string& id,const std::string& nick,const st
     SaveCharacterAffinityDataUnlocked();
     WeaponSkinManager::Instance().InitializeUser(id);
     CareerManager::Instance().InitializeUser(id, nick);
+    FriendManager::Instance().InitializeUser(id);
 
     return (int)RegisterResult::SUCCESS;
 }
@@ -539,6 +541,16 @@ bool UserManager::GetPlayerData(const std::string& id, PlayerData& outData)
 
     outData = it->second;
     return true;
+}
+
+std::vector<PlayerData> UserManager::GetAllPlayerData()
+{
+    std::lock_guard<std::mutex> lock(userManagerMutex_);
+    std::vector<PlayerData> result;
+    result.reserve(playerData_.size());
+    for (const auto& pair : playerData_)
+        result.push_back(pair.second);
+    return result;
 }
 
 bool UserManager::SetLobbyCharacterModel(const std::string& id, int modelId)

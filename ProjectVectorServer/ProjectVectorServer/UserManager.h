@@ -69,6 +69,7 @@ public:
     void LoadLevelExpTable();
 
     bool GetPlayerData(const std::string& id, PlayerData& outData);
+    std::vector<PlayerData> GetAllPlayerData();
 
     bool SetLobbyCharacterModel(const std::string& id, int modelId);
     bool SetLobbyBackground(const std::string& id, int backgroundId);

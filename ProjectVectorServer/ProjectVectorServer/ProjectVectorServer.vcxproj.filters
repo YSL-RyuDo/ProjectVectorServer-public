@@ -18,6 +18,12 @@
     <ClInclude Include="CareerManager.h">
       <Filter>헤더 파일</Filter>
     </ClInclude>
+    <ClInclude Include="FriendManager.h">
+      <Filter>헤더 파일</Filter>
+    </ClInclude>
+    <ClInclude Include="FriendPacketService.h">
+      <Filter>헤더 파일</Filter>
+    </ClInclude>
     <ClInclude Include="Common.h">
       <Filter>헤더 파일</Filter>
     </ClInclude>
@@ -66,6 +72,12 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="CareerManager.cpp">
+      <Filter>소스 파일</Filter>
+    </ClCompile>
+    <ClCompile Include="FriendManager.cpp">
+      <Filter>소스 파일</Filter>
+    </ClCompile>
+    <ClCompile Include="FriendPacketService.cpp">
       <Filter>소스 파일</Filter>
     </ClCompile>
     <ClCompile Include="main.cpp">

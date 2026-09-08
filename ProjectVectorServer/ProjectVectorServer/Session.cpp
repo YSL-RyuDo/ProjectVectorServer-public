@@ -666,6 +666,29 @@ bool Session::RemoveWeapon(int weaponId)
     return true;
 }
 
+void Session::AddRecentPlayerUserId(const std::string& userId)
+{
+    if (userId.empty() || userId == userId_)
+        return;
+
+    std::lock_guard<std::mutex> lock(recentPlayersMutex_);
+    recentPlayerUserIds_.erase(
+        std::remove(
+            recentPlayerUserIds_.begin(),
+            recentPlayerUserIds_.end(),
+            userId),
+        recentPlayerUserIds_.end());
+    recentPlayerUserIds_.insert(recentPlayerUserIds_.begin(), userId);
+    if (recentPlayerUserIds_.size() > FRIEND_MAX_RECENT_COUNT)
+        recentPlayerUserIds_.resize(FRIEND_MAX_RECENT_COUNT);
+}
+
+std::vector<std::string> Session::GetRecentPlayerUserIds() const
+{
+    std::lock_guard<std::mutex> lock(recentPlayersMutex_);
+    return recentPlayerUserIds_;
+}
+
 std::vector<PlayerWeaponState> Session::GetOwnedWeapons() const
 {
     std::vector<PlayerWeaponState> result;

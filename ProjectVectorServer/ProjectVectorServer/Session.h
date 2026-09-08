@@ -77,6 +77,9 @@ public:
     void SetUserId(const std::string& id) { userId_ = id; }
     std::string GetUserId() const { return userId_; }
 
+    void AddRecentPlayerUserId(const std::string& userId);
+    std::vector<std::string> GetRecentPlayerUserIds() const;
+
     void Disconnect();
     bool IsDisconnected() const { return disconnected_.load(); }
 
@@ -249,4 +252,6 @@ private:
 
     std::atomic<bool> disconnected_{ false };
     std::mutex sendMutex_;
+    mutable std::mutex recentPlayersMutex_;
+    std::vector<std::string> recentPlayerUserIds_;
 };

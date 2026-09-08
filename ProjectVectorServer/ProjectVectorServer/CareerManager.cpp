@@ -402,6 +402,18 @@ void CareerManager::InitializeUser(
         << std::endl;
 }
 
+bool CareerManager::GetWallet(
+    const std::string& userId,
+    CareerWallet& outWallet)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = wallets_.find(userId);
+    if (it == wallets_.end())
+        return false;
+    outWallet = it->second;
+    return true;
+}
+
 bool CareerManager::GetOverview(
     const std::string& userId,
     CareerOverview& outOverview)

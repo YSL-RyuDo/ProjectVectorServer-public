@@ -187,6 +187,7 @@ public:
     void InitializeUser(const std::string& userId, const std::string& nickname);
 
     bool GetOverview(const std::string& userId, CareerOverview& outOverview);
+    bool GetWallet(const std::string& userId, CareerWallet& outWallet);
     std::vector<CareerRankingEntry> GetRankings(size_t limit);
     CareerRankingPage GetRankingPage(
         int rankingType,

@@ -25,6 +25,7 @@ public:
 	void BroadcastLobby(void* packet);
 
     std::shared_ptr<Session> Find(uint32_t playerId);
+    std::shared_ptr<Session> FindByUserId(const std::string& userId);
 
 private:
     std::unordered_map<Session*, std::shared_ptr<Session>> connections_;

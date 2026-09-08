@@ -20,6 +20,8 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="CareerManager.h" />
+    <ClInclude Include="FriendManager.h" />
+    <ClInclude Include="FriendPacketService.h" />
     <ClInclude Include="Common.h" />
     <ClInclude Include="IocpCore.h" />
     <ClInclude Include="Listener.h" />
@@ -38,6 +40,8 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="CareerManager.cpp" />
+    <ClCompile Include="FriendManager.cpp" />
+    <ClCompile Include="FriendPacketService.cpp" />
     <ClCompile Include="IocpCore.cpp" />
     <ClCompile Include="Listener.cpp" />
     <ClCompile Include="main.cpp" />
@@ -65,6 +69,11 @@
     <None Include="career_seasons.csv" />
     <None Include="career_season_stats.csv" />
     <None Include="career_user_inventory.csv" />
+    <None Include="friend_blocks.csv" />
+    <None Include="friend_memos.csv" />
+    <None Include="friend_profiles.csv" />
+    <None Include="friend_relations.csv" />
+    <None Include="friend_requests.csv" />
     <None Include="weapon_skins.csv" />
     <None Include="user_weapon_skins.csv" />
     <None Include="user_weapon_skin_loadouts.csv" />

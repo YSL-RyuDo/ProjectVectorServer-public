@@ -647,10 +647,21 @@ void WeaponSkinManager::SeedDefinitionsUnlocked()
         "Dragunov", "M416", "AK47", "M249", "Kar98", "AWM", "Knife"
     };
 
-    static const char* additionalSkinNames[WEAPON_SKIN_WEAPON_COUNT - 1] =
+    static const char* additionalSkinNames[WEAPON_SKIN_WEAPON_COUNT - 1][3] =
     {
-        "Orange", "White", "Yellow", "Silver", "White", "Purple", "Yellow",
-        "Gold", "Cargo", "Red", "Purple", "Red", "Toxic"
+        { "Orange", "Dark", "Silver" },
+        { "White", "Purple", "Yellow" },
+        { "Yellow", "Winter", "Red" },
+        { "Silver", "Toxic", "Yellow" },
+        { "White", "Orange", "Purple" },
+        { "Purple", "White", "Orange" },
+        { "Yellow", "Cargo", "Red" },
+        { "Gold", "Silver", "Red" },
+        { "Cargo", "Winter", "Red" },
+        { "Red", "Cargo", "Toxic" },
+        { "Purple", "White", "Red" },
+        { "Red", "White", "Cargo" },
+        { "Toxic", "Purple", "Red" }
     };
 
     for (int weaponId = 0; weaponId < WEAPON_SKIN_WEAPON_COUNT; ++weaponId)
@@ -664,12 +675,15 @@ void WeaponSkinManager::SeedDefinitionsUnlocked()
 
         if (weaponId < WEAPON_SKIN_WEAPON_COUNT - 1)
         {
-            WeaponSkinDefinitionData skin{};
-            skin.weaponId = weaponId;
-            skin.skinId = 1;
-            skin.skinName = additionalSkinNames[weaponId];
-            skin.isDefault = false;
-            definitions_[MakeKey(weaponId, 1)] = skin;
+            for (int skinId = 1; skinId <= 3; ++skinId)
+            {
+                WeaponSkinDefinitionData skin{};
+                skin.weaponId = weaponId;
+                skin.skinId = skinId;
+                skin.skinName = additionalSkinNames[weaponId][skinId - 1];
+                skin.isDefault = false;
+                definitions_[MakeKey(weaponId, skinId)] = skin;
+            }
         }
     }
 }

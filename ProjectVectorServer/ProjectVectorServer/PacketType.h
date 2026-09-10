@@ -118,6 +118,8 @@ enum class PacketType : uint16_t
     PKT_SC_FRIEND_RECENT = 79,
     PKT_CS_FRIEND_MEMO_SET = 80,
     PKT_SC_FRIEND_MEMO_SET_RESULT = 81,
+    PKT_CS_ROOM_MAP_SET = 82,
+    PKT_SC_ROOM_MAP_SET_RESULT = 83,
 
     // ¿Œ∞‘¿”
     PKT_SC_HELLO = 100,

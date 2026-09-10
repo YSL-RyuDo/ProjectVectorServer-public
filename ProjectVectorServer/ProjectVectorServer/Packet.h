@@ -530,6 +530,37 @@ struct SC_RoomState
     RoomMemberInfo members[ROOM_MAX_MEMBER_COUNT];
 };
 
+enum class RoomMapSetResult : uint8_t
+{
+    SUCCESS = 0,
+    NOT_IN_ROOM = 1,
+    ROOM_NOT_FOUND = 2,
+    NOT_LEADER = 3,
+    INVALID_MAP = 4,
+    ROOM_PLAYING = 5,
+    PRIVATE_ROOM_ONLY = 6,
+    FAILED = 7
+};
+
+enum class GameMapId : uint8_t
+{
+    TEST_MAP = 0,
+    DESERT = 1
+};
+
+struct CS_RoomMapSet
+{
+    PacketHeader header;
+    uint8_t mapId;
+};
+
+struct SC_RoomMapSetResult
+{
+    PacketHeader header;
+    uint8_t result;
+    uint8_t mapId;
+};
+
 enum class RoomGameStartResult : uint8_t
 {
     SUCCESS = 0,
@@ -798,6 +829,7 @@ struct SC_GameAllReady
     PacketHeader header;
 
     uint32_t roomId;
+    char mapName[MAP_NAME_LEN];
     uint16_t prepareSeconds;
 
     uint8_t memberCount;
@@ -2210,6 +2242,7 @@ struct CareerRankingPacketEntry
     int32_t position;
     char userId[USER_ID_LEN];
     char nickname[MATCH_MEMBER_NICKNAME_LEN];
+    int32_t playerIconId;
     int32_t tierId;
     char tierName[CAREER_TIER_NAME_LEN];
     int32_t rankImageId;
@@ -2298,6 +2331,7 @@ struct SC_CareerInventory
 };
 
 static_assert(sizeof(SC_CareerOverview) <= 4096);
+static_assert(sizeof(CareerRankingPacketEntry) == 100);
 static_assert(sizeof(SC_CareerRanking) <= 4096);
 static_assert(sizeof(SC_CareerMatchHistory) <= 4096);
 static_assert(sizeof(SC_CareerInventory) <= 4096);

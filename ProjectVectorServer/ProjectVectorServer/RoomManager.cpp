@@ -69,7 +69,7 @@ std::vector<Room> RoomManager::GetRoomList()
 
     for (auto& pair : rooms_)
     {
-        // 자동 매칭으로 생성된 방은 사용자 설정 방 목록에 노출하지 않는다.
+        // ?�동 매칭?�로 ?�성??방�? ?�용???�정 �?목록???�출?��? ?�는??
         if (pair.second.isMatchmade)
             continue;
 
@@ -310,6 +310,34 @@ bool RoomManager::IsLeader(uint32_t roomId, uint32_t playerId)
         return false;
 
     return it->second.leaderPlayerId == playerId;
+}
+
+bool RoomManager::SetRoomMap(
+    uint32_t roomId,
+    uint32_t leaderPlayerId,
+    const std::string& mapName,
+    Room& outRoom)
+{
+    std::lock_guard<std::mutex> lock(roomManagerMutex_);
+
+    auto it = rooms_.find(roomId);
+    if (it == rooms_.end())
+        return false;
+
+    Room& room = it->second;
+    if (room.state != RoomState::WAITING ||
+        room.isMatchmade ||
+        room.leaderPlayerId != leaderPlayerId)
+    {
+        return false;
+    }
+
+    if (mapName != "TestMap" && mapName != "Desert")
+        return false;
+
+    room.mapName = mapName;
+    outRoom = room;
+    return true;
 }
 
 bool RoomManager::GetMember(uint32_t roomId,uint32_t playerId,RoomMember& outMember)

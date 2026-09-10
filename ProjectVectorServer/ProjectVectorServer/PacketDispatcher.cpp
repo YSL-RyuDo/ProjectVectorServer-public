@@ -26,6 +26,7 @@
 #include <vector>
 #include <unordered_set>
 #include <cmath>
+#include <random>
 
 namespace
 {
@@ -33,6 +34,35 @@ namespace
     constexpr uint16_t PREPARE_TIME_SECONDS = 10;
     constexpr uint16_t GAME_PREPARE_SECONDS = 20;
     constexpr int DRONE_MAX_HP = 100;
+    constexpr const char* TEST_MAP_NAME = "TestMap";
+    constexpr const char* DESERT_MAP_NAME = "Desert";
+
+    const char* GetMapName(uint8_t mapId)
+    {
+        switch (static_cast<GameMapId>(mapId))
+        {
+        case GameMapId::TEST_MAP:
+            return TEST_MAP_NAME;
+        case GameMapId::DESERT:
+            return DESERT_MAP_NAME;
+        default:
+            return nullptr;
+        }
+    }
+
+    uint8_t GetMapId(const std::string& mapName)
+    {
+        return mapName == DESERT_MAP_NAME
+            ? static_cast<uint8_t>(GameMapId::DESERT)
+            : static_cast<uint8_t>(GameMapId::TEST_MAP);
+    }
+
+    std::string ChooseRandomMatchMapName()
+    {
+        thread_local std::mt19937 randomEngine(std::random_device{}());
+        std::uniform_int_distribution<int> distribution(0, 1);
+        return distribution(randomEngine) == 0 ? TEST_MAP_NAME : DESERT_MAP_NAME;
+    }
 
     constexpr uint16_t ROUND_END_DELAY_SECONDS = 6;
     constexpr uint16_t ROUND_PLAY_SECONDS = 100;
@@ -954,6 +984,19 @@ namespace
             << std::endl;
     }
 
+    void SendRoomMapSetResult(Session* session, RoomMapSetResult result, uint8_t mapId)
+    {
+        if (session == nullptr)
+            return;
+
+        SC_RoomMapSetResult out{};
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_ROOM_MAP_SET_RESULT);
+        out.result = static_cast<uint8_t>(result);
+        out.mapId = mapId;
+        session->Send(&out);
+    }
+
     void SendRoomGameStartResult(Session* session, RoomGameStartResult result)
     {
         if (session == nullptr)
@@ -1749,6 +1792,7 @@ namespace
         out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_GAME_ALL_READY);
 
         out.roomId = room.roomId;
+        strncpy_s(out.mapName, MAP_NAME_LEN, room.mapName.c_str(), _TRUNCATE);
         out.prepareSeconds = PREPARE_TIME_SECONDS;
 
         uint8_t count = static_cast<uint8_t>(room.members.size());
@@ -2461,7 +2505,7 @@ namespace
             : "Normal Match";
         uint32_t roomId = RoomManager::Instance().CreateRoom(
             roomName,
-            "Default Map",
+            ChooseRandomMatchMapName(),
             members[0].nickname,
             members[0],
             MATCHMAKING_PLAYER_COUNT,
@@ -7382,6 +7426,14 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
                 source.nickname.c_str(),
                 _TRUNCATE
             );
+            PlayerData playerData{};
+            destination.playerIconId =
+                UserManager::Instance().GetPlayerData(
+                    source.userId,
+                    playerData
+                )
+                ? playerData.playerIconId
+                : 0;
             destination.tierId = source.tier.tierId;
             strncpy_s(
                 destination.tierName,
@@ -8170,7 +8222,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         }
 
         std::string roomName = data.nickname + WideToUTF8(L"ÀÇ ¹æ");
-        std::string mapName = WideToUTF8(L"±âº» ¸Ê");
+        std::string mapName = TEST_MAP_NAME;
 
         RoomMember leader{};
         leader.playerId = session->GetPlayerId();
@@ -8366,6 +8418,76 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             << " roomDeleted=" << roomDeleted
             << std::endl;
 
+        break;
+    }
+
+    case PacketType::PKT_CS_ROOM_MAP_SET:
+    {
+        if (header->size != sizeof(CS_RoomMapSet))
+        {
+            SendRoomMapSetResult(session, RoomMapSetResult::FAILED, 0);
+            break;
+        }
+
+        auto* pkt = reinterpret_cast<CS_RoomMapSet*>(header);
+        const char* mapName = GetMapName(pkt->mapId);
+        if (mapName == nullptr)
+        {
+            SendRoomMapSetResult(session, RoomMapSetResult::INVALID_MAP, pkt->mapId);
+            break;
+        }
+
+        if (session->GetState() != SessionState::IN_ROOM ||
+            session->GetCurrentRoomId() == 0)
+        {
+            SendRoomMapSetResult(session, RoomMapSetResult::NOT_IN_ROOM, pkt->mapId);
+            break;
+        }
+
+        const uint32_t roomId = session->GetCurrentRoomId();
+        Room room{};
+        if (!RoomManager::Instance().GetRoom(roomId, room))
+        {
+            SendRoomMapSetResult(session, RoomMapSetResult::ROOM_NOT_FOUND, pkt->mapId);
+            break;
+        }
+
+        if (room.isMatchmade)
+        {
+            SendRoomMapSetResult(session, RoomMapSetResult::PRIVATE_ROOM_ONLY, pkt->mapId);
+            break;
+        }
+
+        if (room.state != RoomState::WAITING)
+        {
+            SendRoomMapSetResult(session, RoomMapSetResult::ROOM_PLAYING, pkt->mapId);
+            break;
+        }
+
+        if (room.leaderPlayerId != session->GetPlayerId())
+        {
+            SendRoomMapSetResult(session, RoomMapSetResult::NOT_LEADER, pkt->mapId);
+            break;
+        }
+
+        Room updatedRoom{};
+        if (!RoomManager::Instance().SetRoomMap(
+                roomId,
+                session->GetPlayerId(),
+                mapName,
+                updatedRoom))
+        {
+            SendRoomMapSetResult(session, RoomMapSetResult::FAILED, pkt->mapId);
+            break;
+        }
+
+        SendRoomMapSetResult(session, RoomMapSetResult::SUCCESS, pkt->mapId);
+        BroadcastRoomState(updatedRoom);
+
+        std::cout << "[ROOM MAP SET] roomId=" << roomId
+            << " leaderPlayerId=" << session->GetPlayerId()
+            << " map=" << updatedRoom.mapName
+            << std::endl;
         break;
     }
 

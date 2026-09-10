@@ -35,6 +35,8 @@ public:
 
     bool IsLeader(uint32_t roomId, uint32_t playerId);
 
+    bool SetRoomMap(uint32_t roomId, uint32_t leaderPlayerId, const std::string& mapName, Room& outRoom);
+
     bool GetMember(uint32_t roomId,uint32_t playerId,RoomMember& outMember);
 
     bool GetMemberBySlot(uint32_t roomId,RoomTeam team,uint8_t slotIndex,RoomMember& outMember);

@@ -182,6 +182,19 @@ void WeaponSkinManager::InitializeUser(const std::string& userId)
     SaveLoadoutsUnlocked();
 }
 
+int WeaponSkinManager::GetOwnedSkinCount(const std::string& userId)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = ownership_.find(userId);
+    return it == ownership_.end() ? 0 : static_cast<int>(it->second.size());
+}
+
+int WeaponSkinManager::GetDefinitionCount()
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return static_cast<int>(definitions_.size());
+}
+
 bool WeaponSkinManager::GetEquippedSkins(
     const std::string& userId,
     int characterId,
@@ -647,21 +660,22 @@ void WeaponSkinManager::SeedDefinitionsUnlocked()
         "Dragunov", "M416", "AK47", "M249", "Kar98", "AWM", "Knife"
     };
 
-    static const char* additionalSkinNames[WEAPON_SKIN_WEAPON_COUNT - 1][3] =
+    static const std::vector<std::vector<const char*>> additionalSkinNames =
     {
-        { "Orange", "Dark", "Silver" },
-        { "White", "Purple", "Yellow" },
-        { "Yellow", "Winter", "Red" },
-        { "Silver", "Toxic", "Yellow" },
-        { "White", "Orange", "Purple" },
-        { "Purple", "White", "Orange" },
-        { "Yellow", "Cargo", "Red" },
-        { "Gold", "Silver", "Red" },
-        { "Cargo", "Winter", "Red" },
-        { "Red", "Cargo", "Toxic" },
-        { "Purple", "White", "Red" },
-        { "Red", "White", "Cargo" },
-        { "Toxic", "Purple", "Red" }
+        { "Orange", "Dark", "Silver", "Yellow" },
+        { "White", "Purple", "Yellow", "Silver", "Gray" },
+        { "Yellow", "Winter", "Red", "Cargo", "Toxic" },
+        { "Silver", "Toxic", "Yellow", "Cargo", "Red" },
+        { "White", "Orange", "Purple", "Red", "Gray" },
+        { "Purple", "White", "Orange", "Red", "Classic" },
+        { "Yellow", "Cargo", "Red", "Dark" },
+        { "Gold", "Silver", "Red", "Dark", "Khaki" },
+        { "Cargo", "Winter", "Red", "Toxic", "Yellow", "Purple" },
+        { "Red", "Cargo", "Toxic", "Yellow", "Winter", "Classic" },
+        { "Purple", "White", "Red", "Khaki", "Dark" },
+        { "Red", "White", "Cargo", "Dark", "Yellow", "Toxic" },
+        { "Toxic", "Purple", "Red", "Winter", "Yellow" },
+        { }
     };
 
     for (int weaponId = 0; weaponId < WEAPON_SKIN_WEAPON_COUNT; ++weaponId)
@@ -673,17 +687,15 @@ void WeaponSkinManager::SeedDefinitionsUnlocked()
         baseSkin.isDefault = true;
         definitions_[MakeKey(weaponId, 0)] = baseSkin;
 
-        if (weaponId < WEAPON_SKIN_WEAPON_COUNT - 1)
+        const auto& names = additionalSkinNames[weaponId];
+        for (size_t index = 0; index < names.size(); ++index)
         {
-            for (int skinId = 1; skinId <= 3; ++skinId)
-            {
-                WeaponSkinDefinitionData skin{};
-                skin.weaponId = weaponId;
-                skin.skinId = skinId;
-                skin.skinName = additionalSkinNames[weaponId][skinId - 1];
-                skin.isDefault = false;
-                definitions_[MakeKey(weaponId, skinId)] = skin;
-            }
+            WeaponSkinDefinitionData skin{};
+            skin.weaponId = weaponId;
+            skin.skinId = static_cast<int>(index + 1);
+            skin.skinName = names[index];
+            skin.isDefault = false;
+            definitions_[MakeKey(weaponId, skin.skinId)] = skin;
         }
     }
 }

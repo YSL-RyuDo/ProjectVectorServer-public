@@ -31,6 +31,8 @@ constexpr int CAREER_RANKING_COUNT = 10;
 constexpr int CAREER_RANKING_QUERY_LEN = 64;
 constexpr int CAREER_MATCH_HISTORY_COUNT = 5;
 constexpr int CAREER_MATCH_PLAYER_COUNT = 6;
+constexpr int CAREER_DETAIL_SEASON_COUNT = 8;
+constexpr int CAREER_DETAIL_CHARACTER_COUNT = 4;
 constexpr int CAREER_INVENTORY_COUNT = 20;
 constexpr int CAREER_ITEM_NAME_LEN = 32;
 constexpr int CAREER_ITEM_DESCRIPTION_LEN = 96;
@@ -45,6 +47,11 @@ constexpr int FRIEND_MAX_SEARCH_COUNT = 10;
 constexpr int FRIEND_RECOMMEND_COUNT = 3;
 constexpr int FRIEND_MAX_REQUEST_COUNT = 30;
 constexpr int FRIEND_MAX_RECENT_COUNT = 20;
+constexpr int PROFILE_VISITOR_COUNT = 8;
+constexpr int PROFILE_CHARACTER_COUNT = 4;
+constexpr int PROFILE_DATE_LEN = 16;
+constexpr int PROFILE_REGION_LEN = 20;
+constexpr int PROFILE_BATTLE_STAT_COUNT = 7;
 #pragma pack(push, 1)
 
 struct PacketHeader
@@ -900,6 +907,7 @@ struct CS_Hit
 {
     PacketHeader header;
     uint32_t targetId;
+    uint8_t hitZone; // 0 body, 1 head
 };
 
 struct SC_HPUpdate
@@ -2202,6 +2210,76 @@ struct SC_SentinelCDestroy
     uint32_t trapId;
 };
 
+struct CS_ProfileRequest
+{
+    PacketHeader header;
+    char targetUserId[USER_ID_LEN];
+};
+
+struct ProfileCharacterPacketEntry
+{
+    int32_t characterId;
+    int32_t matches;
+    int32_t wins;
+    int32_t maxKills;
+    uint8_t owned;
+};
+
+struct ProfileVisitorPacketEntry
+{
+    char userId[USER_ID_LEN];
+    char nickname[MATCH_MEMBER_NICKNAME_LEN];
+    int32_t playerIconId;
+    int64_t visitedAtUnix;
+};
+
+struct SC_Profile
+{
+    PacketHeader header;
+    uint8_t result;
+    uint8_t isSelf;
+    uint8_t privacyEnabled;
+    char userId[USER_ID_LEN];
+    char nickname[MATCH_MEMBER_NICKNAME_LEN];
+    int32_t level;
+    int32_t playerIconId;
+    int32_t logoBorderId;
+    char joinDate[PROFILE_DATE_LEN];
+    char region[PROFILE_REGION_LEN];
+    char birthday[PROFILE_DATE_LEN];
+    int32_t likeCount;
+    int32_t seasonId;
+    int32_t currentRankImageId;
+    char currentTierName[CAREER_TIER_NAME_LEN];
+    int32_t seasonHighestRankImageId;
+    int32_t allTimeHighestRankImageId;
+    int32_t allTimeHighestSeasonId;
+    int32_t playCount;
+    int32_t wins;
+    int32_t roundsPlayed;
+    int32_t totalKills;
+    int32_t totalAssists;
+    int32_t totalDamage;
+    int32_t mvpCount;
+    int32_t headshotKills;
+    int32_t spikePlants;
+    int32_t spikeDefuses;
+    int32_t weaponSkinOwnedCount;
+    int32_t weaponSkinTotalCount;
+    int32_t characterSkinOwnedCount;
+    int32_t characterSkinTotalCount;
+    uint8_t battleStatIds[PROFILE_BATTLE_STAT_COUNT];
+    ProfileCharacterPacketEntry characters[PROFILE_CHARACTER_COUNT];
+    uint8_t visitorCount;
+    ProfileVisitorPacketEntry visitors[PROFILE_VISITOR_COUNT];
+};
+
+struct CS_ProfilePrivacySet { PacketHeader header; uint8_t enabled; };
+struct SC_ProfilePrivacySetResult { PacketHeader header; uint8_t result; uint8_t enabled; };
+struct CS_ProfileLike { PacketHeader header; char targetUserId[USER_ID_LEN]; };
+struct SC_ProfileLikeResult { PacketHeader header; uint8_t result; char targetUserId[USER_ID_LEN]; int32_t likeCount; };
+struct CS_ProfileBattleStatsSet { PacketHeader header; uint8_t battleStatIds[PROFILE_BATTLE_STAT_COUNT]; };
+struct SC_ProfileBattleStatsSetResult { PacketHeader header; uint8_t result; uint8_t battleStatIds[PROFILE_BATTLE_STAT_COUNT]; };
 struct CS_CareerOverviewRequest
 {
     PacketHeader header;
@@ -2227,7 +2305,60 @@ struct SC_CareerOverview
     int32_t totalDamage;
     int32_t mvpCount;
 };
+struct CS_CareerDetailRequest
+{
+    PacketHeader header;
+    char targetUserId[USER_ID_LEN];
+    int32_t seasonId;
+    uint8_t modeType;
+    int32_t characterId;
+};
 
+struct CareerDetailSeasonPacketEntry
+{
+    int32_t seasonId;
+    char seasonName[CAREER_SEASON_NAME_LEN];
+    uint8_t isActive;
+};
+
+struct CareerDetailCharacterPacketEntry
+{
+    int32_t characterId;
+    int32_t performanceScore;
+    int32_t matches;
+    int32_t wins;
+    int32_t kills;
+    int32_t deaths;
+    int32_t maxKills;
+    int32_t maxDamage;
+};
+
+struct SC_CareerDetail
+{
+    PacketHeader header;
+    uint8_t result;
+    uint8_t hasData;
+    int32_t seasonId;
+    uint8_t modeType;
+    int32_t selectedCharacterId;
+    uint8_t seasonCount;
+    CareerDetailSeasonPacketEntry seasons[CAREER_DETAIL_SEASON_COUNT];
+    CareerDetailCharacterPacketEntry characters[CAREER_DETAIL_CHARACTER_COUNT];
+    int32_t playCount;
+    int32_t wins;
+    int32_t roundsPlayed;
+    int32_t totalDamage;
+    int32_t kills;
+    int32_t deaths;
+    int32_t assists;
+    int32_t headshotKills;
+    int32_t meleeKills;
+    int32_t spikePlants;
+    int32_t spikeDefuses;
+    int32_t maxAssists;
+    int32_t maxRoundDamageHundredths;
+    int32_t maxRoundKillsHundredths;
+};
 struct CS_CareerRankingRequest
 {
     PacketHeader header;

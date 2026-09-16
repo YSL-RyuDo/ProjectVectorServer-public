@@ -38,8 +38,12 @@ namespace
         "matchId,seasonId,mapName,startedAtUnix,durationSeconds,scoreA,scoreB,winnerTeam";
     constexpr const char* MATCHES_HEADER =
         "matchId,seasonId,mapName,startedAtUnix,durationSeconds,scoreA,scoreB,winnerTeam,matchType";
-    constexpr const char* MATCH_PLAYERS_HEADER =
+    constexpr const char* LEGACY_MATCH_PLAYERS_HEADER =
         "matchId,userId,team,characterId,combatScore,attackScore,skillScore,teamworkScore,kills,deaths,assists,damage,isMvp";
+    constexpr const char* PREVIOUS_MATCH_PLAYERS_HEADER =
+        "matchId,userId,team,characterId,combatScore,attackScore,skillScore,teamworkScore,kills,deaths,assists,damage,isMvp,headshotKills,spikePlants,spikeDefuses";
+    constexpr const char* MATCH_PLAYERS_HEADER =
+        "matchId,userId,team,characterId,combatScore,attackScore,skillScore,teamworkScore,kills,deaths,assists,damage,isMvp,headshotKills,spikePlants,spikeDefuses,meleeKills";
     constexpr const char* ITEMS_HEADER =
         "itemId,itemName,description,iconId";
     constexpr const char* INVENTORY_HEADER =
@@ -447,6 +451,109 @@ bool CareerManager::GetOverview(
     return true;
 }
 
+bool CareerManager::GetCareerDetail(
+    const std::string& userId,
+    int seasonId,
+    int modeType,
+    int characterId,
+    CareerDetail& outDetail)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (users_.count(userId) == 0)
+        return false;
+
+    if (seasons_.count(seasonId) == 0)
+        seasonId = GetActiveSeasonIdUnlocked();
+    if (seasons_.count(seasonId) == 0)
+        return false;
+
+    modeType = std::clamp(modeType, 0, 2);
+    characterId = std::clamp(characterId, 0, CAREER_CHARACTER_COUNT - 1);
+
+    outDetail = CareerDetail{};
+    outDetail.seasonId = seasonId;
+    outDetail.modeType = modeType;
+    outDetail.selectedCharacterId = characterId;
+
+    for (const auto& pair : seasons_)
+        outDetail.seasons.push_back(pair.second);
+    std::sort(
+        outDetail.seasons.begin(),
+        outDetail.seasons.end(),
+        [](const CareerSeason& lhs, const CareerSeason& rhs)
+        {
+            return lhs.seasonId > rhs.seasonId;
+        });
+
+    outDetail.characters.resize(CAREER_CHARACTER_COUNT);
+    for (int i = 0; i < CAREER_CHARACTER_COUNT; ++i)
+        outDetail.characters[i].characterId = i;
+
+    for (const CareerMatchPlayer& player : matchPlayers_)
+    {
+        if (player.userId != userId)
+            continue;
+
+        auto matchIt = matches_.find(player.matchId);
+        if (matchIt == matches_.end())
+            continue;
+
+        const CareerMatch& match = matchIt->second;
+        if (match.seasonId != seasonId || match.matchType != modeType)
+            continue;
+
+        int rounds = std::max(1, match.scoreA + match.scoreB);
+        bool won = player.team == match.winnerTeam;
+        CareerDetailGameStats& game = outDetail.game;
+        game.playCount++;
+        game.wins += won ? 1 : 0;
+        game.roundsPlayed += rounds;
+        game.totalDamage += std::max(0, player.damage);
+        game.kills += std::max(0, player.kills);
+        game.deaths += std::max(0, player.deaths);
+        game.assists += std::max(0, player.assists);
+        game.headshotKills += std::max(0, player.headshotKills);
+        game.meleeKills += std::max(0, player.meleeKills);
+        game.spikePlants += std::max(0, player.spikePlants);
+        game.spikeDefuses += std::max(0, player.spikeDefuses);
+        game.maxAssists = std::max(game.maxAssists, std::max(0, player.assists));
+        game.maxRoundDamageHundredths = std::max(
+            game.maxRoundDamageHundredths,
+            static_cast<int>((static_cast<int64_t>(std::max(0, player.damage)) * 100 + rounds / 2) / rounds));
+        game.maxRoundKillsHundredths = std::max(
+            game.maxRoundKillsHundredths,
+            static_cast<int>((static_cast<int64_t>(std::max(0, player.kills)) * 100 + rounds / 2) / rounds));
+
+        if (player.characterId >= 0 &&
+            player.characterId < CAREER_CHARACTER_COUNT)
+        {
+            CareerDetailCharacterStats& character =
+                outDetail.characters[player.characterId];
+            character.performanceScore += std::max(0, player.combatScore);
+            character.matches++;
+            character.wins += won ? 1 : 0;
+            character.kills += std::max(0, player.kills);
+            character.deaths += std::max(0, player.deaths);
+            character.maxKills = std::max(
+                character.maxKills,
+                std::max(0, player.kills));
+            character.maxDamage = std::max(
+                character.maxDamage,
+                std::max(0, player.damage));
+        }
+    }
+
+    outDetail.hasData = outDetail.game.playCount > 0;
+    for (CareerDetailCharacterStats& character : outDetail.characters)
+    {
+        if (character.matches > 0)
+            character.performanceScore /= character.matches;
+    }
+
+    return true;
+}
+
 std::vector<CareerRankingEntry> CareerManager::GetRankings(size_t limit)
 {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -740,7 +847,7 @@ uint64_t CareerManager::RecordMatch(
     match.scoreA = std::max(0, scoreA);
     match.scoreB = std::max(0, scoreB);
     match.winnerTeam = winnerTeam;
-    match.matchType = matchType == 1 ? 1 : 0;
+    match.matchType = std::clamp(matchType, 0, 2);
     matches_[matchId] = match;
 
     int roundsPlayed = std::max(1, match.scoreA + match.scoreB);
@@ -1166,7 +1273,7 @@ void CareerManager::LoadMatchesUnlocked()
 
         if (hasMatchType &&
             (!TryParseInt(fields[8], match.matchType) ||
-                (match.matchType != 0 && match.matchType != 1)))
+                (match.matchType < 0 || match.matchType > 2)))
         {
             continue;
         }
@@ -1182,7 +1289,17 @@ void CareerManager::LoadMatchesUnlocked()
 void CareerManager::LoadMatchPlayersUnlocked()
 {
     std::ifstream file(MATCH_PLAYERS_FILE);
-    if (!file.is_open() || !ReadHeader(file, MATCH_PLAYERS_HEADER))
+    if (!file.is_open())
+        return;
+
+    std::string header;
+    if (!std::getline(file, header))
+        return;
+    if (!header.empty() && header.back() == '\r')
+        header.pop_back();
+    bool legacy = header == LEGACY_MATCH_PLAYERS_HEADER;
+    bool previous = header == PREVIOUS_MATCH_PLAYERS_HEADER;
+    if (!legacy && !previous && header != MATCH_PLAYERS_HEADER)
         return;
 
     std::string line;
@@ -1193,7 +1310,8 @@ void CareerManager::LoadMatchPlayersUnlocked()
         if (!line.empty() && line.back() == '\r')
             line.pop_back();
         std::vector<std::string> fields = ParseCsvLine(line);
-        if (fields.size() != 13 || users_.count(fields[1]) == 0)
+        if ((fields.size() != 13 && fields.size() != 16 && fields.size() != 17) ||
+            users_.count(fields[1]) == 0)
             continue;
 
         CareerMatchPlayer player{};
@@ -1217,6 +1335,14 @@ void CareerManager::LoadMatchPlayersUnlocked()
 
         player.userId = fields[1];
         player.isMvp = isMvp != 0;
+        if (!legacy && fields.size() >= 16)
+        {
+            TryParseInt(fields[13], player.headshotKills);
+            TryParseInt(fields[14], player.spikePlants);
+            TryParseInt(fields[15], player.spikeDefuses);
+            if (fields.size() >= 17)
+                TryParseInt(fields[16], player.meleeKills);
+        }
         std::string key = std::to_string(player.matchId) + "\x1f" + player.userId;
         if (uniqueRows.insert(key).second)
             matchPlayers_.push_back(player);
@@ -1523,7 +1649,11 @@ void CareerManager::SaveMatchPlayersUnlocked()
             << player.deaths << ','
             << player.assists << ','
             << player.damage << ','
-            << (player.isMvp ? 1 : 0) << '\n';
+            << (player.isMvp ? 1 : 0) << ','
+            << player.headshotKills << ','
+            << player.spikePlants << ','
+            << player.spikeDefuses << ','
+            << player.meleeKills << '\n';
     }
 }
 
@@ -1609,8 +1739,8 @@ void CareerManager::SeedDefaultSeasonUnlocked()
     constexpr int64_t secondsPerDay = 24 * 60 * 60;
 
     CareerSeason season{};
-    season.seasonId = 1;
-    season.seasonName = "Season 1";
+    season.seasonId = 0;
+    season.seasonName = "시즌0";
     season.startUnix = now - 30 * secondsPerDay;
     season.endUnix = now + 90 * secondsPerDay;
     season.isActive = true;

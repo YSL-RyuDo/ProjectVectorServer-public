@@ -41,6 +41,8 @@ public:
         int weaponId,
         int skinId);
     bool IsOwned(const std::string& userId, int weaponId, int skinId);
+    int GetOwnedSkinCount(const std::string& userId);
+    int GetDefinitionCount();
 
 private:
     void LoadDefinitionsUnlocked();

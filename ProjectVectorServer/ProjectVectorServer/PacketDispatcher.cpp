@@ -2,6 +2,7 @@
 #include "CareerManager.h"
 #include "FriendManager.h"
 #include "FriendPacketService.h"
+#include "ProfilePacketService.h"
 #include "RankRatingCalculator.h"
 #include "PacketType.h"
 #include "Packet.h"
@@ -3682,6 +3683,10 @@ namespace
             careerPlayer.deaths = stats.deaths;
             careerPlayer.assists = stats.assists;
             careerPlayer.damage = stats.damageDealt;
+            careerPlayer.headshotKills = stats.headshotKills;
+            careerPlayer.meleeKills = stats.meleeKills;
+            careerPlayer.spikePlants = stats.spikePlants;
+            careerPlayer.spikeDefuses = stats.spikeDefuses;
             careerPlayer.isMvp = member.playerId == mvpPlayerId;
             careerPlayer.partyId = member.matchmakingPartyId;
             careerPlayer.partySize = member.matchmakingPartySize;
@@ -3720,7 +3725,7 @@ namespace
             scoreB,
             static_cast<int>(winnerTeam),
             careerPlayers,
-            room.matchType,
+            room.isMatchmade ? room.matchType : 2,
             room.isMatchmade,
             &rankAdjustments
         );
@@ -7321,6 +7326,96 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         break;
     }
 
+    case PacketType::PKT_CS_CAREER_DETAIL_REQUEST:
+    {
+        if (header->size != sizeof(CS_CareerDetailRequest))
+            break;
+
+        const auto* request =
+            reinterpret_cast<const CS_CareerDetailRequest*>(header);
+        size_t targetLength = 0;
+        while (targetLength < USER_ID_LEN &&
+            request->targetUserId[targetLength] != '\0')
+        {
+            ++targetLength;
+        }
+        std::string targetUserId(request->targetUserId, targetLength);
+        if (targetUserId.empty())
+            targetUserId = session->GetUserId();
+
+        CareerDetail detail{};
+        bool ok = CareerManager::Instance().GetCareerDetail(
+            targetUserId,
+            request->seasonId,
+            request->modeType,
+            request->characterId,
+            detail);
+
+        SC_CareerDetail out{};
+        out.header.size = sizeof(out);
+        out.header.type = static_cast<uint16_t>(
+            PacketType::PKT_SC_CAREER_DETAIL);
+        out.result = ok ? 0 : 1;
+
+        if (ok)
+        {
+            out.hasData = detail.hasData ? 1 : 0;
+            out.seasonId = detail.seasonId;
+            out.modeType = static_cast<uint8_t>(detail.modeType);
+            out.selectedCharacterId = detail.selectedCharacterId;
+            size_t seasonCount = std::min(
+                detail.seasons.size(),
+                static_cast<size_t>(CAREER_DETAIL_SEASON_COUNT));
+            out.seasonCount = static_cast<uint8_t>(seasonCount);
+            for (size_t i = 0; i < seasonCount; ++i)
+            {
+                out.seasons[i].seasonId = detail.seasons[i].seasonId;
+                strncpy_s(
+                    out.seasons[i].seasonName,
+                    sizeof(out.seasons[i].seasonName),
+                    detail.seasons[i].seasonName.c_str(),
+                    _TRUNCATE);
+                out.seasons[i].isActive = detail.seasons[i].isActive ? 1 : 0;
+            }
+
+            size_t characterCount = std::min(
+                detail.characters.size(),
+                static_cast<size_t>(CAREER_DETAIL_CHARACTER_COUNT));
+            for (size_t i = 0; i < characterCount; ++i)
+            {
+                const CareerDetailCharacterStats& source = detail.characters[i];
+                CareerDetailCharacterPacketEntry& destination = out.characters[i];
+                destination.characterId = source.characterId;
+                destination.performanceScore = source.performanceScore;
+                destination.matches = source.matches;
+                destination.wins = source.wins;
+                destination.kills = source.kills;
+                destination.deaths = source.deaths;
+                destination.maxKills = source.maxKills;
+                destination.maxDamage = source.maxDamage;
+            }
+
+            out.playCount = detail.game.playCount;
+            out.wins = detail.game.wins;
+            out.roundsPlayed = detail.game.roundsPlayed;
+            out.totalDamage = detail.game.totalDamage;
+            out.kills = detail.game.kills;
+            out.deaths = detail.game.deaths;
+            out.assists = detail.game.assists;
+            out.headshotKills = detail.game.headshotKills;
+            out.meleeKills = detail.game.meleeKills;
+            out.spikePlants = detail.game.spikePlants;
+            out.spikeDefuses = detail.game.spikeDefuses;
+            out.maxAssists = detail.game.maxAssists;
+            out.maxRoundDamageHundredths =
+                detail.game.maxRoundDamageHundredths;
+            out.maxRoundKillsHundredths =
+                detail.game.maxRoundKillsHundredths;
+        }
+
+        session->Send(&out);
+        break;
+    }
     case PacketType::PKT_CS_CAREER_OVERVIEW_REQUEST:
     {
         if (header->size != sizeof(CS_CareerOverviewRequest))
@@ -7887,6 +7982,13 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
     case PacketType::PKT_CS_FRIEND_RECENT_REQUEST:
     case PacketType::PKT_CS_FRIEND_MEMO_SET:
         FriendPacketService::Dispatch(session, header);
+        break;
+
+    case PacketType::PKT_CS_PROFILE_REQUEST:
+    case PacketType::PKT_CS_PROFILE_PRIVACY_SET:
+    case PacketType::PKT_CS_PROFILE_LIKE:
+    case PacketType::PKT_CS_PROFILE_BATTLE_STATS_SET:
+        ProfilePacketService::Dispatch(session, header);
         break;
 
     case PacketType::PKT_CS_LOBBY_CHARACTER_LIST:
@@ -9595,7 +9697,10 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
                 break;
             }
         }
-        target->SetLastDamager(session->GetPlayerId());
+        target->SetLastDamager(
+            session->GetPlayerId(),
+            pkt->hitZone == 1,
+            weaponId);
 
         target->AddAssistDamageRecord(
             session->GetPlayerId(),
@@ -10516,6 +10621,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             int plantCredit = GetCreditReward("SPIKE_PLANT");
 
             session->AddCredits(plantCredit);
+            session->GetMatchStats().spikePlants++;
 
             std::cout << "[CREDIT SPIKE PLANT] playerId="
                 << session->GetPlayerId()
@@ -10578,6 +10684,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
         if (defuseOk)
         {
+            session->GetMatchStats().spikeDefuses++;
             ResolveRoundBySpikeDefuse(
                 roomId,
                 session->GetPlayerId()
@@ -16291,6 +16398,10 @@ void PacketDispatcher::HandleDeath(Session* target)
     if (killer != nullptr && killer.get() != target)
     {
         AddKillStatByRound(killer.get(), roomId);
+        if (target->GetLastDamageWasHeadshot())
+            killer->GetMatchStats().headshotKills++;
+        if (IsKnifeWeapon(target->GetLastDamageWeaponId()))
+            killer->GetMatchStats().meleeKills++;
         killer->AddCredits(GetCreditReward("KILL"));
 
         AddDeathStatByRound(target, roomId);

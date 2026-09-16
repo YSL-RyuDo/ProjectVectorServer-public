@@ -1,6 +1,7 @@
 #include "UserManager.h"
 #include "CareerManager.h"
 #include "FriendManager.h"
+#include "ProfileManager.h"
 #include "Common.h"
 #include "Session.h"
 #include "WeaponSkinManager.h"
@@ -329,6 +330,7 @@ int UserManager::Register(const std::string& id,const std::string& nick,const st
     WeaponSkinManager::Instance().InitializeUser(id);
     CareerManager::Instance().InitializeUser(id, nick);
     FriendManager::Instance().InitializeUser(id);
+    ProfileManager::Instance().InitializeUser(id);
 
     return (int)RegisterResult::SUCCESS;
 }

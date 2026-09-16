@@ -51,9 +51,17 @@ updates MMR. Normal and ranked queues keep independent hidden ratings.
   first matches. Individual kills or damage do not affect rating, avoiding a
   role bias and stat-farming incentive.
 
-`career_matches.csv.matchType` uses `0` for normal/private-room matches and `1`
-for ranked matches. Match-history request filters use `0` for all matches, `1`
-for normal/private-room matches, and `2` for ranked matches.
+`career_matches.csv.matchType` uses `0` for normal matchmaking, `1` for ranked
+matchmaking, and `2` for private rooms. Match-history request filters keep their
+existing values: `0` for all matches, `1` for normal/private-room matches, and
+`2` for ranked matches.
+
+`career_match_players.csv` stores `headshotKills`, `spikePlants`,
+`spikeDefuses`, and `meleeKills` in addition to the original combat totals.
+The career-detail packet aggregates these immutable match rows by season, mode,
+and selected character. Season `0` is the initial active season; all four
+character IDs (`0` through `3`) are returned even when their match count is
+zero so the client selector remains complete.
 
 At match completion the server writes the match and participant rows, updates
 season aggregates, recalculates rank points, and mirrors the resolved

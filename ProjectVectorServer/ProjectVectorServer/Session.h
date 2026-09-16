@@ -42,6 +42,10 @@ struct PlayerMatchStats
     int deaths = 0;
     int assists = 0;
     int damageDealt = 0;
+    int headshotKills = 0;
+    int meleeKills = 0;
+    int spikePlants = 0;
+    int spikeDefuses = 0;
 
     int firstHalfKills = 0;
     int firstHalfDeaths = 0;
@@ -159,9 +163,11 @@ public:
     PlayerMatchStats& GetMatchStats() { return matchStats_; }
     void ResetMatchStats() { matchStats_ = PlayerMatchStats{}; }
 
-    void SetLastDamager(uint32_t playerId) { lastDamagerPlayerId_ = playerId; }
+    void SetLastDamager(uint32_t playerId, bool headshot = false, int weaponId = -1) { lastDamagerPlayerId_ = playerId; lastDamageWasHeadshot_ = headshot; lastDamageWeaponId_ = weaponId; }
     uint32_t GetLastDamager() const { return lastDamagerPlayerId_; }
-    void ClearLastDamager() { lastDamagerPlayerId_ = 0; }
+    bool GetLastDamageWasHeadshot() const { return lastDamageWasHeadshot_; }
+    int GetLastDamageWeaponId() const { return lastDamageWeaponId_; }
+    void ClearLastDamager() { lastDamagerPlayerId_ = 0; lastDamageWasHeadshot_ = false; lastDamageWeaponId_ = -1; }
 
     void AddAssistDamageRecord(uint32_t attackerPlayerId, int damage);
     std::vector<uint32_t> GetAssistPlayerIds(uint32_t killerPlayerId, int validSeconds) const;
@@ -246,6 +252,8 @@ private:
 
     PlayerMatchStats matchStats_;
     uint32_t lastDamagerPlayerId_ = 0;
+    bool lastDamageWasHeadshot_ = false;
+    int lastDamageWeaponId_ = -1;
     std::unordered_map<uint32_t, AssistDamageRecord> assistDamageRecords_;
 
     uint8_t animIndex_ = 0;

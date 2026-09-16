@@ -79,6 +79,47 @@ struct CareerCharacterStats
     int wins = 0;
 };
 
+struct CareerDetailCharacterStats
+{
+    int characterId = 0;
+    int performanceScore = 0;
+    int matches = 0;
+    int wins = 0;
+    int kills = 0;
+    int deaths = 0;
+    int maxKills = 0;
+    int maxDamage = 0;
+};
+
+struct CareerDetailGameStats
+{
+    int playCount = 0;
+    int wins = 0;
+    int roundsPlayed = 0;
+    int totalDamage = 0;
+    int kills = 0;
+    int deaths = 0;
+    int assists = 0;
+    int headshotKills = 0;
+    int meleeKills = 0;
+    int spikePlants = 0;
+    int spikeDefuses = 0;
+    int maxAssists = 0;
+    int maxRoundDamageHundredths = 0;
+    int maxRoundKillsHundredths = 0;
+};
+
+struct CareerDetail
+{
+    int seasonId = 0;
+    int modeType = 0;
+    int selectedCharacterId = 0;
+    bool hasData = false;
+    std::vector<CareerSeason> seasons;
+    std::vector<CareerDetailCharacterStats> characters;
+    CareerDetailGameStats game;
+};
+
 struct CareerMatch
 {
     uint64_t matchId = 0;
@@ -108,6 +149,10 @@ struct CareerMatchPlayer
     int deaths = 0;
     int assists = 0;
     int damage = 0;
+    int headshotKills = 0;
+    int spikePlants = 0;
+    int spikeDefuses = 0;
+    int meleeKills = 0;
     bool isMvp = false;
     uint64_t partyId = 0;
     int partySize = 1;
@@ -187,6 +232,12 @@ public:
     void InitializeUser(const std::string& userId, const std::string& nickname);
 
     bool GetOverview(const std::string& userId, CareerOverview& outOverview);
+    bool GetCareerDetail(
+        const std::string& userId,
+        int seasonId,
+        int modeType,
+        int characterId,
+        CareerDetail& outDetail);
     bool GetWallet(const std::string& userId, CareerWallet& outWallet);
     std::vector<CareerRankingEntry> GetRankings(size_t limit);
     CareerRankingPage GetRankingPage(

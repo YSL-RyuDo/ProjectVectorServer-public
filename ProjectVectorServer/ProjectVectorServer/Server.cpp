@@ -1,6 +1,7 @@
 #include "Server.h"
 #include "CareerManager.h"
 #include "FriendManager.h"
+#include "ProfileManager.h"
 #include "UserManager.h"
 #include "WeaponSkinManager.h"
 #include <Ws2tcpip.h>  
@@ -28,6 +29,7 @@ bool Server::Start()
     UserManager::Instance().LoadCharacterAffinityData();
     CareerManager::Instance().Load();
     FriendManager::Instance().Load();
+    ProfileManager::Instance().Load();
     WeaponSkinManager::Instance().Load();
 
     listenerThread.join();

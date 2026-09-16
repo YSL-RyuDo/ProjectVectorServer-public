@@ -22,6 +22,8 @@
     <ClInclude Include="CareerManager.h" />
     <ClInclude Include="FriendManager.h" />
     <ClInclude Include="FriendPacketService.h" />
+    <ClInclude Include="ProfileManager.h" />
+    <ClInclude Include="ProfilePacketService.h" />
     <ClInclude Include="Common.h" />
     <ClInclude Include="IocpCore.h" />
     <ClInclude Include="Listener.h" />
@@ -42,6 +44,8 @@
     <ClCompile Include="CareerManager.cpp" />
     <ClCompile Include="FriendManager.cpp" />
     <ClCompile Include="FriendPacketService.cpp" />
+    <ClCompile Include="ProfileManager.cpp" />
+    <ClCompile Include="ProfilePacketService.cpp" />
     <ClCompile Include="IocpCore.cpp" />
     <ClCompile Include="Listener.cpp" />
     <ClCompile Include="main.cpp" />

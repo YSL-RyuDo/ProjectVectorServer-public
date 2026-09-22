@@ -20,6 +20,69 @@ std::string ReadFixed(const char* value, size_t capacity)
     return std::string(value, length);
 }
 
+void WriteChipCraftPreset(const ChipCraftPreset& source, ChipCraftPresetPacket& target)
+{
+    target.cardId = source.cardId;
+    target.caseId = source.caseId;
+    target.medalCount = source.medalCount;
+    for (size_t i = 0; i < source.medals.size(); ++i)
+    {
+        target.medals[i].medalId = source.medals[i].id;
+        target.medals[i].x = source.medals[i].x;
+        target.medals[i].y = source.medals[i].y;
+        target.medals[i].rotation = source.medals[i].rotation;
+        target.medals[i].scale = source.medals[i].scale;
+        target.medals[i].flipped = source.medals[i].flipped ? 1 : 0;
+    }
+}
+
+ChipCraftPreset ReadChipCraftPreset(const ChipCraftPresetPacket& source)
+{
+    ChipCraftPreset target{};
+    target.cardId = source.cardId;
+    target.caseId = source.caseId;
+    target.medalCount = source.medalCount;
+    for (size_t i = 0; i < target.medals.size(); ++i)
+    {
+        target.medals[i].id = source.medals[i].medalId;
+        target.medals[i].x = source.medals[i].x;
+        target.medals[i].y = source.medals[i].y;
+        target.medals[i].rotation = source.medals[i].rotation;
+        target.medals[i].scale = source.medals[i].scale;
+        target.medals[i].flipped = source.medals[i].flipped != 0;
+    }
+    return target;
+}
+
+void SendChipCraft(Session* session, const std::string& requestedUserId)
+{
+    const std::string targetId = requestedUserId.empty() ? session->GetUserId() : requestedUserId;
+    SC_ChipCraft out{};
+    out.header.size = sizeof(out);
+    out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_CHIPCRAFT);
+    ChipCraftRecord record{};
+    PlayerData player{};
+    if (!UserManager::Instance().GetPlayerData(targetId, player) ||
+        !ProfileManager::Instance().GetChipCraft(targetId, record))
+    {
+        out.result = 1;
+    }
+    else
+    {
+        out.isSelf = targetId == session->GetUserId() ? 1 : 0;
+        strncpy_s(out.userId, sizeof(out.userId), targetId.c_str(), _TRUNCATE);
+        // Inventory is needed only for the owner's editing screen.
+        if (out.isSelf)
+        {
+            out.ownedCardMask = record.ownedCardMask;
+            out.ownedCaseMask = record.ownedCaseMask;
+            out.ownedMedalMask = record.ownedMedalMask;
+        }
+        WriteChipCraftPreset(record.preset, out.preset);
+    }
+    session->Send(&out);
+}
+
 void SendProfile(Session* session, const std::string& requestedUserId)
 {
     const std::string requesterId = session->GetUserId();
@@ -189,6 +252,30 @@ void ProfilePacketService::Dispatch(Session* session, PacketHeader* header)
             out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_PROFILE_BATTLE_STATS_SET_RESULT);
             out.result = ProfileManager::Instance().SetBattleStats(session->GetUserId(), battleStats) ? 0 : 1;
             std::copy(battleStats.begin(), battleStats.end(), out.battleStatIds);
+            session->Send(&out);
+        }
+        break;
+    case PacketType::PKT_CS_CHIPCRAFT_REQUEST:
+        if (header->size == sizeof(CS_ChipCraftRequest))
+        {
+            const auto* request = reinterpret_cast<const CS_ChipCraftRequest*>(header);
+            SendChipCraft(session, ReadFixed(request->targetUserId, USER_ID_LEN));
+        }
+        break;
+    case PacketType::PKT_CS_CHIPCRAFT_SAVE:
+        if (header->size == sizeof(CS_ChipCraftSave))
+        {
+            const auto* request = reinterpret_cast<const CS_ChipCraftSave*>(header);
+            const ChipCraftPreset preset = ReadChipCraftPreset(request->preset);
+            SC_ChipCraftSaveResult out{};
+            out.header.size = sizeof(out);
+            out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_CHIPCRAFT_SAVE_RESULT);
+            out.result = ProfileManager::Instance().SaveChipCraft(session->GetUserId(), preset) ? 0 : 1;
+            if (out.result == 0)
+            {
+                UserManager::Instance().SetPlayerIcon(session->GetUserId(), preset.cardId);
+                WriteChipCraftPreset(preset, out.preset);
+            }
             session->Send(&out);
         }
         break;

@@ -2280,6 +2280,36 @@ struct CS_ProfileLike { PacketHeader header; char targetUserId[USER_ID_LEN]; };
 struct SC_ProfileLikeResult { PacketHeader header; uint8_t result; char targetUserId[USER_ID_LEN]; int32_t likeCount; };
 struct CS_ProfileBattleStatsSet { PacketHeader header; uint8_t battleStatIds[PROFILE_BATTLE_STAT_COUNT]; };
 struct SC_ProfileBattleStatsSetResult { PacketHeader header; uint8_t result; uint8_t battleStatIds[PROFILE_BATTLE_STAT_COUNT]; };
+struct ChipCraftMedalPacket
+{
+    uint8_t medalId;
+    float x;
+    float y;
+    float rotation;
+    float scale;
+    uint8_t flipped;
+};
+struct ChipCraftPresetPacket
+{
+    uint8_t cardId;
+    uint8_t caseId;
+    uint8_t medalCount;
+    ChipCraftMedalPacket medals[3];
+};
+struct CS_ChipCraftRequest { PacketHeader header; char targetUserId[USER_ID_LEN]; };
+struct SC_ChipCraft
+{
+    PacketHeader header;
+    uint8_t result;
+    uint8_t isSelf;
+    char userId[USER_ID_LEN];
+    uint8_t ownedCardMask;
+    uint8_t ownedCaseMask;
+    uint8_t ownedMedalMask;
+    ChipCraftPresetPacket preset;
+};
+struct CS_ChipCraftSave { PacketHeader header; ChipCraftPresetPacket preset; };
+struct SC_ChipCraftSaveResult { PacketHeader header; uint8_t result; ChipCraftPresetPacket preset; };
 struct CS_CareerOverviewRequest
 {
     PacketHeader header;

@@ -5,6 +5,7 @@
 #include <ctime>
 #include <fstream>
 #include <iomanip>
+#include <cmath>
 #include <sstream>
 
 namespace
@@ -12,6 +13,7 @@ namespace
 constexpr const char* SETTINGS_FILE = "profile_settings.csv";
 constexpr const char* LIKES_FILE = "profile_likes.csv";
 constexpr const char* VISITORS_FILE = "profile_visitors.csv";
+constexpr const char* CHIPCRAFT_FILE = "chipcraft_presets.csv";
 constexpr const char* DEFAULT_JOIN_DATE = "2026-09-15";
 std::string LikeKey(const std::string& likerId, const std::string& targetId) { return likerId + '\n' + targetId; }
 int64_t NowUnix() { return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count(); }
@@ -35,6 +37,25 @@ bool IsValidBattleStats(const std::array<uint8_t, 7>& values)
     }
     return true;
 }
+
+bool IsValidChipCraft(const ChipCraftRecord& owned, const ChipCraftPreset& preset)
+{
+    if (preset.cardId >= 3 || preset.caseId >= 3 ||
+        (owned.ownedCardMask & (1u << preset.cardId)) == 0 ||
+        (owned.ownedCaseMask & (1u << preset.caseId)) == 0 ||
+        preset.medalCount > static_cast<uint8_t>(preset.caseId + 1)) return false;
+    for (size_t i = 0; i < preset.medalCount; ++i)
+    {
+        const ChipCraftMedal& medal = preset.medals[i];
+        if (medal.id >= 6 || (owned.ownedMedalMask & (1u << medal.id)) == 0 ||
+            !std::isfinite(medal.x) || !std::isfinite(medal.y) ||
+            !std::isfinite(medal.rotation) || !std::isfinite(medal.scale) ||
+            medal.x < -.5f || medal.x > .5f || medal.y < -.5f || medal.y > .5f ||
+            medal.rotation < -360.f || medal.rotation > 360.f ||
+            medal.scale < .5f || medal.scale > 2.5f) return false;
+    }
+    return true;
+}
 }
 
 ProfileManager& ProfileManager::Instance() { static ProfileManager instance; return instance; }
@@ -42,7 +63,7 @@ ProfileManager& ProfileManager::Instance() { static ProfileManager instance; ret
 void ProfileManager::Load()
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    settings_.clear(); likes_.clear(); visitors_.clear();
+    settings_.clear(); likes_.clear(); visitors_.clear(); chipCraft_.clear();
     std::ifstream settingsFile(SETTINGS_FILE); std::string line; std::getline(settingsFile, line);
     while (std::getline(settingsFile, line))
     {
@@ -84,15 +105,78 @@ void ProfileManager::Load()
         try { visitor.visitedAtUnix = std::stoll(visitedAt); } catch (...) { visitor.visitedAtUnix = 0; }
         if (!owner.empty() && !visitor.userId.empty()) visitors_[owner].push_back(visitor);
     }
+    std::ifstream chipCraftFile(CHIPCRAFT_FILE); std::getline(chipCraftFile, line);
+    while (std::getline(chipCraftFile, line))
+    {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        std::stringstream stream(line); std::string field; std::string userId;
+        std::getline(stream, userId, ',');
+        if (userId.empty()) continue;
+        ChipCraftRecord record{};
+        try
+        {
+            auto nextInt = [&]() { if (!std::getline(stream, field, ',')) throw std::invalid_argument("missing field"); return std::stoi(field); };
+            auto nextFloat = [&]() { if (!std::getline(stream, field, ',')) throw std::invalid_argument("missing field"); return std::stof(field); };
+            record.ownedCardMask = static_cast<uint8_t>(nextInt());
+            record.ownedCaseMask = static_cast<uint8_t>(nextInt());
+            record.ownedMedalMask = static_cast<uint8_t>(nextInt());
+            record.preset.cardId = static_cast<uint8_t>(nextInt());
+            record.preset.caseId = static_cast<uint8_t>(nextInt());
+            record.preset.medalCount = static_cast<uint8_t>(nextInt());
+            for (ChipCraftMedal& medal : record.preset.medals)
+            {
+                medal.id = static_cast<uint8_t>(nextInt()); medal.x = nextFloat(); medal.y = nextFloat();
+                medal.rotation = nextFloat(); medal.scale = nextFloat(); medal.flipped = nextInt() != 0;
+            }
+            record.ownedCardMask |= 0x07; // launch cards remain owned after migration
+            record.ownedCaseMask |= 0x01;
+            record.ownedMedalMask |= 0x01;
+            if (IsValidChipCraft(record, record.preset)) chipCraft_[userId] = record;
+        }
+        catch (...) { /* Ignore only the malformed record; preserve other users. */ }
+    }
     for (const PlayerData& player : UserManager::Instance().GetAllPlayerData()) InitializeUserUnlocked(player.id);
     SaveSettingsUnlocked();
+    SaveChipCraftUnlocked();
 }
 
 void ProfileManager::InitializeUser(const std::string& userId) { std::lock_guard<std::mutex> lock(mutex_); InitializeUserUnlocked(userId); SaveSettingsUnlocked(); }
 void ProfileManager::InitializeUserUnlocked(const std::string& userId)
 {
-    if (userId.empty() || settings_.count(userId) != 0) return;
-    ProfileSettings settings{}; settings.userId = userId; settings.joinDate = TodayDate(); settings_[userId] = settings;
+    if (userId.empty()) return;
+    if (settings_.count(userId) == 0)
+    {
+        ProfileSettings settings{}; settings.userId = userId; settings.joinDate = TodayDate(); settings_[userId] = settings;
+    }
+    if (chipCraft_.count(userId) == 0)
+    {
+        ChipCraftRecord record{};
+        PlayerData player{};
+        if (UserManager::Instance().GetPlayerData(userId, player) && player.playerIconId >= 0 && player.playerIconId < 3)
+            record.preset.cardId = static_cast<uint8_t>(player.playerIconId);
+        chipCraft_[userId] = record;
+    }
+}
+
+bool ProfileManager::GetChipCraft(const std::string& userId, ChipCraftRecord& outRecord)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    InitializeUserUnlocked(userId);
+    auto it = chipCraft_.find(userId);
+    if (it == chipCraft_.end()) return false;
+    outRecord = it->second;
+    return true;
+}
+
+bool ProfileManager::SaveChipCraft(const std::string& userId, const ChipCraftPreset& preset)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    InitializeUserUnlocked(userId);
+    auto it = chipCraft_.find(userId);
+    if (it == chipCraft_.end() || !IsValidChipCraft(it->second, preset)) return false;
+    it->second.preset = preset;
+    SaveChipCraftUnlocked();
+    return true;
 }
 bool ProfileManager::GetSettings(const std::string& userId, ProfileSettings& outSettings)
 {
@@ -151,4 +235,26 @@ void ProfileManager::SaveVisitorsUnlocked()
 {
     std::ofstream file(VISITORS_FILE, std::ios::trunc); file << "ownerUserId,visitorUserId,visitedAtUnix\n";
     for (const auto& pair : visitors_) for (const ProfileVisitor& visitor : pair.second) file << pair.first << ',' << visitor.userId << ',' << visitor.visitedAtUnix << '\n';
+}
+
+void ProfileManager::SaveChipCraftUnlocked()
+{
+    std::ofstream file(CHIPCRAFT_FILE, std::ios::trunc);
+    file << "userId,ownedCardMask,ownedCaseMask,ownedMedalMask,cardId,caseId,medalCount";
+    for (int i = 0; i < 3; ++i)
+        file << ",medal" << i << "Id,medal" << i << "X,medal" << i << "Y,medal" << i
+             << "Rotation,medal" << i << "Scale,medal" << i << "Flipped";
+    file << '\n' << std::setprecision(6);
+    for (const auto& pair : chipCraft_)
+    {
+        const ChipCraftRecord& record = pair.second;
+        file << pair.first << ',' << static_cast<int>(record.ownedCardMask) << ','
+             << static_cast<int>(record.ownedCaseMask) << ',' << static_cast<int>(record.ownedMedalMask)
+             << ',' << static_cast<int>(record.preset.cardId) << ',' << static_cast<int>(record.preset.caseId)
+             << ',' << static_cast<int>(record.preset.medalCount);
+        for (const ChipCraftMedal& medal : record.preset.medals)
+            file << ',' << static_cast<int>(medal.id) << ',' << medal.x << ',' << medal.y << ','
+                 << medal.rotation << ',' << medal.scale << ',' << (medal.flipped ? 1 : 0);
+        file << '\n';
+    }
 }

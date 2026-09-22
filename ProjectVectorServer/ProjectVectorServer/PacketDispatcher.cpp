@@ -7988,6 +7988,8 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
     case PacketType::PKT_CS_PROFILE_PRIVACY_SET:
     case PacketType::PKT_CS_PROFILE_LIKE:
     case PacketType::PKT_CS_PROFILE_BATTLE_STATS_SET:
+    case PacketType::PKT_CS_CHIPCRAFT_REQUEST:
+    case PacketType::PKT_CS_CHIPCRAFT_SAVE:
         ProfilePacketService::Dispatch(session, header);
         break;
 

@@ -365,6 +365,22 @@ struct CS_TempGameRoomEnter
     PacketHeader header;
 };
 
+struct ChipCraftMedalPacket
+{
+    uint8_t medalId;
+    float x;
+    float y;
+    float rotation;
+    float scale;
+    uint8_t flipped;
+};
+struct ChipCraftPresetPacket
+{
+    uint8_t cardId;
+    uint8_t caseId;
+    uint8_t medalCount;
+    ChipCraftMedalPacket medals[3];
+};
 struct TempGamePlayerSlotInfo
 {
     uint8_t slotIndex;
@@ -372,6 +388,7 @@ struct TempGamePlayerSlotInfo
     int playerIconId;
     int logoBorderId;
     int rankImageId;
+    ChipCraftPresetPacket preset;
 };
 
 struct SC_TempGameRoomEnter
@@ -2280,22 +2297,6 @@ struct CS_ProfileLike { PacketHeader header; char targetUserId[USER_ID_LEN]; };
 struct SC_ProfileLikeResult { PacketHeader header; uint8_t result; char targetUserId[USER_ID_LEN]; int32_t likeCount; };
 struct CS_ProfileBattleStatsSet { PacketHeader header; uint8_t battleStatIds[PROFILE_BATTLE_STAT_COUNT]; };
 struct SC_ProfileBattleStatsSetResult { PacketHeader header; uint8_t result; uint8_t battleStatIds[PROFILE_BATTLE_STAT_COUNT]; };
-struct ChipCraftMedalPacket
-{
-    uint8_t medalId;
-    float x;
-    float y;
-    float rotation;
-    float scale;
-    uint8_t flipped;
-};
-struct ChipCraftPresetPacket
-{
-    uint8_t cardId;
-    uint8_t caseId;
-    uint8_t medalCount;
-    ChipCraftMedalPacket medals[3];
-};
 struct CS_ChipCraftRequest { PacketHeader header; char targetUserId[USER_ID_LEN]; };
 struct SC_ChipCraft
 {
@@ -2310,6 +2311,36 @@ struct SC_ChipCraft
 };
 struct CS_ChipCraftSave { PacketHeader header; ChipCraftPresetPacket preset; };
 struct SC_ChipCraftSaveResult { PacketHeader header; uint8_t result; ChipCraftPresetPacket preset; };
+struct CS_LevelRewardRequest { PacketHeader header; };
+struct SC_LevelRewardState { PacketHeader header; uint8_t result; int32_t level; int32_t currentExp; int32_t requiredExp; int32_t claimedLevel; int32_t freeCurrency; int32_t victoryCurrency; };
+struct CS_LevelRewardClaim { PacketHeader header; int32_t targetLevel; };
+struct SC_LevelRewardClaimResult { PacketHeader header; uint8_t result; int32_t claimedLevel; int32_t freeCurrencyAwarded; int32_t victoryCurrencyAwarded; int32_t freeCurrency; int32_t victoryCurrency; };
+struct CS_HonorRequest { PacketHeader header; uint8_t page; };
+struct HonorHistoryPacketEntry { int64_t appliedAtUnix; int32_t delta; uint8_t reason; };
+struct SC_HonorState
+{
+    PacketHeader header;
+    uint8_t result;
+    int32_t score;
+    int32_t claimedGrade;
+    int32_t freeCurrency;
+    int32_t victoryCurrency;
+    uint8_t page;
+    uint8_t pageCount;
+    uint8_t entryCount;
+    HonorHistoryPacketEntry entries[10];
+};
+struct CS_HonorClaim { PacketHeader header; int32_t targetGrade; };
+struct SC_HonorClaimResult
+{
+    PacketHeader header;
+    uint8_t result;
+    int32_t claimedGrade;
+    int32_t freeCurrencyAwarded;
+    int32_t victoryCurrencyAwarded;
+    int32_t freeCurrency;
+    int32_t victoryCurrency;
+};
 struct CS_CareerOverviewRequest
 {
     PacketHeader header;

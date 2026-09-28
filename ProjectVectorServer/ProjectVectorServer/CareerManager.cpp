@@ -9,6 +9,8 @@
 #include <limits>
 #include <sstream>
 #include <unordered_set>
+#define NOMINMAX
+#include <Windows.h>
 
 namespace
 {
@@ -23,6 +25,8 @@ namespace
     constexpr const char* ITEMS_FILE = "career_items.csv";
     constexpr const char* INVENTORY_FILE = "career_user_inventory.csv";
     constexpr const char* WALLETS_FILE = "career_user_wallet.csv";
+    constexpr const char* HONOR_FILE = "career_user_honor.csv";
+    constexpr const char* HONOR_HISTORY_FILE = "career_honor_history.csv";
 
     constexpr const char* SEASONS_HEADER =
         "seasonId,seasonName,startUnix,endUnix,isActive";
@@ -49,7 +53,19 @@ namespace
     constexpr const char* INVENTORY_HEADER =
         "userId,itemId,quantity,acquiredAtUnix";
     constexpr const char* WALLETS_HEADER =
+        "userId,freeCurrency,victoryCurrency,claimedLevelReward,claimedHonorGrade";
+    constexpr const char* PREVIOUS_WALLETS_HEADER =
+        "userId,freeCurrency,victoryCurrency,claimedLevelReward";
+    constexpr const char* LEGACY_WALLETS_HEADER =
         "userId,freeCurrency,victoryCurrency";
+    constexpr const char* LEGACY_HONOR_HEADER = "userId,score,dailyEarned,earnedDayUtc";
+    constexpr const char* HONOR_HEADER = "userId,score,dailyEarned,earnedDayUtc,history";
+    constexpr const char* HONOR_HISTORY_HEADER =
+        "userId,appliedAtUnix,delta,reason,matchId";
+    constexpr int HONOR_INITIAL_SCORE = 601;
+    constexpr int HONOR_MAX_SCORE = 1800;
+    constexpr int HONOR_DAILY_GAIN_CAP = 60;
+    constexpr size_t HONOR_HISTORY_LIMIT = 50; // Five pages of ten rows.
 
     constexpr int CAREER_CHARACTER_COUNT = 4;
 
@@ -273,6 +289,7 @@ void CareerManager::Load()
     items_.clear();
     inventory_.clear();
     wallets_.clear();
+    honor_.clear();
     nextMatchId_ = 1;
 
     LoadUsersUnlocked();
@@ -286,6 +303,7 @@ void CareerManager::Load()
     LoadItemsUnlocked();
     LoadInventoryUnlocked();
     LoadWalletsUnlocked();
+    LoadHonorUnlocked();
 
     if (seasons_.empty())
         SeedDefaultSeasonUnlocked();
@@ -308,6 +326,7 @@ void CareerManager::Load()
     {
         CareerWallet& wallet = wallets_[pair.first];
         wallet.userId = pair.first;
+        honor_.try_emplace(pair.first);
         CareerSeasonStats& seasonStats =
             EnsureSeasonStatsUnlocked(pair.first, activeSeasonId);
         EnsureMatchmakingRatingUnlocked(
@@ -352,6 +371,8 @@ void CareerManager::Load()
     SaveItemsUnlocked();
     SaveInventoryUnlocked();
     SaveWalletsUnlocked();
+    SaveHonorUnlocked();
+    SaveHonorHistoryUnlocked();
 
     std::cout << "[CAREER DATA] users=" << users_.size()
         << " seasons=" << seasons_.size()
@@ -390,6 +411,7 @@ void CareerManager::InitializeUser(
     EnsureMatchmakingRatingUnlocked(userId, 1, seasonStats.rankPoints);
     CareerWallet& wallet = wallets_[userId];
     wallet.userId = userId;
+    honor_.try_emplace(userId);
     for (int characterId = 0;
         characterId < CAREER_CHARACTER_COUNT;
         ++characterId)
@@ -400,6 +422,7 @@ void CareerManager::InitializeUser(
     SaveMatchmakingRatingsUnlocked();
     SaveCharacterStatsUnlocked();
     SaveWalletsUnlocked();
+    SaveHonorUnlocked();
 
     std::cout << "[CAREER USER INIT] userId=" << userId
         << " seasonId=" << activeSeasonId
@@ -416,6 +439,141 @@ bool CareerManager::GetWallet(
         return false;
     outWallet = it->second;
     return true;
+}
+
+int CareerManager::HonorGradeForScore(int score)
+{
+    if (score >= 1601) return 6;
+    if (score >= 1201) return 5;
+    if (score >= 901) return 4;
+    if (score >= 601) return 3;
+    if (score >= 301) return 2;
+    return 1;
+}
+
+bool CareerManager::GetHonorState(const std::string& userId, CareerHonorState& outState)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = honor_.find(userId);
+    if (it == honor_.end()) return false;
+    outState = it->second;
+    auto wallet = wallets_.find(userId);
+    if (wallet != wallets_.end()) outState.claimedGrade = wallet->second.claimedHonorGrade;
+    return true;
+}
+
+CareerHonorClaim CareerManager::ClaimHonorRewards(
+    const std::string& userId, int targetGrade)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    CareerHonorClaim result{};
+    auto state = honor_.find(userId);
+    auto walletIt = wallets_.find(userId);
+    if (state == honor_.end() || walletIt == wallets_.end()) return result;
+    CareerWallet& wallet = walletIt->second;
+    result.claimedGrade = wallet.claimedHonorGrade;
+    result.totalFreeCurrency = wallet.freeCurrency;
+    result.totalVictoryCurrency = wallet.victoryCurrency;
+    const int grade = HonorGradeForScore(state->second.score);
+    if (targetGrade < 5 || targetGrade > 6 || targetGrade > grade ||
+        targetGrade <= wallet.claimedHonorGrade) return result;
+
+    // Claiming grade 6 also grants an unclaimed grade 5 reward.
+    const int freeAward = (wallet.claimedHonorGrade < 5 ? 1000 : 0) +
+        (targetGrade == 6 ? 1500 : 0);
+    const int victoryAward = (wallet.claimedHonorGrade < 5 ? 2 : 0) +
+        (targetGrade == 6 ? 3 : 0);
+    if (wallet.freeCurrency > std::numeric_limits<int>::max() - freeAward ||
+        wallet.victoryCurrency > std::numeric_limits<int>::max() - victoryAward)
+        return result;
+    const CareerWallet previous = wallet;
+    wallet.freeCurrency += freeAward;
+    wallet.victoryCurrency += victoryAward;
+    wallet.claimedHonorGrade = targetGrade;
+    if (!SaveWalletsUnlocked()) { wallet = previous; return result; }
+    result.succeeded = true;
+    result.claimedGrade = targetGrade;
+    result.freeCurrencyAwarded = freeAward;
+    result.victoryCurrencyAwarded = victoryAward;
+    result.totalFreeCurrency = wallet.freeCurrency;
+    result.totalVictoryCurrency = wallet.victoryCurrency;
+    return result;
+}
+
+bool CareerManager::ApplyHonorViolation(
+    const std::string& userId, HonorChangeReason reason)
+{
+    int penalty = 0;
+    switch (reason)
+    {
+    case HonorChangeReason::MatchAbandoned: penalty = -100; break;
+    case HonorChangeReason::ConfirmationDeclined: penalty = -50; break;
+    case HonorChangeReason::DisruptivePlay: penalty = -160; break;
+    case HonorChangeReason::ChatViolation: penalty = -120; break;
+    case HonorChangeReason::MatchManipulation: penalty = -240; break;
+    default: return false;
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = honor_.find(userId);
+    if (it == honor_.end()) return false;
+    CareerHonorState previous = it->second;
+    CareerHonorState& state = it->second;
+    const int after = std::max(0, state.score + penalty);
+    const int actual = after - state.score;
+    state.score = after;
+    state.history.insert(state.history.begin(),
+        { static_cast<int64_t>(std::time(nullptr)), actual, reason, 0 });
+    if (state.history.size() > HONOR_HISTORY_LIMIT)
+        state.history.resize(HONOR_HISTORY_LIMIT);
+    if (!SaveHonorUnlocked())
+    {
+        state = previous;
+        return false;
+    }
+    SaveHonorHistoryUnlocked(); // Human-readable mirror; snapshot above is authoritative.
+    return true;
+}
+
+CareerLevelRewardClaim CareerManager::ClaimLevelRewards(
+    const std::string& userId, int playerLevel, int targetLevel)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    CareerLevelRewardClaim result{};
+    auto it = wallets_.find(userId);
+    if (it == wallets_.end()) return result;
+
+    CareerWallet& wallet = it->second;
+    result.claimedLevel = wallet.claimedLevelReward;
+    result.totalFreeCurrency = wallet.freeCurrency;
+    result.totalVictoryCurrency = wallet.victoryCurrency;
+    if (targetLevel <= wallet.claimedLevelReward || targetLevel < 1 ||
+        targetLevel > playerLevel || targetLevel > 100)
+        return result;
+
+    const int levelCount = targetLevel - wallet.claimedLevelReward;
+    const int freeAward = levelCount * 300;
+    const int victoryAward = targetLevel / 5 - wallet.claimedLevelReward / 5;
+    if (wallet.freeCurrency > std::numeric_limits<int>::max() - freeAward ||
+        wallet.victoryCurrency > std::numeric_limits<int>::max() - victoryAward)
+        return result;
+
+    const CareerWallet previous = wallet;
+    wallet.freeCurrency += freeAward;
+    wallet.victoryCurrency += victoryAward;
+    wallet.claimedLevelReward = targetLevel;
+    if (!SaveWalletsUnlocked())
+    {
+        wallet = previous;
+        return result;
+    }
+
+    result.succeeded = true;
+    result.claimedLevel = targetLevel;
+    result.freeCurrencyAwarded = freeAward;
+    result.victoryCurrencyAwarded = victoryAward;
+    result.totalFreeCurrency = wallet.freeCurrency;
+    result.totalVictoryCurrency = wallet.victoryCurrency;
+    return result;
 }
 
 bool CareerManager::GetOverview(
@@ -940,6 +1098,7 @@ uint64_t CareerManager::RecordMatch(
         }
     }
 
+    std::unordered_map<std::string, CareerHonorState> previousHonor;
     for (CareerMatchPlayer player : validPlayers)
     {
         player.matchId = matchId;
@@ -1008,6 +1167,32 @@ uint64_t CareerManager::RecordMatch(
                 (player.isMvp ? 20 : 0);
             characterStats.masteryPoints += masteryGain;
         }
+
+        if (isMatchmade && durationSeconds >= 180)
+        {
+            CareerHonorState& honor = honor_[player.userId];
+            previousHonor.emplace(player.userId, honor);
+            const int64_t now = static_cast<int64_t>(std::time(nullptr));
+            const int64_t day = now / 86400;
+            if (honor.earnedDayUtc != day)
+            {
+                honor.earnedDayUtc = day;
+                honor.dailyEarned = 0;
+            }
+            const int baseGain = durationSeconds >= 600 ? 20 : 8;
+            const int gain = std::max(0, std::min({baseGain,
+                HONOR_DAILY_GAIN_CAP - honor.dailyEarned,
+                HONOR_MAX_SCORE - honor.score}));
+            if (gain > 0)
+            {
+                honor.score += gain;
+                honor.dailyEarned += gain;
+                honor.history.insert(honor.history.begin(),
+                    { now, gain, HonorChangeReason::MatchCompleted, matchId });
+                if (honor.history.size() > HONOR_HISTORY_LIMIT)
+                    honor.history.resize(HONOR_HISTORY_LIMIT);
+            }
+        }
     }
 
     SaveSeasonStatsUnlocked();
@@ -1015,6 +1200,15 @@ uint64_t CareerManager::RecordMatch(
     SaveCharacterStatsUnlocked();
     SaveMatchesUnlocked();
     SaveMatchPlayersUnlocked();
+    if (isMatchmade)
+    {
+        if (!SaveHonorUnlocked())
+        {
+            for (const auto& previous : previousHonor) honor_[previous.first] = previous.second;
+            std::cerr << "[HONOR SAVE FAILED] matchId=" << matchId << std::endl;
+        }
+        SaveHonorHistoryUnlocked();
+    }
 
     std::cout << "[CAREER MATCH SAVED] matchId=" << matchId
         << " seasonId=" << seasonId
@@ -1412,8 +1606,15 @@ void CareerManager::LoadInventoryUnlocked()
 void CareerManager::LoadWalletsUnlocked()
 {
     std::ifstream file(WALLETS_FILE);
-    if (!file.is_open() || !ReadHeader(file, WALLETS_HEADER))
+    if (!file.is_open())
         return;
+
+    std::string header;
+    if (!std::getline(file, header)) return;
+    if (!header.empty() && header.back() == '\r') header.pop_back();
+    const bool legacy = header == LEGACY_WALLETS_HEADER;
+    const bool previous = header == PREVIOUS_WALLETS_HEADER;
+    if (!legacy && !previous && header != WALLETS_HEADER) return;
 
     std::string line;
     while (std::getline(file, line))
@@ -1422,7 +1623,8 @@ void CareerManager::LoadWalletsUnlocked()
             line.pop_back();
 
         std::vector<std::string> fields = ParseCsvLine(line);
-        if (fields.size() != 3 || users_.count(fields[0]) == 0)
+        if (fields.size() != (legacy ? 3u : previous ? 4u : 5u) ||
+            users_.count(fields[0]) == 0)
             continue;
 
         CareerWallet wallet{};
@@ -1435,7 +1637,81 @@ void CareerManager::LoadWalletsUnlocked()
             continue;
         }
 
+        if (!legacy &&
+            (!TryParseInt(fields[3], wallet.claimedLevelReward) ||
+             wallet.claimedLevelReward < 0 || wallet.claimedLevelReward > 100))
+            continue;
+
+        if (!legacy && !previous &&
+            (!TryParseInt(fields[4], wallet.claimedHonorGrade) ||
+             wallet.claimedHonorGrade < 0 || wallet.claimedHonorGrade > 6))
+            continue;
+
         wallets_[wallet.userId] = wallet;
+    }
+}
+
+void CareerManager::LoadHonorUnlocked()
+{
+    std::ifstream file(HONOR_FILE);
+    std::string line;
+    bool hasHeader = file.is_open() && static_cast<bool>(std::getline(file, line));
+    if (hasHeader && !line.empty() && line.back() == '\r') line.pop_back();
+    const bool snapshot = hasHeader && line == HONOR_HEADER;
+    if (hasHeader && (snapshot || line == LEGACY_HONOR_HEADER))
+    {
+        while (std::getline(file, line))
+        {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            auto fields = ParseCsvLine(line);
+            if (fields.size() != (snapshot ? 5 : 4) || users_.count(fields[0]) == 0) continue;
+            CareerHonorState state{};
+            if (!TryParseInt(fields[1], state.score) ||
+                !TryParseInt(fields[2], state.dailyEarned) ||
+                !TryParseInt64(fields[3], state.earnedDayUtc) ||
+                state.score < 0 || state.score > HONOR_MAX_SCORE ||
+                state.dailyEarned < 0 || state.dailyEarned > HONOR_DAILY_GAIN_CAP)
+                continue;
+            if (snapshot)
+            {
+                std::istringstream entries(fields[4]);
+                std::string entry;
+                while (state.history.size() < HONOR_HISTORY_LIMIT && std::getline(entries, entry, ';'))
+                {
+                    std::replace(entry.begin(), entry.end(), ':', ',');
+                    auto values = ParseCsvLine(entry);
+                    CareerHonorChange change{};
+                    int reason = 0;
+                    if (values.size() != 4 || !TryParseInt64(values[0], change.appliedAtUnix) ||
+                        !TryParseInt(values[1], change.delta) || !TryParseInt(values[2], reason) ||
+                        !TryParseUInt64(values[3], change.matchId) || reason < 1 || reason > 6) continue;
+                    change.reason = static_cast<HonorChangeReason>(reason);
+                    state.history.push_back(change);
+                }
+            }
+            honor_[fields[0]] = state;
+        }
+    }
+    if (snapshot) return;
+    std::ifstream history(HONOR_HISTORY_FILE);
+    if (!history.is_open() || !std::getline(history, line)) return;
+    if (!line.empty() && line.back() == '\r') line.pop_back();
+    if (line != HONOR_HISTORY_HEADER) return;
+    while (std::getline(history, line))
+    {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        auto fields = ParseCsvLine(line);
+        if (fields.size() != 5 || users_.count(fields[0]) == 0) continue;
+        CareerHonorChange change{};
+        int reason = 0;
+        if (!TryParseInt64(fields[1], change.appliedAtUnix) ||
+            !TryParseInt(fields[2], change.delta) ||
+            !TryParseInt(fields[3], reason) ||
+            !TryParseUInt64(fields[4], change.matchId) ||
+            reason < 1 || reason > 6) continue;
+        change.reason = static_cast<HonorChangeReason>(reason);
+        auto& entries = honor_[fields[0]].history;
+        if (entries.size() < HONOR_HISTORY_LIMIT) entries.push_back(change);
     }
 }
 
@@ -1711,11 +1987,12 @@ void CareerManager::SaveInventoryUnlocked()
     }
 }
 
-void CareerManager::SaveWalletsUnlocked()
+bool CareerManager::SaveWalletsUnlocked()
 {
-    std::ofstream file(WALLETS_FILE, std::ios::trunc);
+    constexpr const char* temporaryFile = "career_user_wallet.csv.tmp";
+    std::ofstream file(temporaryFile, std::ios::trunc);
     if (!file.is_open())
-        return;
+        return false;
 
     file << WALLETS_HEADER << '\n';
     std::vector<std::string> userIds;
@@ -1729,8 +2006,62 @@ void CareerManager::SaveWalletsUnlocked()
         const CareerWallet& wallet = wallets_[userId];
         file << EscapeCsv(userId) << ','
             << wallet.freeCurrency << ','
-            << wallet.victoryCurrency << '\n';
+            << wallet.victoryCurrency << ','
+            << wallet.claimedLevelReward << ','
+            << wallet.claimedHonorGrade << '\n';
     }
+    file.flush();
+    if (!file.good()) return false;
+    file.close();
+    return MoveFileExA(temporaryFile, WALLETS_FILE,
+        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+}
+
+bool CareerManager::SaveHonorUnlocked()
+{
+    constexpr const char* temporaryFile = "career_user_honor.csv.tmp";
+    std::ofstream file(temporaryFile, std::ios::trunc);
+    if (!file.is_open()) return false;
+    file << HONOR_HEADER << '\n';
+    std::vector<std::string> users;
+    for (const auto& pair : honor_) users.push_back(pair.first);
+    std::sort(users.begin(), users.end());
+    for (const auto& user : users)
+    {
+        const auto& state = honor_.at(user);
+        file << EscapeCsv(user) << ',' << state.score << ','
+            << state.dailyEarned << ',' << state.earnedDayUtc << ',';
+        for (const auto& change : state.history)
+            file << change.appliedAtUnix << ':' << change.delta << ':'
+                << static_cast<int>(change.reason) << ':' << change.matchId << ';';
+        file << '\n';
+    }
+    file.flush();
+    if (!file.good()) return false;
+    file.close();
+    return MoveFileExA(temporaryFile, HONOR_FILE,
+        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+}
+
+bool CareerManager::SaveHonorHistoryUnlocked()
+{
+    constexpr const char* temporaryFile = "career_honor_history.csv.tmp";
+    std::ofstream file(temporaryFile, std::ios::trunc);
+    if (!file.is_open()) return false;
+    file << HONOR_HISTORY_HEADER << '\n';
+    std::vector<std::string> users;
+    for (const auto& pair : honor_) users.push_back(pair.first);
+    std::sort(users.begin(), users.end());
+    for (const auto& user : users)
+        for (const auto& change : honor_.at(user).history)
+            file << EscapeCsv(user) << ',' << change.appliedAtUnix << ','
+                << change.delta << ',' << static_cast<int>(change.reason)
+                << ',' << change.matchId << '\n';
+    file.flush();
+    if (!file.good()) return false;
+    file.close();
+    return MoveFileExA(temporaryFile, HONOR_HISTORY_FILE,
+        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
 }
 
 void CareerManager::SeedDefaultSeasonUnlocked()

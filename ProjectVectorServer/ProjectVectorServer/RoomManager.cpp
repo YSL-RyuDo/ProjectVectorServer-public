@@ -280,6 +280,7 @@ bool RoomManager::StartGame(uint32_t roomId,uint32_t leaderPlayerId,Room& outRoo
         return false;
 
     room.state = RoomState::PLAYING;
+    room.matchResultReady = false;
 
     room.pickRemainingSeconds = 20;
     room.pickFinished = false;
@@ -1140,6 +1141,7 @@ bool RoomManager::FinishGameAndReturnRoom(uint32_t roomId, Room& outRoom)
     Room& room = it->second;
 
     room.state = RoomState::WAITING;
+    room.matchResultReady = false;
 
     room.pickRemainingSeconds = 20;
     room.pickFinished = false;
@@ -1158,5 +1160,15 @@ bool RoomManager::FinishGameAndReturnRoom(uint32_t roomId, Room& outRoom)
     }
 
     outRoom = room;
+    return true;
+}
+
+bool RoomManager::MarkMatchResultReady(uint32_t roomId)
+{
+    std::lock_guard<std::mutex> lock(roomManagerMutex_);
+    auto it = rooms_.find(roomId);
+    if (it == rooms_.end() || it->second.state != RoomState::PLAYING)
+        return false;
+    it->second.matchResultReady = true;
     return true;
 }

@@ -83,6 +83,66 @@ void SendChipCraft(Session* session, const std::string& requestedUserId)
     session->Send(&out);
 }
 
+void SendLevelRewardState(Session* session)
+{
+    SC_LevelRewardState out{};
+    out.header.size = sizeof(out);
+    out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_LEVEL_REWARD_STATE);
+    PlayerData player{};
+    CareerWallet wallet{};
+    if (UserManager::Instance().GetPlayerData(session->GetUserId(), player) &&
+        CareerManager::Instance().GetWallet(session->GetUserId(), wallet))
+    {
+        out.result = 0;
+        out.level = player.level;
+        out.currentExp = player.currentExp;
+        out.requiredExp = UserManager::Instance().GetRequiredExpForLevel(player.level);
+        out.claimedLevel = wallet.claimedLevelReward;
+        out.freeCurrency = wallet.freeCurrency;
+        out.victoryCurrency = wallet.victoryCurrency;
+    }
+    else out.result = 1;
+    session->Send(&out);
+}
+
+void SendHonorState(Session* session, uint8_t requestedPage)
+{
+    static_assert(sizeof(SC_HonorState) == 154, "Honor state wire layout changed");
+    static_assert(sizeof(CS_HonorRequest) == 5, "Honor request wire layout changed");
+    static_assert(sizeof(SC_HonorClaimResult) == 25, "Honor claim wire layout changed");
+    SC_HonorState out{};
+    out.header.size = sizeof(out);
+    out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_HONOR_STATE);
+    CareerHonorState state{};
+    CareerWallet wallet{};
+    const std::string& userId = session->GetUserId();
+    if (!CareerManager::Instance().GetHonorState(userId, state) ||
+        !CareerManager::Instance().GetWallet(userId, wallet))
+        out.result = 1;
+    else
+    {
+        out.score = state.score;
+        out.claimedGrade = state.claimedGrade;
+        out.freeCurrency = wallet.freeCurrency;
+        out.victoryCurrency = wallet.victoryCurrency;
+        out.pageCount = static_cast<uint8_t>(std::max<size_t>(1,
+            (state.history.size() + 9) / 10));
+        out.page = std::min<uint8_t>(requestedPage, out.pageCount);
+        if (out.page == 0) out.page = 1;
+        const size_t first = static_cast<size_t>(out.page - 1) * 10;
+        for (size_t index = first;
+            index < state.history.size() && out.entryCount < 10; ++index)
+        {
+            const auto& change = state.history[index];
+            auto& destination = out.entries[out.entryCount++];
+            destination.appliedAtUnix = change.appliedAtUnix;
+            destination.delta = change.delta;
+            destination.reason = static_cast<uint8_t>(change.reason);
+        }
+    }
+    session->Send(&out);
+}
+
 void SendProfile(Session* session, const std::string& requestedUserId)
 {
     const std::string requesterId = session->GetUserId();
@@ -276,6 +336,56 @@ void ProfilePacketService::Dispatch(Session* session, PacketHeader* header)
                 UserManager::Instance().SetPlayerIcon(session->GetUserId(), preset.cardId);
                 WriteChipCraftPreset(preset, out.preset);
             }
+            session->Send(&out);
+        }
+        break;
+    case PacketType::PKT_CS_LEVEL_REWARD_REQUEST:
+        if (header->size == sizeof(CS_LevelRewardRequest))
+            SendLevelRewardState(session);
+        break;
+    case PacketType::PKT_CS_LEVEL_REWARD_CLAIM:
+        if (header->size == sizeof(CS_LevelRewardClaim))
+        {
+            const auto* request = reinterpret_cast<const CS_LevelRewardClaim*>(header);
+            PlayerData player{};
+            CareerLevelRewardClaim claim{};
+            if (UserManager::Instance().GetPlayerData(session->GetUserId(), player))
+                claim = CareerManager::Instance().ClaimLevelRewards(
+                    session->GetUserId(), player.level, request->targetLevel);
+            SC_LevelRewardClaimResult out{};
+            out.header.size = sizeof(out);
+            out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_LEVEL_REWARD_CLAIM_RESULT);
+            out.result = claim.succeeded ? 0 : 1;
+            out.claimedLevel = claim.claimedLevel;
+            out.freeCurrencyAwarded = claim.freeCurrencyAwarded;
+            out.victoryCurrencyAwarded = claim.victoryCurrencyAwarded;
+            out.freeCurrency = claim.totalFreeCurrency;
+            out.victoryCurrency = claim.totalVictoryCurrency;
+            session->Send(&out);
+        }
+        break;
+    case PacketType::PKT_CS_HONOR_REQUEST:
+        if (header->size == sizeof(CS_HonorRequest))
+        {
+            const auto* request = reinterpret_cast<const CS_HonorRequest*>(header);
+            SendHonorState(session, request->page);
+        }
+        break;
+    case PacketType::PKT_CS_HONOR_CLAIM:
+        if (header->size == sizeof(CS_HonorClaim))
+        {
+            const auto* request = reinterpret_cast<const CS_HonorClaim*>(header);
+            const auto claim = CareerManager::Instance().ClaimHonorRewards(
+                session->GetUserId(), request->targetGrade);
+            SC_HonorClaimResult out{};
+            out.header.size = sizeof(out);
+            out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_HONOR_CLAIM_RESULT);
+            out.result = claim.succeeded ? 0 : 1;
+            out.claimedGrade = claim.claimedGrade;
+            out.freeCurrencyAwarded = claim.freeCurrencyAwarded;
+            out.victoryCurrencyAwarded = claim.victoryCurrencyAwarded;
+            out.freeCurrency = claim.totalFreeCurrency;
+            out.victoryCurrency = claim.totalVictoryCurrency;
             session->Send(&out);
         }
         break;

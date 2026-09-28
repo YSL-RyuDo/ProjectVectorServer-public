@@ -60,6 +60,7 @@ struct Room
     // manually created private rooms do not.
     int matchType = 0;
     bool isMatchmade = false;
+    bool matchResultReady = false;
 
     uint32_t leaderPlayerId = 0;
     std::vector<RoomMember> members;

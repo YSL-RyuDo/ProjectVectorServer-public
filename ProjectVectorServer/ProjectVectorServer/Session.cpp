@@ -7,6 +7,7 @@
 #include "RoomManager.h"
 #include "ServerWeaponData.h"
 #include "WeaponSkinManager.h"
+#include "CareerManager.h"
 
 namespace
 {
@@ -158,6 +159,22 @@ void Session::Disconnect()
         GetCurrentRoomId() != 0)
     {
         uint32_t roomId = GetCurrentRoomId();
+
+        // Only an in-progress matchmade disconnect counts as abandonment.
+        Room activeRoom{};
+        if (state == SessionState::IN_GAME &&
+            RoomManager::Instance().GetRoom(roomId, activeRoom) &&
+            activeRoom.isMatchmade && activeRoom.state == RoomState::PLAYING &&
+            !activeRoom.matchResultReady)
+        {
+            for (const auto& member : activeRoom.members)
+                if (member.playerId == GetPlayerId() && member.team != RoomTeam::OBSERVER)
+                {
+                    CareerManager::Instance().ApplyHonorViolation(
+                        GetUserId(), HonorChangeReason::MatchAbandoned);
+                    break;
+                }
+        }
 
         bool roomDeleted = false;
         Room updatedRoom{};

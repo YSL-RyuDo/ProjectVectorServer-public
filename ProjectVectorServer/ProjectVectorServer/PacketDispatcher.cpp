@@ -3,6 +3,7 @@
 #include "FriendManager.h"
 #include "FriendPacketService.h"
 #include "ProfilePacketService.h"
+#include "ProfileManager.h"
 #include "RankRatingCalculator.h"
 #include "PacketType.h"
 #include "Packet.h"
@@ -3804,6 +3805,7 @@ namespace
         }
         UserManager::Instance().SetRankImages(refreshedRankImages);
 
+        RoomManager::Instance().MarkMatchResultReady(roomId);
         BroadcastPacketToRoomInternal(roomId, &out);
 
         std::cout << "[MATCH RESULT DETAIL] roomId="
@@ -7990,6 +7992,10 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
     case PacketType::PKT_CS_PROFILE_BATTLE_STATS_SET:
     case PacketType::PKT_CS_CHIPCRAFT_REQUEST:
     case PacketType::PKT_CS_CHIPCRAFT_SAVE:
+    case PacketType::PKT_CS_LEVEL_REWARD_REQUEST:
+    case PacketType::PKT_CS_LEVEL_REWARD_CLAIM:
+    case PacketType::PKT_CS_HONOR_REQUEST:
+    case PacketType::PKT_CS_HONOR_CLAIM:
         ProfilePacketService::Dispatch(session, header);
         break;
 
@@ -8051,6 +8057,24 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         out.players[0].playerIconId = data.playerIconId;
         out.players[0].logoBorderId = data.logoBorderId;
         out.players[0].rankImageId = data.rankImageId;
+
+        ChipCraftRecord chipCraft{};
+        if (ProfileManager::Instance().GetChipCraft(session->GetUserId(), chipCraft))
+        {
+            const ChipCraftPreset& preset = chipCraft.preset;
+            out.players[0].preset.cardId = preset.cardId;
+            out.players[0].preset.caseId = preset.caseId;
+            out.players[0].preset.medalCount = preset.medalCount;
+            for (size_t i = 0; i < preset.medals.size(); ++i)
+            {
+                out.players[0].preset.medals[i].medalId = preset.medals[i].id;
+                out.players[0].preset.medals[i].x = preset.medals[i].x;
+                out.players[0].preset.medals[i].y = preset.medals[i].y;
+                out.players[0].preset.medals[i].rotation = preset.medals[i].rotation;
+                out.players[0].preset.medals[i].scale = preset.medals[i].scale;
+                out.players[0].preset.medals[i].flipped = preset.medals[i].flipped ? 1 : 0;
+            }
+        }
 
         out.players[1].slotIndex = 1;
         out.players[2].slotIndex = 2;

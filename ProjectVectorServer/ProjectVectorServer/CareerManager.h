@@ -195,6 +195,55 @@ struct CareerWallet
     std::string userId;
     int freeCurrency = 0;
     int victoryCurrency = 0;
+    int claimedLevelReward = 0;
+    int claimedHonorGrade = 0;
+};
+
+enum class HonorChangeReason : uint8_t
+{
+    MatchCompleted = 1,
+    MatchAbandoned = 2,
+    ConfirmationDeclined = 3,
+    DisruptivePlay = 4,
+    ChatViolation = 5,
+    MatchManipulation = 6
+};
+
+struct CareerHonorChange
+{
+    int64_t appliedAtUnix = 0;
+    int delta = 0;
+    HonorChangeReason reason = HonorChangeReason::MatchCompleted;
+    uint64_t matchId = 0;
+};
+
+struct CareerHonorState
+{
+    int score = 601; // All accounts begin at grade 3 (Normal).
+    int dailyEarned = 0;
+    int64_t earnedDayUtc = 0;
+    int claimedGrade = 0;
+    std::vector<CareerHonorChange> history;
+};
+
+struct CareerHonorClaim
+{
+    bool succeeded = false;
+    int claimedGrade = 0;
+    int freeCurrencyAwarded = 0;
+    int victoryCurrencyAwarded = 0;
+    int totalFreeCurrency = 0;
+    int totalVictoryCurrency = 0;
+};
+
+struct CareerLevelRewardClaim
+{
+    bool succeeded = false;
+    int claimedLevel = 0;
+    int freeCurrencyAwarded = 0;
+    int victoryCurrencyAwarded = 0;
+    int totalFreeCurrency = 0;
+    int totalVictoryCurrency = 0;
 };
 
 struct CareerMatchReward
@@ -239,6 +288,12 @@ public:
         int characterId,
         CareerDetail& outDetail);
     bool GetWallet(const std::string& userId, CareerWallet& outWallet);
+    CareerLevelRewardClaim ClaimLevelRewards(
+        const std::string& userId, int playerLevel, int targetLevel);
+    bool GetHonorState(const std::string& userId, CareerHonorState& outState);
+    CareerHonorClaim ClaimHonorRewards(const std::string& userId, int targetGrade);
+    bool ApplyHonorViolation(const std::string& userId, HonorChangeReason reason);
+    static int HonorGradeForScore(int score);
     std::vector<CareerRankingEntry> GetRankings(size_t limit);
     CareerRankingPage GetRankingPage(
         int rankingType,
@@ -285,6 +340,7 @@ private:
     void LoadItemsUnlocked();
     void LoadInventoryUnlocked();
     void LoadWalletsUnlocked();
+    void LoadHonorUnlocked();
 
     void SaveSeasonsUnlocked();
     void SaveRankTiersUnlocked();
@@ -295,7 +351,9 @@ private:
     void SaveMatchPlayersUnlocked();
     void SaveItemsUnlocked();
     void SaveInventoryUnlocked();
-    void SaveWalletsUnlocked();
+    bool SaveWalletsUnlocked();
+    bool SaveHonorUnlocked();
+    bool SaveHonorHistoryUnlocked();
 
     void SeedDefaultSeasonUnlocked();
     void SeedDefaultRankTiersUnlocked();
@@ -348,5 +406,6 @@ private:
     std::unordered_map<int, CareerItem> items_;
     std::unordered_map<std::string, CareerInventoryEntry> inventory_;
     std::unordered_map<std::string, CareerWallet> wallets_;
+    std::unordered_map<std::string, CareerHonorState> honor_;
     uint64_t nextMatchId_ = 1;
 };

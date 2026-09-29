@@ -3,6 +3,7 @@
 #include "FriendManager.h"
 #include "FriendPacketService.h"
 #include "ProfilePacketService.h"
+#include "ShopPacketService.h"
 #include "ProfileManager.h"
 #include "RankRatingCalculator.h"
 #include "PacketType.h"
@@ -7984,6 +7985,10 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
     case PacketType::PKT_CS_FRIEND_RECENT_REQUEST:
     case PacketType::PKT_CS_FRIEND_MEMO_SET:
         FriendPacketService::Dispatch(session, header);
+        break;
+
+    case static_cast<PacketType>(340): // Independent cosmetic shop request
+        ShopPacketService::Dispatch(session, header);
         break;
 
     case PacketType::PKT_CS_PROFILE_REQUEST:

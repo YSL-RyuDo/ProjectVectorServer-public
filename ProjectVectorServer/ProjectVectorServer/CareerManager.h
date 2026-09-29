@@ -5,6 +5,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+namespace VectorShop { class Engine; struct Result; }
 
 struct CareerSeason
 {
@@ -197,6 +198,7 @@ struct CareerWallet
     int victoryCurrency = 0;
     int claimedLevelReward = 0;
     int claimedHonorGrade = 0;
+    std::string shopState;
 };
 
 enum class HonorChangeReason : uint8_t
@@ -288,6 +290,8 @@ public:
         int characterId,
         CareerDetail& outDetail);
     bool GetWallet(const std::string& userId, CareerWallet& outWallet);
+    VectorShop::Result ExecuteShop(VectorShop::Engine& engine, const std::string& userId,
+        int operation, int currency, int count, int itemId, unsigned long long request);
     CareerLevelRewardClaim ClaimLevelRewards(
         const std::string& userId, int playerLevel, int targetLevel);
     bool GetHonorState(const std::string& userId, CareerHonorState& outState);

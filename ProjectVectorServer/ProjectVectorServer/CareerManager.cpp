@@ -11,6 +11,7 @@
 #include <unordered_set>
 #define NOMINMAX
 #include <Windows.h>
+#include "ShopService.h"
 
 namespace
 {
@@ -52,7 +53,8 @@ namespace
         "itemId,itemName,description,iconId";
     constexpr const char* INVENTORY_HEADER =
         "userId,itemId,quantity,acquiredAtUnix";
-    constexpr const char* WALLETS_HEADER =
+    constexpr const char* WALLETS_HEADER = "userId,freeCurrency,victoryCurrency,claimedLevelReward,claimedHonorGrade,shopState";
+    constexpr const char* PRE_SHOP_WALLETS_HEADER =
         "userId,freeCurrency,victoryCurrency,claimedLevelReward,claimedHonorGrade";
     constexpr const char* PREVIOUS_WALLETS_HEADER =
         "userId,freeCurrency,victoryCurrency,claimedLevelReward";
@@ -439,6 +441,34 @@ bool CareerManager::GetWallet(
         return false;
     outWallet = it->second;
     return true;
+}
+
+VectorShop::Result CareerManager::ExecuteShop(VectorShop::Engine& engine, const std::string& userId,
+    int operation, int currency, int count, int itemId, unsigned long long request)
+{
+    // Same mutex and atomic file as match/level/honor rewards: no second wallet or partial debit.
+    std::lock_guard<std::mutex> lock(mutex_);
+    VectorShop::Result result;
+    auto it = wallets_.find(userId);
+    if (it == wallets_.end()) { result.status = 1; return result; }
+    const auto before = it->second;
+    try
+    {
+        auto account = engine.SharedAccount(userId, before.shopState, before.freeCurrency, before.victoryCurrency);
+        result = engine.Execute(userId, operation, currency, count, itemId, request, &account);
+        if (result.status != 0) return result;
+        it->second.freeCurrency = account.coin0; it->second.victoryCurrency = account.coin1;
+        it->second.shopState = VectorShop::Engine::Encode(account);
+        if (!SaveWalletsUnlocked()) throw std::runtime_error("Wallet save failed");
+    }
+    catch (...)
+    {
+        it->second = before; result.status = 5; result.rewards.clear();
+        try {result.account=engine.SharedAccount(userId,before.shopState,before.freeCurrency,before.victoryCurrency);}
+        catch (...) {result.account={};}
+        result.account.coin0 = before.freeCurrency; result.account.coin1 = before.victoryCurrency;
+    }
+    return result;
 }
 
 int CareerManager::HonorGradeForScore(int score)
@@ -1614,7 +1644,8 @@ void CareerManager::LoadWalletsUnlocked()
     if (!header.empty() && header.back() == '\r') header.pop_back();
     const bool legacy = header == LEGACY_WALLETS_HEADER;
     const bool previous = header == PREVIOUS_WALLETS_HEADER;
-    if (!legacy && !previous && header != WALLETS_HEADER) return;
+    const bool preShop = header == PRE_SHOP_WALLETS_HEADER;
+    if (!legacy && !previous && !preShop && header != WALLETS_HEADER) return;
 
     std::string line;
     while (std::getline(file, line))
@@ -1623,7 +1654,7 @@ void CareerManager::LoadWalletsUnlocked()
             line.pop_back();
 
         std::vector<std::string> fields = ParseCsvLine(line);
-        if (fields.size() != (legacy ? 3u : previous ? 4u : 5u) ||
+        if (fields.size() != (legacy ? 3u : previous ? 4u : preShop ? 5u : 6u) ||
             users_.count(fields[0]) == 0)
             continue;
 
@@ -1647,6 +1678,7 @@ void CareerManager::LoadWalletsUnlocked()
              wallet.claimedHonorGrade < 0 || wallet.claimedHonorGrade > 6))
             continue;
 
+        if (!legacy && !previous && !preShop) wallet.shopState = fields[5];
         wallets_[wallet.userId] = wallet;
     }
 }
@@ -2008,7 +2040,7 @@ bool CareerManager::SaveWalletsUnlocked()
             << wallet.freeCurrency << ','
             << wallet.victoryCurrency << ','
             << wallet.claimedLevelReward << ','
-            << wallet.claimedHonorGrade << '\n';
+            << wallet.claimedHonorGrade << ',' << EscapeCsv(wallet.shopState) << '\n';
     }
     file.flush();
     if (!file.good()) return false;

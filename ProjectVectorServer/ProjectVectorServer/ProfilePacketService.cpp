@@ -267,6 +267,22 @@ void SendProfile(Session* session, const std::string& requestedUserId)
 void ProfilePacketService::Dispatch(Session* session, PacketHeader* header)
 {
     if (session == nullptr || header == nullptr) return;
+    if (header->type == 334)
+    {
+        if (header->size != 20 || session->GetUserId().empty()) return;
+        int32_t operation, index; int64_t week;
+        const auto* bytes = reinterpret_cast<const char*>(header);
+        std::memcpy(&operation, bytes + 4, 4); std::memcpy(&index, bytes + 8, 4); std::memcpy(&week, bytes + 12, 8);
+        auto state = CareerManager::Instance().ExecutePass(session->GetUserId(), operation, index, week);
+        std::array<char, 64> response{};
+        uint16_t size = 64, type = 335;
+        std::memcpy(response.data(), &size, 2); std::memcpy(response.data()+2, &type, 2);
+        const int32_t values[] = {state.result,state.level,state.xp,state.rewardMask,state.questMask,state.currency0,state.currency1};
+        std::memcpy(response.data()+4, values, 28); std::memcpy(response.data()+32, &state.week, 8);
+        std::memcpy(response.data()+40, state.progress, 24);
+        session->Send(response.data());
+        return;
+    }
     switch (static_cast<PacketType>(header->type))
     {
     case PacketType::PKT_CS_PROFILE_REQUEST:

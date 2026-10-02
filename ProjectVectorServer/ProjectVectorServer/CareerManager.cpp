@@ -53,7 +53,8 @@ namespace
         "itemId,itemName,description,iconId";
     constexpr const char* INVENTORY_HEADER =
         "userId,itemId,quantity,acquiredAtUnix";
-    constexpr const char* WALLETS_HEADER = "userId,freeCurrency,victoryCurrency,claimedLevelReward,claimedHonorGrade,shopState";
+    constexpr const char* WALLETS_HEADER = "userId,freeCurrency,victoryCurrency,claimedLevelReward,claimedHonorGrade,shopState,passState";
+    constexpr const char* PRE_PASS_WALLETS_HEADER = "userId,freeCurrency,victoryCurrency,claimedLevelReward,claimedHonorGrade,shopState";
     constexpr const char* PRE_SHOP_WALLETS_HEADER =
         "userId,freeCurrency,victoryCurrency,claimedLevelReward,claimedHonorGrade";
     constexpr const char* PREVIOUS_WALLETS_HEADER =
@@ -563,6 +564,8 @@ bool CareerManager::ApplyHonorViolation(
     SaveHonorHistoryUnlocked(); // Human-readable mirror; snapshot above is authoritative.
     return true;
 }
+
+#include "EventPass.inl"
 
 CareerLevelRewardClaim CareerManager::ClaimLevelRewards(
     const std::string& userId, int playerLevel, int targetLevel)
@@ -1645,7 +1648,8 @@ void CareerManager::LoadWalletsUnlocked()
     const bool legacy = header == LEGACY_WALLETS_HEADER;
     const bool previous = header == PREVIOUS_WALLETS_HEADER;
     const bool preShop = header == PRE_SHOP_WALLETS_HEADER;
-    if (!legacy && !previous && !preShop && header != WALLETS_HEADER) return;
+    const bool prePass = header == PRE_PASS_WALLETS_HEADER;
+    if (!legacy && !previous && !preShop && !prePass && header != WALLETS_HEADER) return;
 
     std::string line;
     while (std::getline(file, line))
@@ -1654,7 +1658,7 @@ void CareerManager::LoadWalletsUnlocked()
             line.pop_back();
 
         std::vector<std::string> fields = ParseCsvLine(line);
-        if (fields.size() != (legacy ? 3u : previous ? 4u : preShop ? 5u : 6u) ||
+        if (fields.size() != (legacy ? 3u : previous ? 4u : preShop ? 5u : prePass ? 6u : 7u) ||
             users_.count(fields[0]) == 0)
             continue;
 
@@ -1679,6 +1683,7 @@ void CareerManager::LoadWalletsUnlocked()
             continue;
 
         if (!legacy && !previous && !preShop) wallet.shopState = fields[5];
+        if (fields.size() == 7) wallet.passState = fields[6];
         wallets_[wallet.userId] = wallet;
     }
 }
@@ -2040,7 +2045,7 @@ bool CareerManager::SaveWalletsUnlocked()
             << wallet.freeCurrency << ','
             << wallet.victoryCurrency << ','
             << wallet.claimedLevelReward << ','
-            << wallet.claimedHonorGrade << ',' << EscapeCsv(wallet.shopState) << '\n';
+            << wallet.claimedHonorGrade << ',' << EscapeCsv(wallet.shopState) << ',' << EscapeCsv(wallet.passState) << '\n';
     }
     file.flush();
     if (!file.good()) return false;

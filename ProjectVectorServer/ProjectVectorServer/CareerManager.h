@@ -199,6 +199,7 @@ struct CareerWallet
     int claimedLevelReward = 0;
     int claimedHonorGrade = 0;
     std::string shopState;
+    std::string passState;
 };
 
 enum class HonorChangeReason : uint8_t
@@ -272,6 +273,14 @@ struct CareerRankAdjustment
 class CareerManager
 {
 public:
+    struct PassResult
+    {
+        int32_t result = 1, level = 1, xp = 0, rewardMask = 0, questMask = 0;
+        int32_t currency0 = 0, currency1 = 0;
+        int64_t week = 0;
+        int32_t progress[6]{};
+    };
+    PassResult ExecutePass(const std::string& userId, int operation, int index, int64_t expectedWeek);
     static CareerManager& Instance();
 
     // Loads all normalized CSV tables and repairs missing current-season rows

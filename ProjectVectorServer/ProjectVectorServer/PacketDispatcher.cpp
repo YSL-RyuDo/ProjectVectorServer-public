@@ -8001,6 +8001,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
     case PacketType::PKT_CS_LEVEL_REWARD_CLAIM:
     case PacketType::PKT_CS_HONOR_REQUEST:
     case PacketType::PKT_CS_HONOR_CLAIM:
+    case static_cast<PacketType>(334): // Event pass request.
         ProfilePacketService::Dispatch(session, header);
         break;
 

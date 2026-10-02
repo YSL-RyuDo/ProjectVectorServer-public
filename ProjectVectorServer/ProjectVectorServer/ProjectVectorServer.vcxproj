@@ -22,6 +22,7 @@
     <ClInclude Include="CareerManager.h" />
     <ClInclude Include="FriendManager.h" />
     <ClInclude Include="FriendPacketService.h" />
+    <ClInclude Include="LobbyPartyState.h" />
     <ClInclude Include="ProfileManager.h" />
     <ClInclude Include="ProfilePacketService.h" />
     <ClInclude Include="Common.h" />
@@ -64,6 +65,7 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="CAREER_DATA_SCHEMA.md" />
+    <None Include="LobbySocial.inl" />
     <None Include="career_character_stats.csv" />
     <None Include="career_items.csv" />
     <None Include="career_matches.csv" />

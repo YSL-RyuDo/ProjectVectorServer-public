@@ -365,6 +365,19 @@ struct CS_TempGameRoomEnter
     PacketHeader header;
 };
 
+struct CS_PartyInvite { PacketHeader header; uint32_t targetPlayerId; };
+struct SC_PartyInvite { PacketHeader header; uint32_t token; uint32_t senderPlayerId; char nickname[20]; uint16_t seconds; };
+struct CS_PartyInviteReply { PacketHeader header; uint32_t token; uint8_t accept; };
+struct SC_SocialResult { PacketHeader header; uint8_t result; uint32_t targetPlayerId; };
+struct SC_PartyState { PacketHeader header; uint32_t leader; uint8_t count; uint32_t players[3]; };
+struct SC_PartyAvailability { PacketHeader header; uint8_t count; uint8_t lobbyMask; };
+static_assert(sizeof(SC_PartyAvailability) == 6, "Party availability wire layout");
+struct CS_MatchReady { PacketHeader header; uint32_t token; uint8_t accept; };
+struct SC_MatchReady { PacketHeader header; uint32_t token; uint8_t phase; uint16_t seconds; uint8_t total; uint8_t accepted; uint8_t selfAccepted; };
+static_assert(sizeof(CS_PartyInvite) == 8 && sizeof(SC_PartyInvite) == 34, "Party invite wire layout");
+static_assert(sizeof(CS_PartyInviteReply) == 9 && sizeof(SC_SocialResult) == 9, "Party reply wire layout");
+static_assert(sizeof(SC_PartyState) == 21 && sizeof(CS_MatchReady) == 9 && sizeof(SC_MatchReady) == 14, "Party/ready wire layout");
+
 struct ChipCraftMedalPacket
 {
     uint8_t medalId;
@@ -381,6 +394,25 @@ struct ChipCraftPresetPacket
     uint8_t medalCount;
     ChipCraftMedalPacket medals[3];
 };
+// Optional result cosmetics; the existing 118-byte result member contract is unchanged.
+struct MatchAppearanceMember
+{
+    uint32_t playerId;
+    int32_t playerIconId; // Also the player-card ID; never an independent selection.
+    int32_t logoBorderId;
+    int32_t rankImageId;
+    int32_t level;
+    ChipCraftPresetPacket preset;
+};
+struct SC_MatchAppearance
+{
+    PacketHeader header;
+    uint32_t roomId;
+    uint8_t memberCount;
+    MatchAppearanceMember members[6];
+};
+static_assert(sizeof(MatchAppearanceMember) == 77 && sizeof(SC_MatchAppearance) == 471, "Result appearance wire layout");
+
 struct TempGamePlayerSlotInfo
 {
     uint8_t slotIndex;

@@ -1,6 +1,7 @@
 #include "PacketDispatcher.h"
 #include "CareerManager.h"
 #include "FriendManager.h"
+#include "LobbyPartyState.h"
 #include "FriendPacketService.h"
 #include "ProfilePacketService.h"
 #include "ShopPacketService.h"
@@ -231,17 +232,33 @@ namespace
         uint8_t mode = 0;
         int matchmakingRating = 0;
         int visibleTierId = 0;
-        // The current client queues solo players. Future friend-party queues
-        // populate the same fields so duos/trios stay together and are valued
-        // as coordinated groups by the existing team optimizer.
+        // Solo/duo/trio queues use the same team optimizer and rating rules.
         uint64_t partyId = 0;
         uint8_t partySize = 1;
         std::chrono::steady_clock::time_point queuedAt;
     };
 
-    std::mutex g_matchmakingMutex;
+    std::recursive_mutex g_matchmakingMutex;
     std::vector<MatchmakingEntry> g_matchmakingQueue;
     std::once_flag g_matchmakingWorkerOnce;
+    LobbyPartyState g_lobbyParties;
+    struct ReadyMatch
+    {
+        uint32_t token;
+        std::vector<MatchmakingEntry> group;
+        std::unordered_set<uint32_t> accepted;
+        std::chrono::steady_clock::time_point deadline;
+    };
+    std::unordered_map<uint32_t, ReadyMatch> g_readyMatches;
+    uint32_t g_nextReadyToken = 0;
+
+    bool SocialBusy(uint32_t player)
+    {
+        for (const auto& entry : g_matchmakingQueue) if (entry.playerId == player) return true;
+        for (const auto& pair : g_readyMatches)
+            for (const auto& entry : pair.second.group) if (entry.playerId == player) return true;
+        return false;
+    }
 
     std::unordered_map<std::string, int> g_creditRewards;
 
@@ -2367,7 +2384,7 @@ namespace
         uint8_t mode,
         std::vector<MatchmakingEntry>& outGroup)
     {
-        std::lock_guard<std::mutex> lock(g_matchmakingMutex);
+        std::lock_guard<std::recursive_mutex> lock(g_matchmakingMutex);
         auto now = std::chrono::steady_clock::now();
 
         g_matchmakingQueue.erase(
@@ -2396,66 +2413,55 @@ namespace
                 continue;
             }
 
-            std::vector<size_t> selectedIndices{ anchorIndex };
-            for (size_t candidateIndex = 0;
-                candidateIndex < g_matchmakingQueue.size() &&
-                    selectedIndices.size() < MATCHMAKING_PLAYER_COUNT;
-                ++candidateIndex)
+            // Search whole parties, not individual players. A greedy first six
+            // can get stuck on three duos even when two solos are waiting.
+            std::vector<std::vector<MatchmakingEntry>> parties;
+            std::unordered_set<uint64_t> seenParties;
+            auto appendParty = [&](uint64_t partyId)
             {
-                if (candidateIndex == anchorIndex)
-                    continue;
+                if (!seenParties.insert(partyId).second) return;
+                std::vector<MatchmakingEntry> party;
+                for (const auto& entry : g_matchmakingQueue)
+                    if (entry.partyId == partyId && entry.mode == mode &&
+                        GetMatchmakingElapsedSeconds(entry, now) >= MATCHMAKING_MIN_WAIT_SECONDS)
+                        party.push_back(entry);
+                if (!party.empty() && party.size() == party.front().partySize)
+                    parties.push_back(party);
+            };
+            appendParty(anchor.partyId);
+            if (parties.empty()) continue;
+            for (const auto& entry : g_matchmakingQueue)
+                if (parties.size() < 64) appendParty(entry.partyId);
 
-                const MatchmakingEntry& candidate =
-                    g_matchmakingQueue[candidateIndex];
-                if (candidate.mode != mode ||
-                    GetMatchmakingElapsedSeconds(candidate, now) <
-                        MATCHMAKING_MIN_WAIT_SECONDS)
-                {
-                    continue;
-                }
-
-                bool compatible = true;
-                for (size_t selectedIndex : selectedIndices)
-                {
-                    if (!AreMatchmakingEntriesCompatible(
-                            candidate,
-                            g_matchmakingQueue[selectedIndex],
-                            now))
-                    {
-                        compatible = false;
-                        break;
-                    }
-                }
-
-                if (compatible)
-                    selectedIndices.push_back(candidateIndex);
-            }
-
-            if (selectedIndices.size() != MATCHMAKING_PLAYER_COUNT)
-                continue;
-
-            std::vector<MatchmakingEntry> selectedGroup;
-            selectedGroup.reserve(MATCHMAKING_PLAYER_COUNT);
-            for (size_t selectedIndex : selectedIndices)
-                selectedGroup.push_back(g_matchmakingQueue[selectedIndex]);
-
-            if (!ContainsCompleteMatchmakingParties(selectedGroup))
-                continue;
-
+            std::vector<MatchmakingEntry> selectedGroup = parties.front();
             std::vector<MatchmakingEntry> balancedGroup;
-            double teamAExpectedWinRate = 0.5;
-            if (!BuildBalancedMatchmakingGroup(
-                    selectedGroup,
-                    balancedGroup,
-                    teamAExpectedWinRate))
+            int attempts = 0;
+            auto search = [&](auto&& recurse, size_t next) -> bool
             {
-                continue;
-            }
-
-            double allowedDeviation =
-                GetAllowedWinRateDeviation(balancedGroup, now);
-            if (std::abs(teamAExpectedWinRate - 0.5) > allowedDeviation)
-                continue;
+                if (++attempts > 4096) return false;
+                if (selectedGroup.size() == MATCHMAKING_PLAYER_COUNT)
+                {
+                    double expected = .5;
+                    return ContainsCompleteMatchmakingParties(selectedGroup) &&
+                        BuildBalancedMatchmakingGroup(selectedGroup, balancedGroup, expected) &&
+                        std::abs(expected - .5) <= GetAllowedWinRateDeviation(balancedGroup, now);
+                }
+                for (size_t i = next; i < parties.size(); ++i)
+                {
+                    if (selectedGroup.size() + parties[i].size() > MATCHMAKING_PLAYER_COUNT) continue;
+                    bool compatible = true;
+                    for (const auto& candidate : parties[i])
+                        for (const auto& selected : selectedGroup)
+                            compatible &= AreMatchmakingEntriesCompatible(candidate, selected, now);
+                    if (!compatible) continue;
+                    const auto before = selectedGroup.size();
+                    selectedGroup.insert(selectedGroup.end(), parties[i].begin(), parties[i].end());
+                    if (recurse(recurse, i + 1)) return true;
+                    selectedGroup.resize(before);
+                }
+                return false;
+            };
+            if (!search(search, 1)) continue;
 
             std::unordered_set<uint32_t> selectedPlayerIds;
             for (const MatchmakingEntry& entry : balancedGroup)
@@ -2518,14 +2524,26 @@ namespace
             return false;
 
         Room room{};
+        auto rollback = [&]()
+        {
+            for (const auto& member : members)
+            {
+                bool deleted = false; Room unused{};
+                RoomManager::Instance().LeaveRoom(roomId, member.playerId, deleted, unused);
+            }
+            for (const auto& peer : sessions)
+                if (peer->GetCurrentRoomId() == roomId)
+                { peer->SetCurrentRoomId(0); peer->SetState(SessionState::IN_LOBBY); }
+        };
         for (size_t i = 1; i < members.size(); ++i)
         {
             if (!RoomManager::Instance().EnterRoom(roomId, members[i], room))
-                return false;
+            { rollback(); return false; }
         }
 
         for (const std::shared_ptr<Session>& session : sessions)
         {
+            if (session->IsDisconnected()) { rollback(); return false; }
             session->SetCurrentRoomId(roomId);
             session->SetState(SessionState::IN_ROOM);
         }
@@ -2536,6 +2554,7 @@ namespace
                 members[0].playerId,
                 startedRoom))
         {
+            rollback();
             return false;
         }
 
@@ -2591,20 +2610,24 @@ namespace
         return true;
     }
 
+    #include "LobbySocial.inl"
+
     void RunMatchmakingWorker()
     {
         while (true)
         {
             std::this_thread::sleep_for(std::chrono::seconds(1));
+            TickSocialLobby();
             for (uint8_t mode = 0; mode <= 1; ++mode)
             {
                 while (true)
                 {
+                    std::lock_guard<std::recursive_mutex> socialLock(g_matchmakingMutex);
                     std::vector<MatchmakingEntry> group;
                     if (!TryTakeMatchmakingGroup(mode, group))
                         break;
 
-                    if (!CreateMatchmakingRoom(group))
+                    if (!BeginReadyMatch(group))
                     {
                         for (const MatchmakingEntry& entry : group)
                         {
@@ -3558,10 +3581,15 @@ namespace
 
     void BroadcastMatchResultDetail(uint32_t roomId, RoomTeam winnerTeam, uint8_t scoreA, uint8_t scoreB)
     {
+        // End-of-round callbacks must not settle the same match twice.
+        // Keep rank, MVP history and wallet settlement behind one completion gate.
+        static std::mutex completionMutex;
+        std::lock_guard<std::mutex> completionLock(completionMutex);
         Room room{};
 
         if (!RoomManager::Instance().GetRoom(roomId, room))
             return;
+        if (room.matchResultReady) return;
 
         SC_MatchResultDetail out{};
 
@@ -3807,6 +3835,29 @@ namespace
         UserManager::Instance().SetRankImages(refreshedRankImages);
 
         RoomManager::Instance().MarkMatchResultReady(roomId);
+        // Send cosmetics first on the same ordered connection. No account/schema migration.
+        SC_MatchAppearance appearance{};
+        appearance.header = {sizeof(appearance), static_cast<uint16_t>(PacketType::PKT_SC_MATCH_APPEARANCE)};
+        appearance.roomId = roomId;
+        for (const RoomMember& member : room.members)
+        {
+            if (member.team == RoomTeam::OBSERVER || appearance.memberCount >= 6) continue;
+            PlayerData player{}; ChipCraftRecord craft{};
+            if (!UserManager::Instance().GetPlayerData(member.userId, player) ||
+                !ProfileManager::Instance().GetChipCraft(member.userId, craft)) continue;
+            auto& target = appearance.members[appearance.memberCount++];
+            target.playerId = member.playerId; target.playerIconId = player.playerIconId;
+            target.logoBorderId = player.logoBorderId; target.rankImageId = player.rankImageId; target.level = player.level;
+            target.preset.cardId = static_cast<uint8_t>(player.playerIconId);
+            target.preset.caseId = craft.preset.caseId; target.preset.medalCount = craft.preset.medalCount;
+            for (size_t i = 0; i < craft.preset.medals.size(); ++i)
+            {
+                const auto& from = craft.preset.medals[i]; auto& to = target.preset.medals[i];
+                to.medalId = from.id; to.x = from.x; to.y = from.y;
+                to.rotation = from.rotation; to.scale = from.scale; to.flipped = from.flipped ? 1 : 0;
+            }
+        }
+        BroadcastPacketToRoomInternal(roomId, &appearance);
         BroadcastPacketToRoomInternal(roomId, &out);
 
         std::cout << "[MATCH RESULT DETAIL] roomId="
@@ -7065,6 +7116,26 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
     if (!TryConsumeSkillForPacket(session, type))
         return;
 
+    // Serialize lobby state transitions against ready-check completion.
+    std::unique_lock<std::recursive_mutex> socialLock(g_matchmakingMutex, std::defer_lock);
+    if (type == PacketType::PKT_CS_ROOM_CREATE || type == PacketType::PKT_CS_ROOM_ENTER ||
+        type == PacketType::PKT_CS_TEMP_GAME_ROOM_ENTER || type == PacketType::PKT_CS_TEMP_GAME_START ||
+        type == PacketType::PKT_CS_MATCHMAKING_CANCEL || type == PacketType::PKT_CS_LOBBY_ENTER ||
+        type == PacketType::PKT_CS_RESULT_LEAVE)
+        socialLock.lock();
+    if (type == PacketType::PKT_CS_ROOM_CREATE || type == PacketType::PKT_CS_ROOM_ENTER)
+    {
+        if (SocialBusy(session->GetPlayerId()) || !g_lobbyParties.IsSolo(session->GetPlayerId()))
+        { SocialResult(session, 4); return; }
+        g_lobbyParties.Invalidate(session->GetPlayerId());
+    }
+    if (type >= PacketType::PKT_CS_PARTY_INVITE && type <= PacketType::PKT_CS_PARTY_STATE)
+    {
+        EnsureMatchmakingWorkerStarted();
+        HandleSocialPacket(session, header);
+        return;
+    }
+
     switch (type)
     {
     case PacketType::PKT_CS_REGISTER:
@@ -8040,214 +8111,39 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
     case PacketType::PKT_CS_TEMP_GAME_ROOM_ENTER:
     {
-        PlayerData data{};
-        bool ok = UserManager::Instance().GetPlayerData(session->GetUserId(), data);
-
-        SC_TempGameRoomEnter out{};
-        out.header.size = sizeof(out);
-        out.header.type = (uint16_t)PacketType::PKT_SC_TEMP_GAME_ROOM_ENTER;
-
-        if (!ok)
-        {
-            out.result = 1;
-            out.playerCount = 0;
-            session->Send(&out);
-            break;
-        }
-
-        out.result = 0;
-        out.playerCount = 1;
-
-        out.players[0].slotIndex = 0;
-        strncpy_s(out.players[0].nickname, data.nickname.c_str(), _TRUNCATE);
-        out.players[0].playerIconId = data.playerIconId;
-        out.players[0].logoBorderId = data.logoBorderId;
-        out.players[0].rankImageId = data.rankImageId;
-
-        ChipCraftRecord chipCraft{};
-        if (ProfileManager::Instance().GetChipCraft(session->GetUserId(), chipCraft))
-        {
-            const ChipCraftPreset& preset = chipCraft.preset;
-            out.players[0].preset.cardId = preset.cardId;
-            out.players[0].preset.caseId = preset.caseId;
-            out.players[0].preset.medalCount = preset.medalCount;
-            for (size_t i = 0; i < preset.medals.size(); ++i)
-            {
-                out.players[0].preset.medals[i].medalId = preset.medals[i].id;
-                out.players[0].preset.medals[i].x = preset.medals[i].x;
-                out.players[0].preset.medals[i].y = preset.medals[i].y;
-                out.players[0].preset.medals[i].rotation = preset.medals[i].rotation;
-                out.players[0].preset.medals[i].scale = preset.medals[i].scale;
-                out.players[0].preset.medals[i].flipped = preset.medals[i].flipped ? 1 : 0;
-            }
-        }
-
-        out.players[1].slotIndex = 1;
-        out.players[2].slotIndex = 2;
-
-        session->Send(&out);
-
+        if (header->size == sizeof(CS_TempGameRoomEnter) && session->IsInLobby()) SendParty(session);
         break;
     }
 
     case PacketType::PKT_CS_TEMP_GAME_START:
     {
-        if (header->size != sizeof(CS_TempGameStart))
-            break;
-
-        const auto* request =
-            reinterpret_cast<const CS_TempGameStart*>(header);
-        uint8_t mode = request->mode == 1 ? 1 : 0;
-
-        if (session->GetState() != SessionState::IN_LOBBY ||
-            session->GetCurrentRoomId() != 0)
-        {
-            SendMatchmakingState(
-                session,
-                1,
-                3,
-                mode,
-                0,
-                GetInitialMatchmakingRange(mode),
-                0);
-            break;
-        }
-
-        CareerOverview overview{};
-        if (!CareerManager::Instance().GetOverview(
-                session->GetUserId(),
-                overview))
-        {
-            SendMatchmakingState(
-                session,
-                1,
-                3,
-                mode,
-                0,
-                GetInitialMatchmakingRange(mode),
-                0);
-            break;
-        }
-
-        CareerMatchmakingRating matchmakingRating{};
-        if (!CareerManager::Instance().GetMatchmakingRating(
-                session->GetUserId(),
-                mode,
-                matchmakingRating))
-        {
-            SendMatchmakingState(
-                session,
-                1,
-                3,
-                mode,
-                0,
-                GetInitialMatchmakingRange(mode),
-                0);
-            break;
-        }
-
-        MatchmakingEntry queuedEntry{};
-        bool alreadyQueued = false;
-        {
-            std::lock_guard<std::mutex> lock(g_matchmakingMutex);
-            auto entryIt = std::find_if(
-                g_matchmakingQueue.begin(),
-                g_matchmakingQueue.end(),
-                [session](const MatchmakingEntry& entry)
-                {
-                    return entry.playerId == session->GetPlayerId();
-                });
-
-            if (entryIt != g_matchmakingQueue.end())
-            {
-                queuedEntry = *entryIt;
-                alreadyQueued = true;
-            }
-            else
-            {
-                queuedEntry.playerId = session->GetPlayerId();
-                queuedEntry.mode = mode;
-                queuedEntry.matchmakingRating =
-                    matchmakingRating.matchmakingRating;
-                queuedEntry.visibleTierId = overview.tier.tierId;
-                queuedEntry.partyId = session->GetPlayerId();
-                queuedEntry.partySize = 1;
-                queuedEntry.queuedAt = std::chrono::steady_clock::now();
-                g_matchmakingQueue.push_back(queuedEntry);
-            }
-        }
-
+        if (header->size != sizeof(CS_TempGameStart)) break;
+        const auto mode = reinterpret_cast<CS_TempGameStart*>(header)->mode;
+        if (mode > 1) { SocialResult(session, 3); break; }
+        QueueSocialParty(session, mode);
         EnsureMatchmakingWorkerStarted();
-        auto now = std::chrono::steady_clock::now();
-        SendMatchmakingState(
-            session,
-            0,
-            0,
-            queuedEntry.mode,
-            GetMatchmakingElapsedSeconds(queuedEntry, now),
-            GetMatchmakingTierRange(queuedEntry, now),
-            0);
-
-        std::cout << "[MATCHMAKING QUEUE] playerId="
-            << session->GetPlayerId()
-            << " mode=" << static_cast<int>(queuedEntry.mode)
-            << " mmr=" << queuedEntry.matchmakingRating
-            << " visibleTierId=" << queuedEntry.visibleTierId
-            << " partySize=" << static_cast<int>(queuedEntry.partySize)
-            << " alreadyQueued=" << alreadyQueued
-            << std::endl;
-
         break;
     }
 
     case PacketType::PKT_CS_MATCHMAKING_CANCEL:
     {
-        if (header->size != sizeof(CS_MatchmakingCancel))
+        if (header->size != sizeof(CS_MatchmakingCancel)) break;
+        auto entry = std::find_if(g_matchmakingQueue.begin(), g_matchmakingQueue.end(),
+            [session](const MatchmakingEntry& value) { return value.playerId == session->GetPlayerId(); });
+        if (entry == g_matchmakingQueue.end())
+        {
+            // A ready check owns cancellation once a match has been found.
+            SendMatchmakingState(session, 2, 3, 0, 0, GetInitialMatchmakingRange(0), 0);
             break;
-
-        MatchmakingEntry removedEntry{};
-        bool removed = false;
-        {
-            std::lock_guard<std::mutex> lock(g_matchmakingMutex);
-            auto entryIt = std::find_if(
-                g_matchmakingQueue.begin(),
-                g_matchmakingQueue.end(),
-                [session](const MatchmakingEntry& entry)
-                {
-                    return entry.playerId == session->GetPlayerId();
-                });
-            if (entryIt != g_matchmakingQueue.end())
+        }
+        const auto party = entry->partyId;
+        g_matchmakingQueue.erase(std::remove_if(g_matchmakingQueue.begin(), g_matchmakingQueue.end(),
+            [party](const MatchmakingEntry& value)
             {
-                removedEntry = *entryIt;
-                g_matchmakingQueue.erase(entryIt);
-                removed = true;
-            }
-        }
-
-        if (removed)
-        {
-            auto now = std::chrono::steady_clock::now();
-            SendMatchmakingState(
-                session,
-                0,
-                2,
-                removedEntry.mode,
-                GetMatchmakingElapsedSeconds(removedEntry, now),
-                GetMatchmakingTierRange(removedEntry, now),
-                0);
-        }
-        else
-        {
-            SendMatchmakingState(
-                session,
-                2,
-                3,
-                0,
-                0,
-                GetInitialMatchmakingRange(0),
-                0);
-        }
-
+                if (value.partyId != party) return false;
+                SendMatchmakingState(SessionManager::Instance().Find(value.playerId).get(), 0, 2, value.mode, 0, GetInitialMatchmakingRange(value.mode), 0);
+                return true;
+            }), g_matchmakingQueue.end());
         break;
     }
 
@@ -10317,6 +10213,9 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
         if (currentRoom.isMatchmade)
         {
+            // A forged result-leave must not turn an in-progress player into a
+            // lobby-ready party member and allow that party to queue again.
+            if (!currentRoom.matchResultReady) { SocialResult(session, 4); break; }
             bool roomDeleted = false;
             Room remainingRoom{};
             RoomManager::Instance().LeaveRoom(
@@ -10334,6 +10233,8 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
                 PacketType::PKT_SC_RESULT_LEAVE_DONE);
             out.roomId = 0;
             session->Send(&out);
+
+            BroadcastParty(session->GetPlayerId());
 
             std::cout << "[MATCHMAKING RESULT LEAVE] playerId="
                 << session->GetPlayerId()

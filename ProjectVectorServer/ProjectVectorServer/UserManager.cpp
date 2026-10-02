@@ -268,7 +268,7 @@ void UserManager::SaveUnlocked()
 
 int UserManager::Register(const std::string& id,const std::string& nick,const std::string& pw,const std::string& confirmPw)
 {
-	std::lock_guard<std::mutex> lock(userManagerMutex_);
+	std::unique_lock<std::mutex> lock(userManagerMutex_);
 
     if (!IsValidId(id) || !IsValidNickname(nick) || !IsValidPassword(pw))
         return (int)RegisterResult::INVALID_INPUT;
@@ -327,6 +327,9 @@ int UserManager::Register(const std::string& id,const std::string& nick,const st
     SavePlayerDataUnlocked();
     SaveCharacterOwnedDataUnlocked();
     SaveCharacterAffinityDataUnlocked();
+    // Profile initialization reads the newly saved PlayerData through GetPlayerData.
+    // Do not hold the non-recursive user lock across other managers (Profile -> User).
+    lock.unlock();
     WeaponSkinManager::Instance().InitializeUser(id);
     CareerManager::Instance().InitializeUser(id, nick);
     FriendManager::Instance().InitializeUser(id);

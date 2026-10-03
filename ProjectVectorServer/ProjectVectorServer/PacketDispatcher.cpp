@@ -36,7 +36,12 @@ namespace
 {
     constexpr uint16_t PICK_TIME_SECONDS = 20;
     constexpr uint16_t PREPARE_TIME_SECONDS = 10;
+#ifdef VECTOR_RANKED_CAPTURE_QA
+    // Opt-in recording build only; never changes the normal server rules.
+    constexpr uint16_t GAME_PREPARE_SECONDS = 8;
+#else
     constexpr uint16_t GAME_PREPARE_SECONDS = 20;
+#endif
     constexpr int DRONE_MAX_HP = 100;
     constexpr const char* TEST_MAP_NAME = "TestMap";
     constexpr const char* DESERT_MAP_NAME = "Desert";
@@ -63,9 +68,13 @@ namespace
 
     std::string ChooseRandomMatchMapName()
     {
+#ifdef VECTOR_RANKED_CAPTURE_QA
+        return TEST_MAP_NAME;
+#else
         thread_local std::mt19937 randomEngine(std::random_device{}());
         std::uniform_int_distribution<int> distribution(0, 1);
         return distribution(randomEngine) == 0 ? TEST_MAP_NAME : DESERT_MAP_NAME;
+#endif
     }
 
     constexpr uint16_t ROUND_END_DELAY_SECONDS = 6;
@@ -73,13 +82,17 @@ namespace
     constexpr uint16_t SPIKE_EXPLODE_SECONDS = 45;
 
     // 정규전 기준 6선승
+#ifdef VECTOR_RANKED_CAPTURE_QA
+    constexpr uint8_t MATCH_WIN_ROUND_COUNT = 1;
+#else
     constexpr uint8_t MATCH_WIN_ROUND_COUNT = 6;
+#endif
     // 5라운드 종료 후 공수 전환
     constexpr uint8_t SIDE_SWAP_AFTER_ROUND = 5;
     //5:5 이후 11라운드부터 듀스
     constexpr uint8_t OVERTIME_START_ROUND = 11;
 
-    constexpr uint8_t OVERTIME_TRIGGER_SCORE = MATCH_WIN_ROUND_COUNT - 1;
+    constexpr uint8_t OVERTIME_TRIGGER_SCORE = 5;
     constexpr uint8_t SECOND_HALF_END_ROUND = OVERTIME_START_ROUND - 1;
     constexpr int OVERTIME_ROUND_CREDIT = 6000;
 
@@ -7129,7 +7142,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         { SocialResult(session, 4); return; }
         g_lobbyParties.Invalidate(session->GetPlayerId());
     }
-    if (type >= PacketType::PKT_CS_PARTY_INVITE && type <= PacketType::PKT_CS_PARTY_STATE)
+    if ((type >= PacketType::PKT_CS_PARTY_INVITE && type <= PacketType::PKT_CS_PARTY_STATE) || type == PacketType::PKT_CS_PARTY_MODE)
     {
         EnsureMatchmakingWorkerStarted();
         HandleSocialPacket(session, header);
@@ -7253,6 +7266,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         out.playerIconId = data.playerIconId;
         out.lobbyCharacterModelId = data.lobbyCharacterModelId;
         out.lobbyBackgroundId = data.lobbyBackgroundId;
+        out.selfPlayerId = session->GetPlayerId();
 
         CareerWallet wallet{};
         if (CareerManager::Instance().GetWallet(session->GetUserId(), wallet))
@@ -8073,7 +8087,13 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
     case PacketType::PKT_CS_HONOR_REQUEST:
     case PacketType::PKT_CS_HONOR_CLAIM:
     case static_cast<PacketType>(334): // Event pass request.
-        ProfilePacketService::Dispatch(session, header);
+        if (ProfilePacketService::Dispatch(session, header))
+        {
+            std::lock_guard<std::recursive_mutex> lock(g_matchmakingMutex);
+            if (session->IsInLobby() && session->GetCurrentRoomId() == 0 &&
+                g_lobbyParties.Members(session->GetPlayerId()).size() > 1)
+                BroadcastParty(session->GetPlayerId());
+        }
         break;
 
     case PacketType::PKT_CS_LOBBY_CHARACTER_LIST:

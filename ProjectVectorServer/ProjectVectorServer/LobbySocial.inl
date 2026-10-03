@@ -33,6 +33,16 @@ void SendPartyAvailability(Session* session)
     session->Send(&out);
 }
 
+void SendPartyMode(Session* session)
+{
+    if (!session || session->IsDisconnected()) return;
+    SC_PartyMode out{};
+    out.header = {sizeof(out), static_cast<uint16_t>(PacketType::PKT_SC_PARTY_MODE)};
+    out.leader = g_lobbyParties.Leader(session->GetPlayerId());
+    out.mode = g_lobbyParties.Mode(session->GetPlayerId());
+    session->Send(&out);
+}
+
 void SendParty(Session* session, bool sendCards = true)
 {
     if (!session || session->IsDisconnected()) return;
@@ -43,7 +53,7 @@ void SendParty(Session* session, bool sendCards = true)
     for (size_t i = 0; i < members.size(); ++i) state.players[i] = members[i];
     session->Send(&state);
     SendPartyAvailability(session);
-    if (!sendCards || !session->IsInLobby()) return;
+    if (!sendCards || !session->IsInLobby()) { SendPartyMode(session); return; }
     SC_TempGameRoomEnter out{};
     out.header = {sizeof(out), static_cast<uint16_t>(PacketType::PKT_SC_TEMP_GAME_ROOM_ENTER)};
     out.playerCount = state.count;
@@ -67,6 +77,7 @@ void SendParty(Session* session, bool sendCards = true)
         }
     }
     session->Send(&out);
+    SendPartyMode(session);
 }
 
 void BroadcastParty(uint32_t player)
@@ -177,9 +188,22 @@ void HandleSocialPacket(Session* session, PacketHeader* header)
         g_readyMatches.erase(it);
         return;
     }
-    if (!session->IsInLobby() || session->GetCurrentRoomId() != 0) { SocialResult(session, 4); return; }
+    // Read-only refresh can arrive before LobbyEnter during scene startup.
+    // Authentication is checked by Dispatch; only mutations require lobby state.
     if (type == PacketType::PKT_CS_PARTY_STATE)
     { if (header->size == sizeof(PacketHeader)) SendParty(session, false); return; }
+    if (!session->IsInLobby() || session->GetCurrentRoomId() != 0) { SocialResult(session, 4); return; }
+    if (type == PacketType::PKT_CS_PARTY_MODE)
+    {
+        if (header->size != sizeof(CS_PartyMode)) return;
+        const auto mode = reinterpret_cast<CS_PartyMode*>(header)->mode;
+        if (g_lobbyParties.Leader(id) != id) { SocialResult(session, 9); SendPartyMode(session); return; }
+        for (auto member : g_lobbyParties.Members(id))
+            if (SocialBusy(member)) { SocialResult(session, 4); SendPartyMode(session); return; }
+        if (!g_lobbyParties.SetMode(id, mode)) { SocialResult(session, 3); SendPartyMode(session); return; }
+        for (auto member : g_lobbyParties.Members(id)) SendPartyMode(SessionManager::Instance().Find(member).get());
+        return;
+    }
     if (type == PacketType::PKT_CS_PARTY_LEAVE)
     {
         if (header->size != sizeof(PacketHeader)) return;
@@ -237,6 +261,8 @@ void QueueSocialParty(Session* session, uint8_t mode)
     if (g_lobbyParties.Leader(id) != id) { SocialResult(session, 9); return; }
     const auto members = g_lobbyParties.Members(id);
     std::vector<MatchmakingEntry> entries;
+    if (members.size() > 1 && mode != g_lobbyParties.Mode(id))
+    { SocialResult(session, 3); SendPartyMode(session); return; }
     for (auto player : members)
     {
         auto peer = SessionManager::Instance().Find(player);

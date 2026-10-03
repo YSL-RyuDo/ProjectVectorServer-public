@@ -264,12 +264,12 @@ void SendProfile(Session* session, const std::string& requestedUserId)
 }
 }
 
-void ProfilePacketService::Dispatch(Session* session, PacketHeader* header)
+bool ProfilePacketService::Dispatch(Session* session, PacketHeader* header)
 {
-    if (session == nullptr || header == nullptr) return;
+    if (session == nullptr || header == nullptr) return false;
     if (header->type == 334)
     {
-        if (header->size != 20 || session->GetUserId().empty()) return;
+        if (header->size != 20 || session->GetUserId().empty()) return false;
         int32_t operation, index; int64_t week;
         const auto* bytes = reinterpret_cast<const char*>(header);
         std::memcpy(&operation, bytes + 4, 4); std::memcpy(&index, bytes + 8, 4); std::memcpy(&week, bytes + 12, 8);
@@ -281,7 +281,7 @@ void ProfilePacketService::Dispatch(Session* session, PacketHeader* header)
         std::memcpy(response.data()+4, values, 28); std::memcpy(response.data()+32, &state.week, 8);
         std::memcpy(response.data()+40, state.progress, 24);
         session->Send(response.data());
-        return;
+        return false;
     }
     switch (static_cast<PacketType>(header->type))
     {
@@ -353,6 +353,7 @@ void ProfilePacketService::Dispatch(Session* session, PacketHeader* header)
                 WriteChipCraftPreset(preset, out.preset);
             }
             session->Send(&out);
+            return out.result == 0;
         }
         break;
     case PacketType::PKT_CS_LEVEL_REWARD_REQUEST:
@@ -408,4 +409,5 @@ void ProfilePacketService::Dispatch(Session* session, PacketHeader* header)
     default:
         break;
     }
+    return false;
 }

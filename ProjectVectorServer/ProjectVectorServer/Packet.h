@@ -108,6 +108,8 @@ struct SC_LobbyEnter
 
     int freeCurrency;
     int victoryCurrency;
+    // Appended: existing lobby fields retain their wire offsets.
+    uint32_t selfPlayerId;
 };
 
 struct CS_LobbyChat
@@ -370,6 +372,9 @@ struct SC_PartyInvite { PacketHeader header; uint32_t token; uint32_t senderPlay
 struct CS_PartyInviteReply { PacketHeader header; uint32_t token; uint8_t accept; };
 struct SC_SocialResult { PacketHeader header; uint8_t result; uint32_t targetPlayerId; };
 struct SC_PartyState { PacketHeader header; uint32_t leader; uint8_t count; uint32_t players[3]; };
+struct CS_PartyMode { PacketHeader header; uint8_t mode; };
+struct SC_PartyMode { PacketHeader header; uint32_t leader; uint8_t mode; };
+static_assert(sizeof(CS_PartyMode) == 5 && sizeof(SC_PartyMode) == 9, "Party mode wire layout");
 struct SC_PartyAvailability { PacketHeader header; uint8_t count; uint8_t lobbyMask; };
 static_assert(sizeof(SC_PartyAvailability) == 6, "Party availability wire layout");
 struct CS_MatchReady { PacketHeader header; uint32_t token; uint8_t accept; };

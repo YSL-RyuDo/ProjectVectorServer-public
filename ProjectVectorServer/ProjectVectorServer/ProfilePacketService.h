@@ -4,5 +4,6 @@ struct PacketHeader;
 class ProfilePacketService
 {
 public:
-    static void Dispatch(Session* session, PacketHeader* header);
+    // Returns true only after successfully saving the player's appearance.
+    static bool Dispatch(Session* session, PacketHeader* header);
 };

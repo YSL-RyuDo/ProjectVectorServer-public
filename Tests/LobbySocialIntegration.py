@@ -25,12 +25,18 @@ class Client:
         assert self.wait(1)[0] == 0, 'register'
         self.send(2, fixed(self.user, 20) + password)
         assert self.wait(3)[0] == 0, 'login'
+        # Unity Start ordering may refresh party state before LobbyEnter.
+        self.send(358)
+        self.wait(355)
+        self.wait(362)
+        assert not any(p == 353 and b[0] == 4 for p, b in self.pending), 'spurious busy toast on first login'
         self.send(4)
         lobby = self.wait(5)
         assert struct.unpack_from('<ii', lobby, 44) == (0, 0), 'non-qwer wallet must stay zero'
         self.send(358)
         state = self.wait(355)
         self.id = struct.unpack_from('<I', state)[0]
+        assert len(lobby) == 56 and struct.unpack_from('<I', lobby, 52)[0] == self.id, 'lobby self identity must match authoritative party identity'
 
     def send(self, kind, body=b''):
         self.sock.sendall(struct.pack('<HH', len(body) + 4, kind) + body)
@@ -98,6 +104,20 @@ def main():
             time.sleep(1.5)
             for i in range(7): clients.append(Client(i))
             a,b,c,d,e,f,outsider = clients
+            for card_id in range(3):
+                preset = bytes([card_id, 0, 0]) + bytes(54)
+                a.send(96, preset)
+                saved = a.wait(97)
+                assert saved[0] == 0 and saved[1] == card_id, 'chipcraft save acknowledgement'
+                a.send(94, bytes(20))
+                assert a.wait(95)[25] == card_id, 'saved player card'
+                a.send(4)
+                assert struct.unpack_from('<i', a.wait(5), 32)[0] == card_id, 'lobby icon must share saved card ID'
+            print('PASS: all three chipcraft cards save and synchronize the lobby profile icon ID', flush=True)
+            outsider.send(16, b'\0')
+            outsider.wait(17, lambda x: x[1] == 0)
+            outsider.send(61)
+            outsider.wait(17, lambda x: x[1] == 2)
             a.send(350, struct.pack('<I', outsider.id)); a.result(5)
             a.friend(b); a.friend(c); d.friend(e); d.friend(f)
             b.send(68, b'\x01'); b.wait(69)
@@ -110,6 +130,64 @@ def main():
             token = a.join(b)
             b.send(352, struct.pack('<IB', token, 1)); b.result(7)
             b.send(350, struct.pack('<I', c.id)); b.result(9)
+
+            def check_live_appearance(sender, card, x):
+                # A unique medal position distinguishes this save from buffered snapshots.
+                preset = bytes([card, 0, 1]) + struct.pack('<BffffB', 0, x, .35, 12., .6, 0) + bytes(36)
+                sender.send(96, preset)
+                saved = sender.wait(97)
+                assert saved[0] == 0 and saved[1:] == preset, 'appearance save failed'
+                slot = 0 if sender is a else 1
+                def updated(body):
+                    return len(body) == 272 and body[1] == 2 and body[2+slot*90+33:2+(slot+1)*90] == preset
+                for peer in (a, b):
+                    cards = peer.wait(15, updated)
+                    for i in range(2):
+                        assert cards[3+i*90:23+i*90].split(b'\0', 1)[0] == ('Tester'+str(i)).encode(), 'nickname lost during appearance update'
+                    assert struct.unpack_from('<i', cards, 23+slot*90)[0] == card, 'profile icon/card ID mismatch'
+                    assert cards[182:] == bytes(90), 'unused fixed-capacity slot should remain empty'
+                    peer.pending = [p for p in peer.pending if p[0] != 362]
+                    peer.wait(362)  # Complete this snapshot before subsequent mode assertions.
+
+            # Drain the original join modes first; cards are matched by unique saved content.
+            for peer in (a, b): peer.wait(362, lambda body: struct.unpack('<IB', body) == (a.id, 0))
+            check_live_appearance(a, 1, .21)
+            check_live_appearance(b, 2, .43)
+            print('PASS: leader/member appearance saves broadcast nicknames, cards and medal transforms to both clients', flush=True)
+            for peer in (a, b): peer.pending = [p for p in peer.pending if p[0] != 362]
+            a.send(361, b'\x01')
+            for peer in (a, b):
+                mode = peer.wait(362)
+                assert struct.unpack('<IB', mode) == (a.id, 1), 'leader rank selection must reach every member before queue'
+            b.send(361, b'\0'); b.result(9)
+            assert b.wait(362)[4] == 1, 'member cannot change party mode'
+            a.send(361, b'\x02'); a.result(3)
+            assert a.wait(362)[4] == 1, 'invalid/custom mode is not a party queue mode'
+            a.send(16, b'\0'); a.result(3)
+            assert a.wait(362)[4] == 1, 'stale client mode must not enter a different queue'
+            a.send(16, b'\x01')
+            for peer in (a, b): peer.wait(17, lambda x: x[1] == 0 and x[2] == 1)
+            check_live_appearance(a, 2, -.27)
+            a.send(361, b'\0'); a.result(4)
+            assert a.wait(362)[4] == 1, 'queued party cannot silently switch mode'
+            b.send(61)
+            for peer in (a, b): peer.wait(17, lambda x: x[1] == 2)
+            for departing in (b, a):
+                departing.send(354)
+                for peer in (a, b):
+                    peer.wait(355, lambda x: x[4] == 1)
+                    assert struct.unpack('<IB', peer.wait(362)) == (peer.id, 1), 'leave/leader succession must preserve mode'
+                a.join(b)
+                for peer in (a, b): assert struct.unpack('<IB', peer.wait(362)) == (a.id, 1), 'joining an existing ranked party must inherit rank'
+            a.send(361, b'\0')
+            for peer in (a, b): assert peer.wait(362)[4] == 0
+            print('PASS: shared normal/rank mode, member/invalid/queued-mode guards, stale queue rejection, leave/rejoin and leader succession', flush=True)
+            # A premade does not need three players to enter a 3v3 queue.
+            a.send(16, b'\0')
+            for peer in (a, b): peer.wait(17, lambda x: x[1] == 0)
+            b.send(61)
+            for peer in (a, b): peer.wait(17, lambda x: x[1] == 2)
+            print('PASS: lobby self ID, solo queue and two-person leader queue/cancel without a third invite', flush=True)
             a.join(c)
             a.send(350, struct.pack('<I', outsider.id)); a.result(8)
             d.join(e); d.join(f)

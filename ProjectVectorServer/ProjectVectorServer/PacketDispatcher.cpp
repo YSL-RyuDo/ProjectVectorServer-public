@@ -1404,6 +1404,9 @@ namespace
     {
         std::thread([roomId]()
             {
+                // Authored map flyover plays after every client has entered the pick scene.
+                // Preserve the full 20-second selection window after this introduction.
+                std::this_thread::sleep_for(std::chrono::seconds(4));
                 // 1) 20ÃÊ ÇÈ
                 for (int remain = PICK_TIME_SECONDS; remain >= 0; --remain)
                 {

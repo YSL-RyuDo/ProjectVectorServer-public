@@ -318,4 +318,5 @@ enum class PacketType : uint16_t
     PKT_SC_MATCH_APPEARANCE = 360,
     PKT_CS_PARTY_MODE = 361,
     PKT_SC_PARTY_MODE = 362,
+    PKT_SC_MATCH_READY_CARDS = 363,
 };

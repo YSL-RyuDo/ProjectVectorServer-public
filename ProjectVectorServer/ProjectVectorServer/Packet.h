@@ -418,6 +418,18 @@ struct SC_MatchAppearance
 };
 static_assert(sizeof(MatchAppearanceMember) == 77 && sizeof(SC_MatchAppearance) == 471, "Result appearance wire layout");
 
+// Additive presentation packet; readiness authority stays in SC_MatchReady.
+struct ReadyCardMember { char nickname[20]; MatchAppearanceMember appearance; };
+struct SC_MatchReadyCards
+{
+    PacketHeader header;
+    uint32_t token;
+    uint8_t memberCount;
+    uint8_t acceptedMask;
+    ReadyCardMember members[6];
+};
+static_assert(sizeof(SC_MatchReadyCards) == 592, "Ready cards wire layout");
+
 struct TempGamePlayerSlotInfo
 {
     uint8_t slotIndex;

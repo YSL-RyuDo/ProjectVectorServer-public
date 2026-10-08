@@ -87,6 +87,33 @@ void BroadcastParty(uint32_t player)
 
 void SendReady(const ReadyMatch& match, uint8_t phase)
 {
+    SC_MatchReadyCards cards{};
+    cards.header = { sizeof(cards), static_cast<uint16_t>(PacketType::PKT_SC_MATCH_READY_CARDS) };
+    cards.token = match.token;
+    if (phase == 0)
+    for (const auto& peer : match.group)
+    {
+        if (cards.memberCount >= 6) break;
+        auto session = SessionManager::Instance().Find(peer.playerId);
+        PlayerData player{}; ChipCraftRecord craft{};
+        if (!session || !UserManager::Instance().GetPlayerData(session->GetUserId(), player) ||
+            !ProfileManager::Instance().GetChipCraft(session->GetUserId(), craft)) continue;
+        const auto index = cards.memberCount++;
+        if (match.accepted.count(peer.playerId)) cards.acceptedMask |= static_cast<uint8_t>(1u << index);
+        auto& member = cards.members[index];
+        strncpy_s(member.nickname, sizeof(member.nickname), player.nickname.c_str(), _TRUNCATE);
+        auto& target = member.appearance;
+        target.playerId = peer.playerId; target.playerIconId = player.playerIconId;
+        target.logoBorderId = player.logoBorderId; target.rankImageId = player.rankImageId; target.level = player.level;
+        target.preset.cardId = static_cast<uint8_t>(player.playerIconId);
+        target.preset.caseId = craft.preset.caseId; target.preset.medalCount = craft.preset.medalCount;
+        for (size_t i = 0; i < craft.preset.medals.size(); ++i)
+        {
+            const auto& from = craft.preset.medals[i]; auto& to = target.preset.medals[i];
+            to.medalId = from.id; to.x = from.x; to.y = from.y;
+            to.rotation = from.rotation; to.scale = from.scale; to.flipped = from.flipped ? 1 : 0;
+        }
+    }
     auto left = std::chrono::duration_cast<std::chrono::milliseconds>(match.deadline - std::chrono::steady_clock::now()).count();
     for (const auto& entry : match.group)
     {
@@ -100,6 +127,7 @@ void SendReady(const ReadyMatch& match, uint8_t phase)
         out.accepted = static_cast<uint8_t>(match.accepted.size());
         out.selfAccepted = match.accepted.count(entry.playerId) ? 1 : 0;
         session->Send(&out);
+        if (phase == 0 && cards.memberCount == 6) session->Send(&cards);
     }
 }
 
@@ -181,6 +209,7 @@ void HandleSocialPacket(Session* session, PacketHeader* header)
         for (const auto& entry : match.group) valid &= LobbyAvailable(SessionManager::Instance().Find(entry.playerId));
         if (valid)
         {
+            SendReady(match, 0); // Reveal the final accepted card before entering the match.
             SendReady(match, 1);
             if (!CreateMatchmakingRoom(match.group)) CancelReady(match);
         }

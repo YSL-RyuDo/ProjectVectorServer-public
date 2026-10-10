@@ -2329,6 +2329,10 @@ struct SC_Profile
 };
 
 struct CS_ProfilePrivacySet { PacketHeader header; uint8_t enabled; };
+struct CS_ProfileBirthdaySet { PacketHeader header; uint32_t requestId; uint8_t month; uint8_t day; };
+struct SC_ProfileBirthdaySetResult { PacketHeader header; uint32_t requestId; uint8_t result; uint8_t month; uint8_t day; };
+static_assert(sizeof(CS_ProfileBirthdaySet) == 10);
+static_assert(sizeof(SC_ProfileBirthdaySetResult) == 11);
 struct SC_ProfilePrivacySetResult { PacketHeader header; uint8_t result; uint8_t enabled; };
 struct CS_ProfileLike { PacketHeader header; char targetUserId[USER_ID_LEN]; };
 struct SC_ProfileLikeResult { PacketHeader header; uint8_t result; char targetUserId[USER_ID_LEN]; int32_t likeCount; };

@@ -7,6 +7,11 @@
 #include <iomanip>
 #include <cmath>
 #include <sstream>
+#include <filesystem>
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <Windows.h>
 
 namespace
 {
@@ -64,6 +69,7 @@ void ProfileManager::Load()
 {
     std::lock_guard<std::mutex> lock(mutex_);
     settings_.clear(); likes_.clear(); visitors_.clear(); chipCraft_.clear();
+    LoadBirthdaysUnlocked();
     std::ifstream settingsFile(SETTINGS_FILE); std::string line; std::getline(settingsFile, line);
     while (std::getline(settingsFile, line))
     {
@@ -180,7 +186,70 @@ bool ProfileManager::SaveChipCraft(const std::string& userId, const ChipCraftPre
 }
 bool ProfileManager::GetSettings(const std::string& userId, ProfileSettings& outSettings)
 {
-    std::lock_guard<std::mutex> lock(mutex_); InitializeUserUnlocked(userId); auto it = settings_.find(userId); if (it == settings_.end()) return false; outSettings = it->second; return true;
+    std::lock_guard<std::mutex> lock(mutex_); InitializeUserUnlocked(userId); auto it = settings_.find(userId); if (it == settings_.end()) return false;
+    outSettings = it->second;
+    auto birthday = birthdays_.find(userId);
+    outSettings.birthday = birthday == birthdays_.end() ? std::string{} : birthday->second;
+    return true;
+}
+bool ProfileManager::IsValidBirthday(int month, int day)
+{
+    // No year collected: February 29 remains a valid recurring birthday.
+    constexpr int days[] = {31,29,31,30,31,30,31,31,30,31,30,31};
+    return month >= 1 && month <= 12 && day >= 1 && day <= days[month - 1];
+}
+bool ProfileManager::SetBirthday(const std::string& userId, int month, int day)
+{
+    if (!IsValidBirthday(month, day) || userId.empty() || userId.find_first_of(",\r\n") != std::string::npos) return false;
+    PlayerData player{};
+    if (!UserManager::Instance().GetPlayerData(userId, player)) return false;
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!birthdaysWritable_) return false;
+    std::ostringstream date;
+    date << std::setfill('0') << std::setw(2) << month << '.' << std::setw(2) << day;
+    auto existing = birthdays_.find(userId);
+    const bool hadValue = existing != birthdays_.end();
+    const std::string previous = hadValue ? existing->second : std::string{};
+    birthdays_[userId] = date.str();
+    if (SaveBirthdaysUnlocked()) return true;
+    if (hadValue) birthdays_[userId] = previous; else birthdays_.erase(userId);
+    return false;
+}
+void ProfileManager::LoadBirthdaysUnlocked()
+{
+    birthdays_.clear(); birthdaysWritable_ = true;
+    std::error_code error;
+    const bool exists = std::filesystem::exists("profile_birthdays.csv", error);
+    if (error) { birthdaysWritable_ = false; return; }
+    if (!exists) return;
+    std::ifstream file("profile_birthdays.csv"); std::string line;
+    if (!file || !std::getline(file, line)) { birthdaysWritable_ = false; return; }
+    if (!line.empty() && line.back() == '\r') line.pop_back();
+    if (line != "userId,birthday") { birthdaysWritable_ = false; return; }
+    while (std::getline(file, line))
+    {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.empty()) continue;
+        const auto comma = line.find(',');
+        const std::string date = comma == std::string::npos ? "" : line.substr(comma + 1);
+        bool valid = comma != std::string::npos && comma > 0 && date.size() == 5 && date[2] == '.';
+        if (valid) for (int i : {0,1,3,4}) if (date[i] < '0' || date[i] > '9') valid = false;
+        if (valid) valid = IsValidBirthday((date[0]-'0')*10+date[1]-'0', (date[3]-'0')*10+date[4]-'0');
+        if (!valid) { birthdaysWritable_ = false; continue; }
+        if (!birthdays_.emplace(line.substr(0, comma), date).second) birthdaysWritable_ = false;
+    }
+    if (file.bad()) birthdaysWritable_ = false;
+}
+bool ProfileManager::SaveBirthdaysUnlocked()
+{
+    // Acknowledge only after atomic replacement; never rewrite legacy account files.
+    std::ofstream file("profile_birthdays.csv.tmp", std::ios::trunc | std::ios::binary);
+    if (!file) return false;
+    file << "userId,birthday\n";
+    for (const auto& entry : birthdays_) file << entry.first << ',' << entry.second << '\n';
+    file.flush(); if (!file.good()) return false;
+    file.close(); if (file.fail()) return false;
+    return MoveFileExW(L"profile_birthdays.csv.tmp", L"profile_birthdays.csv", MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
 }
 bool ProfileManager::SetPrivacy(const std::string& userId, bool enabled)
 {

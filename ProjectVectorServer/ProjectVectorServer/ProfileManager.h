@@ -13,6 +13,7 @@ struct ProfileSettings
     bool privacyEnabled = false;
     int likeCount = 0;
     std::string joinDate = "2026-09-15";
+    std::string birthday; // Optional MM.dd, separate from legacy account settings.
     std::array<uint8_t, 7> battleStatIds{ 0, 1, 2, 3, 4, 5, 6 };
 };
 struct ProfileVisitor { std::string userId; int64_t visitedAtUnix = 0; };
@@ -49,6 +50,8 @@ public:
     void InitializeUser(const std::string& userId);
     bool GetSettings(const std::string& userId, ProfileSettings& outSettings);
     bool SetPrivacy(const std::string& userId, bool enabled);
+    static bool IsValidBirthday(int month, int day);
+    bool SetBirthday(const std::string& userId, int month, int day);
     bool SetBattleStats(const std::string& userId, const std::array<uint8_t, 7>& battleStatIds);
     bool AddLike(const std::string& likerId, const std::string& targetUserId, int& outLikeCount);
     void RecordVisit(const std::string& ownerUserId, const std::string& visitorUserId);
@@ -58,6 +61,10 @@ public:
 private:
     void InitializeUserUnlocked(const std::string& userId);
     void SaveSettingsUnlocked();
+    void LoadBirthdaysUnlocked();
+    bool SaveBirthdaysUnlocked();
+    std::unordered_map<std::string, std::string> birthdays_;
+    bool birthdaysWritable_ = true;
     void SaveLikesUnlocked();
     void SaveVisitorsUnlocked();
     void SaveChipCraftUnlocked();

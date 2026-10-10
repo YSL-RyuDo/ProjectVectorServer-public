@@ -173,7 +173,8 @@ void SendProfile(Session* session, const std::string& requestedUserId)
     out.logoBorderId = player.logoBorderId;
     strncpy_s(out.joinDate, sizeof(out.joinDate), settings.joinDate.c_str(), _TRUNCATE);
     strncpy_s(out.region, sizeof(out.region), "\xEB\x8C\x80\xED\x95\x9C\xEB\xAF\xBC\xEA\xB5\xAD", _TRUNCATE);
-    strncpy_s(out.birthday, sizeof(out.birthday), "----", _TRUNCATE);
+    const std::string birthday = (!isSelf && settings.privacyEnabled) || settings.birthday.empty() ? "----" : settings.birthday;
+    strncpy_s(out.birthday, sizeof(out.birthday), birthday.c_str(), _TRUNCATE);
     out.likeCount = settings.likeCount;
 
     CareerOverview overview{};
@@ -285,6 +286,22 @@ bool ProfilePacketService::Dispatch(Session* session, PacketHeader* header)
     }
     switch (static_cast<PacketType>(header->type))
     {
+    case PacketType::PKT_CS_PROFILE_BIRTHDAY_SET:
+        if (header->size == sizeof(CS_ProfileBirthdaySet))
+        {
+            const auto* request = reinterpret_cast<const CS_ProfileBirthdaySet*>(header);
+            SC_ProfileBirthdaySetResult out{};
+            out.header.size = sizeof(out);
+            out.header.type = static_cast<uint16_t>(PacketType::PKT_SC_PROFILE_BIRTHDAY_SET_RESULT);
+            out.requestId = request->requestId;
+            PlayerData player{};
+            if (session->GetUserId().empty() || !UserManager::Instance().GetPlayerData(session->GetUserId(), player)) out.result = 2;
+            else if (!ProfileManager::IsValidBirthday(request->month, request->day)) out.result = 1;
+            else if (!ProfileManager::Instance().SetBirthday(session->GetUserId(), request->month, request->day)) out.result = 3;
+            else { out.month = request->month; out.day = request->day; }
+            session->Send(&out);
+        }
+        break;
     case PacketType::PKT_CS_PROFILE_REQUEST:
         if (header->size == sizeof(CS_ProfileRequest))
         {

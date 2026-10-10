@@ -208,6 +208,15 @@ def main():
                 for peer in clients[:6]: peer.wait(17, lambda x: x[1] == 0)
                 tokens = [struct.unpack_from('<I', peer.wait(357, lambda x: x[4] == 0, 12))[0] for peer in clients[:6]]
                 assert len(set(tokens)) == 1
+                for peer in clients[:6]:
+                    roster = peer.wait(365, lambda x: struct.unpack_from('<I', x)[0] == tokens[0])
+                    assert len(roster) == 588 and roster[4:6] == bytes((6, 0))
+                    player_ids = [struct.unpack_from('<I', roster, 26+i*97)[0] for i in range(6)]
+                    assert set(player_ids) == {p.id for p in clients[:6]}, 'readiness identity roster'
+                    for i, player in enumerate(player_ids):
+                        name = roster[6+i*97:26+i*97].split(b'\0')[0]
+                        assert name, 'accepted cards require an authoritative nickname'
+                    peer.ready_player_ids = player_ids
                 return tokens[0]
 
             token = ready_group()
@@ -222,6 +231,8 @@ def main():
             a.send(356,struct.pack('<IB', token, 1)); a.send(356,struct.pack('<IB', token, 1))
             ack = a.wait(357, lambda x: x[8] == 1 and x[9] == 1)
             assert ack[7] == 6
+            accepted_mask = 1 << a.ready_player_ids.index(a.id)
+            a.wait(365, lambda x: struct.unpack_from('<I', x)[0] == token and x[5] == accepted_mask)
             for peer in clients[:6]:
                 peer.wait(357, lambda x: x[4] == 2, timeout=34)
                 peer.wait(17, lambda x: x[1] == 2)
@@ -231,6 +242,7 @@ def main():
             for peer in clients[:6]: peer.send(356, struct.pack('<IB', token, 1))
             room_ids = []
             for peer in clients[:6]:
+                peer.wait(365, lambda x: struct.unpack_from('<I', x)[0] == token and x[5] == 63)
                 peer.wait(357, lambda x: x[4] == 1)
                 found = peer.wait(17, lambda x: x[1] == 1)
                 room_ids.append(struct.unpack_from('<I', found, 6)[0])

@@ -539,6 +539,7 @@ bool CareerManager::ApplyHonorViolation(
     {
     case HonorChangeReason::MatchAbandoned: penalty = -100; break;
     case HonorChangeReason::ConfirmationDeclined: penalty = -50; break;
+    case HonorChangeReason::ConfirmationTimedOut: penalty = -50; break;
     case HonorChangeReason::DisruptivePlay: penalty = -160; break;
     case HonorChangeReason::ChatViolation: penalty = -120; break;
     case HonorChangeReason::MatchManipulation: penalty = -240; break;
@@ -1201,7 +1202,7 @@ uint64_t CareerManager::RecordMatch(
             characterStats.masteryPoints += masteryGain;
         }
 
-        if (isMatchmade && durationSeconds >= 180)
+        if (isMatchmade && durationSeconds >= 180 && player.honorEligible)
         {
             CareerHonorState& honor = honor_[player.userId];
             previousHonor.emplace(player.userId, honor);
@@ -1216,15 +1217,16 @@ uint64_t CareerManager::RecordMatch(
             const int gain = std::max(0, std::min({baseGain,
                 HONOR_DAILY_GAIN_CAP - honor.dailyEarned,
                 HONOR_MAX_SCORE - honor.score}));
-            if (gain > 0)
-            {
-                honor.score += gain;
-                honor.dailyEarned += gain;
-                honor.history.insert(honor.history.begin(),
-                    { now, gain, HonorChangeReason::MatchCompleted, matchId });
-                if (honor.history.size() > HONOR_HISTORY_LIMIT)
-                    honor.history.resize(HONOR_HISTORY_LIMIT);
-            }
+            const bool inactive = player.honorActivity.Inactive();
+            const int delta = inactive ? -std::min(honor.score, HonorActivity::Penalty) : gain;
+            honor.score += delta;
+            if (!inactive) honor.dailyEarned += gain;
+            // One outcome per completion: no positive honor for confirmed long inactivity.
+            honor.history.insert(honor.history.begin(),
+                { now, delta, inactive ? HonorChangeReason::ProlongedInactivity : HonorChangeReason::MatchCompleted,
+                  matchId, player.honorActivity });
+            if (honor.history.size() > HONOR_HISTORY_LIMIT)
+                honor.history.resize(HONOR_HISTORY_LIMIT);
         }
     }
 
@@ -1719,9 +1721,16 @@ void CareerManager::LoadHonorUnlocked()
                     auto values = ParseCsvLine(entry);
                     CareerHonorChange change{};
                     int reason = 0;
-                    if (values.size() != 4 || !TryParseInt64(values[0], change.appliedAtUnix) ||
+                    if ((values.size() != 4 && values.size() != 7) || !TryParseInt64(values[0], change.appliedAtUnix) ||
                         !TryParseInt(values[1], change.delta) || !TryParseInt(values[2], reason) ||
-                        !TryParseUInt64(values[3], change.matchId) || reason < 1 || reason > 6) continue;
+                        !TryParseUInt64(values[3], change.matchId) || reason < 1 || reason > 8) continue;
+                    if (values.size() == 7 &&
+                        (!TryParseInt(values[4], change.activity.eligibleSeconds) ||
+                         !TryParseInt(values[5], change.activity.longIdleSeconds) ||
+                         !TryParseInt(values[6], change.activity.idleRounds) ||
+                         change.activity.eligibleSeconds < 0 || change.activity.longIdleSeconds < 0 ||
+                         change.activity.longIdleSeconds > change.activity.eligibleSeconds ||
+                         change.activity.idleRounds < 0)) continue;
                     change.reason = static_cast<HonorChangeReason>(reason);
                     state.history.push_back(change);
                 }
@@ -1745,7 +1754,7 @@ void CareerManager::LoadHonorUnlocked()
             !TryParseInt(fields[2], change.delta) ||
             !TryParseInt(fields[3], reason) ||
             !TryParseUInt64(fields[4], change.matchId) ||
-            reason < 1 || reason > 6) continue;
+            reason < 1 || reason > 8) continue;
         change.reason = static_cast<HonorChangeReason>(reason);
         auto& entries = honor_[fields[0]].history;
         if (entries.size() < HONOR_HISTORY_LIMIT) entries.push_back(change);
@@ -2070,7 +2079,9 @@ bool CareerManager::SaveHonorUnlocked()
             << state.dailyEarned << ',' << state.earnedDayUtc << ',';
         for (const auto& change : state.history)
             file << change.appliedAtUnix << ':' << change.delta << ':'
-                << static_cast<int>(change.reason) << ':' << change.matchId << ';';
+                << static_cast<int>(change.reason) << ':' << change.matchId << ':'
+                << change.activity.eligibleSeconds << ':' << change.activity.longIdleSeconds << ':'
+                << change.activity.idleRounds << ';';
         file << '\n';
     }
     file.flush();

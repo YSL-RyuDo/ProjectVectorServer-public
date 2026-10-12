@@ -31,10 +31,11 @@ public:
         Append<uint16_t>(out, static_cast<uint16_t>(engine.Items().size()));
         Append<uint16_t>(out, static_cast<uint16_t>(result.account.owned.size()));
         Append<uint16_t>(out, static_cast<uint16_t>(result.rewards.size()));
-        const int total = static_cast<int>(result.account.history.size());
-        const int pages = (std::max)(1, (total + 9) / 10);
-        page = (std::min)(page, pages - 1);
-        const int historyCount = (std::max)(0, (std::min)(10, total - page * 10));
+        const auto total = result.account.history.size();
+        const auto window = VectorShop::VisibleHistory(total, page);
+        page = window.page;
+        const int pages = window.pages;
+        const int historyCount = window.count;
         Append<uint16_t>(out, static_cast<uint16_t>(historyCount));
         Append<int32_t>(out, page); Append<int32_t>(out, pages);
         for (const auto& i : engine.Items())
@@ -45,7 +46,7 @@ public:
         }
         for (const auto& entry : result.account.owned) Append<int32_t>(out, entry.first);
         for (const auto& r : result.rewards) Record(out, r);
-        for (int i = 0; i < historyCount; ++i) Record(out, result.account.history[total - 1 - page * 10 - i]);
+        for (int i = 0; i < historyCount; ++i) Record(out, result.account.history[total - 1 - page * VectorShop::HistoryPageSize - i]);
         auto* response = reinterpret_cast<PacketHeader*>(out.data());
         response->size = static_cast<uint16_t>(out.size()); response->type = 341;
         session->Send(response);

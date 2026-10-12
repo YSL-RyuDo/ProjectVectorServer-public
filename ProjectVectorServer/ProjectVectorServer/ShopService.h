@@ -21,6 +21,17 @@ struct Record { unsigned long long request; long long time; int item, duplicate,
 struct Account { int coin0 = 0, coin1 = 0; std::map<int, int> owned; std::vector<Record> history; };
 struct Result { int status = 0; Account account; std::vector<Record> rewards; };
 
+constexpr int HistoryPageSize = 10;
+constexpr int HistoryPageLimit = 2;
+struct HistoryWindow { int page, pages, count; };
+inline HistoryWindow VisibleHistory(size_t total, int requestedPage)
+{
+    const int visible = static_cast<int>((std::min)(total, size_t(HistoryPageSize * HistoryPageLimit)));
+    const int pages = (std::max)(1, (visible + HistoryPageSize - 1) / HistoryPageSize);
+    const int page = (std::max)(0, (std::min)(requestedPage, pages - 1));
+    return {page, pages, (std::max)(0, (std::min)(HistoryPageSize, visible - page * HistoryPageSize))};
+}
+
 class Engine
 {
     std::filesystem::path root;
@@ -165,7 +176,7 @@ public:
                 Record r{request, now, selected->id, duplicate ? 1 : 0, refund};
                 next.history.push_back(r); result.rewards.push_back(r);
             }
-            // Keep the complete transaction ledger for idempotency; UI paginates newest records.
+            // Keep transaction IDs/rewards for idempotency; expose only the newest two pages.
             if (!shared && !Save(user, next)) { result.status = 5; result.rewards.clear(); return result; }
             if (shared) *shared = next;
             result.account = std::move(next);

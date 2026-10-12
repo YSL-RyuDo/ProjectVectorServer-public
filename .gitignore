@@ -3,3 +3,6 @@
 /ProjectVectorServer/x64/
 /ProjectVectorServer/ProjectVectorServer/x64/
 /ProjectVectorServer/ProjectVectorServer/shop_accounts/
+# Runtime affinity account data (never commit or remove as build cleanup).
+/ProjectVectorServer/ProjectVectorServer/character_affinity_progress.dat
+/ProjectVectorServer/ProjectVectorServer/character_affinity_progress.dat.tmp

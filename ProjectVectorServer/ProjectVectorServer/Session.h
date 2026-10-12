@@ -1,6 +1,8 @@
 #pragma once
 #include "Common.h"
 #include "OverlappedEx.h"
+#include "HonorActivity.h"
+#include "CombatReport.h"
 #include "packetType.h"
 
 struct Vector3
@@ -97,7 +99,7 @@ public:
     bool IsInRoom() const { return state_ == SessionState::IN_ROOM; }
     bool IsInGame() const { return state_ == SessionState::IN_GAME; }
 
-    void SetCurrentRoomId(uint32_t roomId) { currentRoomId_ = roomId; }
+    void SetCurrentRoomId(uint32_t roomId) { if (currentRoomId_ != roomId) combatReport_.Reset(roomId); currentRoomId_ = roomId; }
     uint32_t GetCurrentRoomId() const { return currentRoomId_; }
 
     void SetPlayerId(uint32_t id) { playerId_ = id; }
@@ -161,7 +163,9 @@ public:
     void Respawn();
 
     PlayerMatchStats& GetMatchStats() { return matchStats_; }
-    void ResetMatchStats() { matchStats_ = PlayerMatchStats{}; }
+    void ResetMatchStats() { matchStats_ = PlayerMatchStats{}; honorActivity_.Reset(currentRoomId_); }
+    HonorActivity::Tracker& GetHonorActivity() { return honorActivity_; }
+    CombatReport::Tracker& GetCombatReport() { return combatReport_; }
 
     void SetLastDamager(uint32_t playerId, bool headshot = false, int weaponId = -1) { lastDamagerPlayerId_ = playerId; lastDamageWasHeadshot_ = headshot; lastDamageWeaponId_ = weaponId; }
     uint32_t GetLastDamager() const { return lastDamagerPlayerId_; }
@@ -251,6 +255,8 @@ private:
     std::unordered_map<int, PlayerWeaponState> weapons_;
 
     PlayerMatchStats matchStats_;
+    HonorActivity::Tracker honorActivity_;
+    CombatReport::Tracker combatReport_;
     uint32_t lastDamagerPlayerId_ = 0;
     bool lastDamageWasHeadshot_ = false;
     int lastDamageWeaponId_ = -1;

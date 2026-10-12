@@ -1,3 +1,5 @@
+#include "AffinityPacketService.h"
+#include "CombatReportService.h"
 #include "PacketDispatcher.h"
 #include "CareerManager.h"
 #include "FriendManager.h"
@@ -260,6 +262,8 @@ namespace
         uint32_t token;
         std::vector<MatchmakingEntry> group;
         std::unordered_set<uint32_t> accepted;
+        // Retain the account identity even after a confirmation participant disconnects.
+        std::unordered_map<uint32_t, std::string> users;
         std::chrono::steady_clock::time_point deadline;
     };
     std::unordered_map<uint32_t, ReadyMatch> g_readyMatches;
@@ -2628,12 +2632,15 @@ namespace
 
     #include "LobbySocial.inl"
 
+    void TickHonorActivity();
+
     void RunMatchmakingWorker()
     {
         while (true)
         {
             std::this_thread::sleep_for(std::chrono::seconds(1));
             TickSocialLobby();
+            TickHonorActivity();
             for (uint8_t mode = 0; mode <= 1; ++mode)
             {
                 while (true)
@@ -3736,6 +3743,8 @@ namespace
             careerPlayer.isMvp = member.playerId == mvpPlayerId;
             careerPlayer.partyId = member.matchmakingPartyId;
             careerPlayer.partySize = member.matchmakingPartySize;
+            careerPlayer.honorActivity = s->GetHonorActivity().Snapshot(roomId);
+            careerPlayer.honorEligible = !room.isMatchmade || s->GetHonorActivity().ClaimOutcome(roomId);
             careerPlayers.push_back(careerPlayer);
             resultUserIds.push_back(member.userId);
 
@@ -3763,7 +3772,7 @@ namespace
         }
 
         std::vector<CareerRankAdjustment> rankAdjustments;
-        CareerManager::Instance().RecordMatch(
+        const uint64_t affinityMatchId = CareerManager::Instance().RecordMatch(
             room.mapName,
             startedAtUnix,
             durationSeconds,
@@ -3775,6 +3784,17 @@ namespace
             room.isMatchmade,
             &rankAdjustments
         );
+
+        // Only participants still present at authoritative match completion qualify.
+        // No client may submit XP, victory, duration, or an arbitrary recipient.
+        if (affinityMatchId != 0 && room.isMatchmade)
+            for (const auto& player : careerPlayers)
+            {
+                auto peer = SessionManager::Instance().FindByUserId(player.userId);
+                if (!peer || peer->IsDisconnected() || peer->GetCurrentRoomId() != roomId) continue;
+                AffinityPacketService::AwardCompletion(player.userId, affinityMatchId, player.characterId,
+                    room.isMatchmade, room.matchType, durationSeconds, player.team == static_cast<int>(winnerTeam));
+            }
 
         for (const std::string& userId : resultUserIds)
         {
@@ -7066,6 +7086,8 @@ namespace
         }
     }
 
+    #include "HonorActivityIntegration.inl"
+
     bool TryConsumeSkillForPacket(Session* session, PacketType packetType)
     {
         PlayerSkillSlot slot = PlayerSkillSlot::C;
@@ -7088,6 +7110,7 @@ namespace
             return false;
         }
 
+        session->GetHonorActivity().Action();
         SendSkillState(session);
         std::cout << "[SKILL CONSUMED] playerId="
             << session->GetPlayerId()
@@ -8077,6 +8100,16 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
     case static_cast<PacketType>(340): // Independent cosmetic shop request
         ShopPacketService::Dispatch(session, header);
+        break;
+
+    case PacketType::PKT_CS_COMBAT_REPORT_REQUEST:
+        CombatReport::Dispatch(session, header);
+        break;
+
+    case PacketType::PKT_CS_FAVOR_LEVEL_REQUEST:
+    case PacketType::PKT_CS_AFFINITY_STATE:
+    case PacketType::PKT_CS_AFFINITY_DIALOGUE_COMPLETE:
+        AffinityPacketService::Dispatch(session, header);
         break;
 
     case PacketType::PKT_CS_PROFILE_REQUEST:
@@ -9528,7 +9561,10 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
     case PacketType::PKT_CS_HIT:
     {
+        if (header->size != sizeof(CS_Hit)) break;
         auto* pkt = reinterpret_cast<CS_Hit*>(header);
+        // Preserve 0=body, 1=head; add 2=legs without changing packet size or damage.
+        if (pkt->hitZone > 2) break;
 
         if (session->GetState() != SessionState::IN_GAME)
         {
@@ -9659,8 +9695,10 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             weaponData->damage
         );
 
-        int appliedDamage = target->Damage(weaponData->damage);
+        int appliedDamage = CombatReport::ApplyDamage(session, target.get(), weaponData->damage,
+            CombatReport::Source::Weapon, weaponId, static_cast<CombatReport::Region>(pkt->hitZone));
         session->GetMatchStats().damageDealt += appliedDamage;
+        if (appliedDamage > 0) session->GetHonorActivity().Action();
 
         SC_HPUpdate hpPkt{};
         FillHPUpdatePacket(hpPkt, target.get());
@@ -10046,6 +10084,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         );
 
         weaponState->magAmmo -= 1;
+        session->GetHonorActivity().Action();
 
         SendAmmoUpdate(session, *weaponState);
 
@@ -10579,6 +10618,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
             session->AddCredits(plantCredit);
             session->GetMatchStats().spikePlants++;
+            session->GetHonorActivity().Action();
 
             std::cout << "[CREDIT SPIKE PLANT] playerId="
                 << session->GetPlayerId()
@@ -10642,6 +10682,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         if (defuseOk)
         {
             session->GetMatchStats().spikeDefuses++;
+            session->GetHonorActivity().Action();
             ResolveRoundBySpikeDefuse(
                 roomId,
                 session->GetPlayerId()
@@ -10695,6 +10736,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
         if (startOk)
         {
+            session->GetHonorActivity().Action();
             BroadcastSpikeDefuseState(
                 roomId,
                 1,
@@ -12195,6 +12237,7 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
             // 핵심:
             // 맞췄든 못 맞췄든 여기서 1회 사용 확정.
             drone.taserUsed = true;
+            session->GetHonorActivity().Action();
             droneSnapshot = drone;
         }
 
@@ -12264,9 +12307,8 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
                             DRONE_TASER_DAMAGE
                         );
 
-                        int appliedDamage = target->Damage(
-                            DRONE_TASER_DAMAGE
-                        );
+                        int appliedDamage = CombatReport::ApplyDamage(session, target.get(), DRONE_TASER_DAMAGE,
+                            CombatReport::Source::Skill, static_cast<int32_t>(CombatReport::Skill::DroneTaser), CombatReport::Region::None);
                         session->GetMatchStats().damageDealt += appliedDamage;
 
                         SC_HPUpdate hpPkt{};
@@ -12996,9 +13038,8 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
                 ULTIMATE_DAMAGE
             );
 
-            int appliedDamage = target->Damage(
-                ULTIMATE_DAMAGE
-            );
+            int appliedDamage = CombatReport::ApplyDamage(session, target.get(), ULTIMATE_DAMAGE,
+                CombatReport::Source::Skill, static_cast<int32_t>(CombatReport::Skill::InitiatorUltimate), CombatReport::Region::None);
             session->GetMatchStats().damageDealt += appliedDamage;
 
             SC_HPUpdate hpPkt{};
@@ -14075,9 +14116,8 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
                                     ENTRY_BLADE_DAMAGE
                                 );
 
-                                int appliedDamage = target->Damage(
-                                    ENTRY_BLADE_DAMAGE
-                                );
+                                int appliedDamage = CombatReport::ApplyDamage(session, target.get(), ENTRY_BLADE_DAMAGE,
+                                    CombatReport::Source::Skill, static_cast<int32_t>(CombatReport::Skill::EntryBlade), CombatReport::Region::None);
                                 session->GetMatchStats().damageDealt += appliedDamage;
 
                                 SC_HPUpdate hpPkt{};
@@ -16122,12 +16162,11 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
                             ownerPlayerId,
                             SENTINEL_X_DAMAGE_PER_TICK
                         );
-                        int appliedDamage = target->Damage(
-                            SENTINEL_X_DAMAGE_PER_TICK
-                        );
-
                         auto owner =
                             SessionManager::Instance().Find(ownerPlayerId);
+                        int appliedDamage = CombatReport::ApplyDamage(owner.get(), target.get(), SENTINEL_X_DAMAGE_PER_TICK,
+                            CombatReport::Source::Skill, static_cast<int32_t>(CombatReport::Skill::SentinelUltimate),
+                            CombatReport::Region::None, ownerPlayerId);
                         if (owner != nullptr)
                             owner->GetMatchStats().damageDealt += appliedDamage;
 
@@ -16274,6 +16313,9 @@ void PacketDispatcher::HandleDeath(Session* target)
 {
     if (target == nullptr)
         return;
+
+    if (target->IsDead())
+        target->GetCombatReport().Freeze(target->GetCurrentRoomId(), target->GetLastDamager());
 
     uint32_t roomId = target->GetCurrentRoomId();
 

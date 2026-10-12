@@ -170,8 +170,10 @@ void Session::Disconnect()
             for (const auto& member : activeRoom.members)
                 if (member.playerId == GetPlayerId() && member.team != RoomTeam::OBSERVER)
                 {
-                    CareerManager::Instance().ApplyHonorViolation(
-                        GetUserId(), HonorChangeReason::MatchAbandoned);
+                    // A simultaneous result callback must not also settle honor for this player.
+                    if (honorActivity_.ClaimOutcome(roomId))
+                        CareerManager::Instance().ApplyHonorViolation(
+                            GetUserId(), HonorChangeReason::MatchAbandoned);
                     break;
                 }
         }
@@ -269,6 +271,7 @@ void Session::SetHP(int hp)
 
     if (hp_ > maxHp_)
         hp_ = maxHp_;
+    if (hp_ <= 0) honorActivity_.Pause();
 }
 
 void Session::SetBarrier(int barrier)
@@ -328,6 +331,7 @@ int Session::SelectBestCurrentWeaponId() const
 
 void Session::InitRoundState()
 {
+    combatReport_.Reset(currentRoomId_);
     maxHp_ = 100;
     hp_ = maxHp_;
 
@@ -362,6 +366,7 @@ void Session::InitRoundState()
 
 void Session::ResetRoundStateKeepInventory()
 {
+    combatReport_.Reset(currentRoomId_);
     maxHp_ = 100;
     hp_ = maxHp_;
 
@@ -535,6 +540,7 @@ int Session::Damage(int amount)
     {
         hp_ = 0;
         isDead_ = true;
+        honorActivity_.Pause();
     }
 
     return healthBefore - (hp_ + barrier_);

@@ -1,4 +1,5 @@
 #pragma once
+#include "HonorActivity.h"
 
 #include <cstdint>
 #include <mutex>
@@ -157,6 +158,9 @@ struct CareerMatchPlayer
     bool isMvp = false;
     uint64_t partyId = 0;
     int partySize = 1;
+    // Runtime-only server evidence; not serialized into match-player CSV or packets.
+    HonorActivity::Evidence honorActivity;
+    bool honorEligible = true; // Completion/disconnect share a server-only settlement gate.
 };
 
 struct CareerMatchmakingRating
@@ -209,7 +213,9 @@ enum class HonorChangeReason : uint8_t
     ConfirmationDeclined = 3,
     DisruptivePlay = 4,
     ChatViolation = 5,
-    MatchManipulation = 6
+    MatchManipulation = 6,
+    ConfirmationTimedOut = 7,
+    ProlongedInactivity = 8
 };
 
 struct CareerHonorChange
@@ -218,6 +224,7 @@ struct CareerHonorChange
     int delta = 0;
     HonorChangeReason reason = HonorChangeReason::MatchCompleted;
     uint64_t matchId = 0;
+    HonorActivity::Evidence activity;
 };
 
 struct CareerHonorState

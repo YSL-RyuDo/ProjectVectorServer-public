@@ -138,6 +138,12 @@ bool BeginReadyMatch(const std::vector<MatchmakingEntry>& group)
         if (!LobbyAvailable(SessionManager::Instance().Find(entry.playerId))) return false;
     ReadyMatch match{};
     match.token = ++g_nextReadyToken; match.group = group;
+    for (const auto& entry : group)
+    {
+        const auto peer = SessionManager::Instance().Find(entry.playerId);
+        if (!LobbyAvailable(peer)) return false;
+        match.users.emplace(entry.playerId, peer->GetUserId());
+    }
     match.deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
     g_readyMatches.emplace(match.token, match);
     SendReady(match, 0);
@@ -151,15 +157,40 @@ void CancelReady(const ReadyMatch& match)
         SendMatchmakingState(SessionManager::Instance().Find(entry.playerId).get(), 0, 2, entry.mode, 0, GetInitialMatchmakingRange(entry.mode), 0);
 }
 
+void RecordReadyViolation(const ReadyMatch& match, uint32_t player, HonorChangeReason reason)
+{
+    const auto user = match.users.find(player);
+    if (user != match.users.end() &&
+        !CareerManager::Instance().ApplyHonorViolation(user->second, reason))
+        std::cerr << "[HONOR READY SAVE FAILED] token=" << match.token << " player=" << player << std::endl;
+}
+
+void RecordReadyTimeouts(const ReadyMatch& match)
+{
+    for (const auto& entry : match.group)
+        if (!match.accepted.count(entry.playerId))
+            RecordReadyViolation(match, entry.playerId, HonorChangeReason::ConfirmationTimedOut);
+}
+
 void TickSocialLobby()
 {
     std::lock_guard<std::recursive_mutex> lock(g_matchmakingMutex);
     g_lobbyParties.Prune(SocialNow());
     for (auto it = g_readyMatches.begin(); it != g_readyMatches.end();)
     {
-        bool valid = std::chrono::steady_clock::now() < it->second.deadline;
-        for (const auto& entry : it->second.group) valid &= LobbyAvailable(SessionManager::Instance().Find(entry.playerId));
-        if (!valid) { CancelReady(it->second); it = g_readyMatches.erase(it); }
+        const auto& match = it->second;
+        const bool expired = std::chrono::steady_clock::now() >= match.deadline;
+        bool valid = true;
+        for (const auto& entry : match.group)
+        {
+            if (LobbyAvailable(SessionManager::Instance().Find(entry.playerId))) continue;
+            valid = false;
+            // Before the deadline, only the member who left is responsible.
+            if (!expired || match.accepted.count(entry.playerId))
+                RecordReadyViolation(match, entry.playerId, HonorChangeReason::ConfirmationDeclined);
+        }
+        if (expired) RecordReadyTimeouts(match);
+        if (expired || !valid) { CancelReady(match); it = g_readyMatches.erase(it); }
         else { SendReady(it->second, 0); ++it; }
     }
     // Cancel the entire queued party if any member disconnects or leaves the lobby.
@@ -198,15 +229,28 @@ void HandleSocialPacket(Session* session, PacketHeader* header)
         bool belongs = false;
         for (const auto& entry : it->second.group) belongs |= entry.playerId == id;
         if (!belongs) { SocialResult(session, 3); return; }
-        if (!request.accept || std::chrono::steady_clock::now() >= it->second.deadline)
-        { CancelReady(it->second); g_readyMatches.erase(it); return; }
+        if (std::chrono::steady_clock::now() >= it->second.deadline)
+        {
+            RecordReadyTimeouts(it->second);
+            CancelReady(it->second); g_readyMatches.erase(it); return;
+        }
+        if (!request.accept)
+        {
+            RecordReadyViolation(it->second, id, HonorChangeReason::ConfirmationDeclined);
+            CancelReady(it->second); g_readyMatches.erase(it); return;
+        }
         it->second.accepted.insert(id);
         if (it->second.accepted.size() != it->second.group.size()) { SendReady(it->second, 0); return; }
         const auto match = it->second;
         // Hold the same lock through room creation: a confirmed member cannot
         // enter another room or queue between validation and the transition.
         bool valid = true;
-        for (const auto& entry : match.group) valid &= LobbyAvailable(SessionManager::Instance().Find(entry.playerId));
+        for (const auto& entry : match.group)
+            if (!LobbyAvailable(SessionManager::Instance().Find(entry.playerId)))
+            {
+                valid = false;
+                RecordReadyViolation(match, entry.playerId, HonorChangeReason::ConfirmationDeclined);
+            }
         if (valid)
         {
             SendReady(match, 0); // Reveal the final accepted card before entering the match.

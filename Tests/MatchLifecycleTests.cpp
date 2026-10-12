@@ -62,6 +62,9 @@ int main(int argc,char** argv)
     assert(g_lobbyParties.Join(id(3),id(4)) && g_lobbyParties.Join(id(3),id(5)));
     auto queue=[&](uint8_t mode)
     {
+        // Match the existing party-mode gate before requesting ranked/normal queue.
+        assert(g_lobbyParties.SetMode(id(0), mode));
+        assert(g_lobbyParties.SetMode(id(3), mode));
         QueueSocialParty(peers[0].get(),mode); QueueSocialParty(peers[3].get(),mode); assert(g_matchmakingQueue.size()==6);
         for(auto& entry:g_matchmakingQueue) entry.queuedAt-=std::chrono::seconds(6);
         std::vector<MatchmakingEntry> group; assert(TryTakeMatchmakingGroup(mode,group));

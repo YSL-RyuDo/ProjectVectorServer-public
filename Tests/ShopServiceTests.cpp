@@ -39,6 +39,21 @@ int main(int argc, char** argv)
     first.join(); second.join();
     assert(a.status == 0 && b.status == 0 && a.account.coin1 == 9980 && b.account.coin1 == 9980);
     assert(a.account.history.size() == 21 && b.account.history.size() == 21);
+    for (size_t total : {size_t(0), size_t(1), size_t(10), size_t(11), size_t(20), size_t(21), size_t(1000000)})
+        for (int requested : {-1, 0, 1, 2, 9999})
+        {
+            const auto window = VectorShop::VisibleHistory(total, requested);
+            assert(window.pages == (total <= 10 ? 1 : 2));
+            assert(window.page >= 0 && window.page < window.pages && window.count <= 10);
+            const int visible = static_cast<int>((std::min)(total, size_t(20)));
+            assert(window.count == (std::min)(10, visible - window.page * 10));
+        }
+    // A hidden, older-than-20 transaction still retries without another debit.
+    auto oldRetry = engine.Execute("qwer", 1, 1, 10, 0, 100);
+    assert(oldRetry.status == 0 && oldRetry.rewards.size() == 10 && oldRetry.account.coin1 == 9980);
+    assert(oldRetry.account.history.size() == 21);
+    const auto lastPage = VectorShop::VisibleHistory(oldRetry.account.history.size(), 9999);
+    assert(lastPage.page == 1 && lastPage.pages == 2 && lastPage.count == 10);
     // A failed atomic replace must not consume currency or return uncommitted rewards.
     auto blocked = root / "shop_accounts" / "71776572.txt.tmp";
     std::filesystem::create_directory(blocked);

@@ -19,7 +19,15 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="AffinityCatalog.h" />
+    <ClInclude Include="CombatReport.h" />
+    <ClInclude Include="CombatReportPackets.h" />
+    <ClInclude Include="CombatReportService.h" />
+    <ClInclude Include="AffinityPackets.h" />
+    <ClInclude Include="AffinityPacketService.h" />
+    <ClInclude Include="AffinityService.h" />
     <ClInclude Include="CareerManager.h" />
+    <ClInclude Include="HonorActivity.h" />
     <ClInclude Include="FriendManager.h" />
     <ClInclude Include="FriendPacketService.h" />
     <ClInclude Include="LobbyPartyState.h" />
@@ -65,7 +73,9 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="CAREER_DATA_SCHEMA.md" />
+    <None Include="affinity_rules.csv" />
     <None Include="LobbySocial.inl" />
+    <None Include="HonorActivityIntegration.inl" />
     <None Include="career_character_stats.csv" />
     <None Include="career_items.csv" />
     <None Include="career_matches.csv" />

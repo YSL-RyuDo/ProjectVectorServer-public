@@ -219,6 +219,14 @@ def main():
                     peer.ready_player_ids = player_ids
                 return tokens[0]
 
+            def honor(peer):
+                peer.send(330, b'\x01')
+                body = peer.wait(331)
+                assert len(body) == 150 and body[0] == 0
+                return struct.unpack_from('<i', body, 1)[0], [struct.unpack_from('<qiB', body, 20 + i * 13) for i in range(body[19])]
+
+            for peer in clients:
+                assert honor(peer) == (601, []), 'queue cancellation must not penalize honor'
             token = ready_group()
             outsider.send(356,struct.pack('<IB', token, 1)); outsider.result(3)
             a.send(22); a.result(4)
@@ -227,6 +235,12 @@ def main():
                 peer.wait(357, lambda x: x[4] == 2)
                 peer.wait(17, lambda x: x[1] == 2)
                 peer.pending = [p for p in peer.pending if p[0] != 357]
+            for peer in clients:
+                score, entries = honor(peer)
+                assert score == (551 if peer is b else 601), 'only the decliner loses honor'
+                assert [(e[1], e[2]) for e in entries] == ([(-50, 3)] if peer is b else [])
+            b.send(356, struct.pack('<IB', token, 0)); b.result(7)
+            assert honor(b)[0] == 551, 'replayed decline must not deduct again'
             token = ready_group()
             a.send(356,struct.pack('<IB', token, 1)); a.send(356,struct.pack('<IB', token, 1))
             ack = a.wait(357, lambda x: x[8] == 1 and x[9] == 1)
@@ -238,6 +252,14 @@ def main():
                 peer.wait(17, lambda x: x[1] == 2)
                 peer.pending = [p for p in peer.pending if p[0] != 357]
             print('PASS: six-player ready gate, forged reply, room-entry exclusion, decline, duplicate confirmation, 30-second timeout', flush=True)
+            for peer in clients:
+                score, entries = honor(peer)
+                assert score == (501 if peer is b else 551 if peer in (c,d,e,f) else 601)
+                if peer in (b,c,d,e,f): assert entries[0][1:] == (-50, 7), 'timeout reason/delta'
+                else: assert not entries, 'accepted/unrelated players must not be penalized'
+            b.send(356, struct.pack('<IB', token, 1)); b.result(7)
+            assert honor(b)[0] == 501, 'expired-token replay must not deduct again'
+            print('PASS: honor attribution, queue cancel exemption, accepted/outsider exemption, decline/timeout replay protection', flush=True)
             token = ready_group()
             for peer in clients[:6]: peer.send(356, struct.pack('<IB', token, 1))
             room_ids = []

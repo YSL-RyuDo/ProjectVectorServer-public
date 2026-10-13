@@ -19,7 +19,14 @@ bool Server::Start()
 
     std::thread listenerThread([&]()
         {
-            listener_.Start(9000, iocp_);
+            // Opt-in isolated QA listener; ordinary deployments retain port 9000.
+            int port = 9000;
+            char* value=nullptr; size_t size=0;
+            if (_dupenv_s(&value,&size,"VECTOR_QA_PORT")==0 && value) {
+                int requested=atoi(value); if(requested>=1024 && requested<=65535) port=requested;
+                free(value);
+            }
+            listener_.Start(static_cast<uint16_t>(port), iocp_);
         });
 
     UserManager::Instance().Load();

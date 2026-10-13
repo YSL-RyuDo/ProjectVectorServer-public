@@ -4,6 +4,7 @@
 #include "HonorActivity.h"
 #include "CombatReport.h"
 #include "packetType.h"
+#include "ReconnectJournal.h"
 
 struct Vector3
 {
@@ -88,6 +89,16 @@ public:
 
     void Disconnect();
     bool IsDisconnected() const { return disconnected_.load(); }
+    bool TryResume(const std::shared_ptr<Session>& transport);
+    std::shared_ptr<Session> LogicalSession() const { return logicalSession_; }
+    bool IsRestoring() const { return restoring_.load(); }
+    uint8_t RestoreStage() const { return restoreStage_; }
+    void SetRestoreStage(uint8_t value) { restoreStage_ = value; }
+    void SetRestoreStreamReady(bool ready) { restoreStreamReady_ = ready; }
+    void FinishRestore() { restoring_ = false; restoreStreamReady_ = true; }
+    void SendRestore(void* packet);
+    std::recursive_mutex& RestoreMutex() { return outboundMutex_; }
+    std::vector<std::vector<char>> RestoreJournal() const { return reconnectJournal_.Snapshot(); }
 
     void SetAuthenticated(bool val) { isAuthenticated_ = val; }
     bool IsAuthenticated() const { return isAuthenticated_; }
@@ -106,11 +117,13 @@ public:
     uint32_t GetPlayerId() const { return playerId_; }
 
     Vector3 GetPosition() const { return position_; }
+    bool HasCurrentRoundPosition() const { return currentRoundPosition_.load(); }
     void SetPosition(float x, float y, float z)
     {
         position_.x = x;
         position_.y = y;
         position_.z = z;
+        currentRoundPosition_ = true;
     }
 
     void SetYaw(float yaw) { rotationYaw_ = yaw; }
@@ -221,6 +234,9 @@ public:
 
 private:
     void ProcessPackets();
+    void FinalizeDisconnect();
+    void CloseSocket();
+    void SendRaw(void* packet);
     int SelectBestCurrentWeaponId() const;
 
 private:
@@ -235,6 +251,7 @@ private:
 
     uint32_t playerId_ = 0;
     Vector3 position_{ 0.f, 1.f, 0.f };
+    std::atomic<bool> currentRoundPosition_{false};
     float rotationYaw_ = 0.f;
     float rotationPitch_ = 0.0f;
 
@@ -265,6 +282,14 @@ private:
     uint8_t animIndex_ = 0;
 
     std::atomic<bool> disconnected_{ false };
+    std::shared_ptr<Session> logicalSession_;
+    std::weak_ptr<Session> transport_;
+    std::recursive_mutex outboundMutex_;
+    ReconnectJournal reconnectJournal_;
+    std::atomic<bool> restoring_{false};
+    bool restoreStreamReady_ = false;
+    uint8_t restoreStage_ = 0;
+    uint64_t disconnectGeneration_ = 0;
     std::mutex sendMutex_;
     mutable std::mutex recentPlayersMutex_;
     std::vector<std::string> recentPlayerUserIds_;

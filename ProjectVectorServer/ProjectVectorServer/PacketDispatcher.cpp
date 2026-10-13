@@ -22,6 +22,7 @@
 #include<sstream>
 #include <cstring>
 #include <windows.h>
+#include "VoiceAccess.h"
 #include <unordered_map>
 #include <mutex>
 #include <thread>
@@ -2631,6 +2632,7 @@ namespace
     }
 
     #include "LobbySocial.inl"
+    #include "VoiceService.inl"
 
     void TickHonorActivity();
 
@@ -7120,6 +7122,8 @@ namespace
     }
 }
 
+#include "ReconnectService.inl"
+
 void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 {
     PacketType type = (PacketType)header->type;
@@ -7152,8 +7156,23 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
     }
     }
 
+    if (HandleReconnect(session, header)) return;
+    // A restored transport is not gameplay-ready until the client acknowledges
+    // the authoritative snapshot. In particular block old movement/fire packets.
+    if (session->IsRestoring())
+    {
+        if (type == PacketType::PKT_CS_LOBBY_ENTER) OfferReconnect(session);
+        return;
+    }
+
     if (!TryConsumeSkillForPacket(session, type))
         return;
+
+    if (type == PacketType::PKT_CS_VOICE_REQUEST)
+    {
+        HandleVoiceRequest(session, header);
+        return;
+    }
 
     // Serialize lobby state transitions against ready-check completion.
     std::unique_lock<std::recursive_mutex> socialLock(g_matchmakingMutex, std::defer_lock);
@@ -7168,9 +7187,16 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
         { SocialResult(session, 4); return; }
         g_lobbyParties.Invalidate(session->GetPlayerId());
     }
-    if ((type >= PacketType::PKT_CS_PARTY_INVITE && type <= PacketType::PKT_CS_PARTY_STATE) || type == PacketType::PKT_CS_PARTY_MODE)
+    if (type == PacketType::PKT_CS_PARTY_INVITE || type == PacketType::PKT_CS_PARTY_INVITE_REPLY ||
+        type == PacketType::PKT_CS_PARTY_LEAVE || type == PacketType::PKT_CS_MATCH_READY ||
+        type == PacketType::PKT_CS_PARTY_STATE || type == PacketType::PKT_CS_PARTY_MODE)
     {
         EnsureMatchmakingWorkerStarted();
+        if (type == PacketType::PKT_CS_PARTY_LEAVE || type == PacketType::PKT_CS_PARTY_INVITE_REPLY)
+        {
+            std::lock_guard<std::recursive_mutex> voiceLock(g_matchmakingMutex);
+            InvalidateVoiceParty(session->GetPlayerId());
+        }
         HandleSocialPacket(session, header);
         return;
     }
@@ -7205,7 +7231,9 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
     case PacketType::PKT_CS_LOGIN:
     {
+        if (header->size != sizeof(CS_Login)) break;
         auto* pkt = reinterpret_cast<CS_Login*>(header);
+        if (!memchr(pkt->id,0,sizeof(pkt->id)) || !memchr(pkt->password,0,sizeof(pkt->password))) break;
 
         std::cout << "[LOGIN PACKET] id=" << pkt->id
             << " session=" << session
@@ -7229,6 +7257,17 @@ void PacketDispatcher::Dispatch(Session* session, PacketHeader* header)
 
         if (result == (uint8_t)LoginResult::SUCCESS)
         {
+            auto reserved = SessionManager::Instance().FindByUserId(pkt->id);
+            auto connection = SessionManager::Instance().FindConnection(session);
+            if (reserved && reserved->TryResume(connection))
+            {
+                SC_LoginResult resumed{};
+                resumed.header = {sizeof(resumed), static_cast<uint16_t>(PacketType::PKT_SC_LOGIN_RESULT)};
+                resumed.result = static_cast<uint8_t>(LoginResult::SUCCESS);
+                reserved->SendRestore(&resumed);
+                OfferReconnect(reserved.get());
+                break;
+            }
             bool loginOk = UserManager::Instance().OnLogin(pkt->id, session);
 
             if (!loginOk)

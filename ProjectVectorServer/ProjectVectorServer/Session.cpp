@@ -111,6 +111,7 @@ bool Session::PostRecv()
 
 void Session::OnRecv(int bytes, OverlappedEx* ov)
 {
+    if (bytes <= 0 || bytes > static_cast<int>(sizeof(recvBuffer_)) - recvSize_) { Disconnect(); return; }
     memcpy(recvBuffer_ + recvSize_, ov->buffer, bytes);
     recvSize_ += bytes;
     ProcessPackets();
@@ -118,8 +119,25 @@ void Session::OnRecv(int bytes, OverlappedEx* ov)
 
 void Session::Send(void* packet)
 {
-    if (packet == nullptr || disconnected_.load())
+    if (packet == nullptr)
         return;
+
+    std::lock_guard<std::recursive_mutex> transaction(outboundMutex_);
+    reconnectJournal_.Observe(packet);
+    if (disconnected_ || (restoring_ && !restoreStreamReady_)) return;
+    SendRestore(packet);
+}
+
+void Session::SendRestore(void* packet)
+{
+    std::lock_guard<std::recursive_mutex> transaction(outboundMutex_);
+    auto connection = transport_.lock();
+    if (connection) connection->SendRaw(packet);
+    else SendRaw(packet);
+}
+
+void Session::SendRaw(void* packet)
+{
 
     PacketHeader* header =
         reinterpret_cast<PacketHeader*>(packet);
@@ -144,9 +162,74 @@ void Session::Send(void* packet)
 
 void Session::Disconnect()
 {
+    std::lock_guard<std::recursive_mutex> transaction(outboundMutex_);
     bool expected = false;
     if (!disconnected_.compare_exchange_strong(expected, true))
         return;
+
+    if (logicalSession_)
+    {
+        logicalSession_->Disconnect();
+        CloseSocket();
+        return;
+    }
+    UserManager::Instance().OnLogout(this);
+    transport_.reset();
+    CloseSocket();
+    Room room{};
+    if (IsAuthenticated() && GetCurrentRoomId() != 0 &&
+        RoomManager::Instance().GetRoom(GetCurrentRoomId(), room) &&
+        room.state == RoomState::PLAYING)
+    {
+        // Keep the same authoritative actor. Disconnect never heals, respawns,
+        // refills ammunition or changes match membership.
+        const uint64_t generation = ++disconnectGeneration_;
+        std::weak_ptr<Session> retained = SessionManager::Instance().Find(GetPlayerId());
+        std::cout << "[RECONNECT RESERVED] playerId=" << GetPlayerId() << " room=" << room.roomId << std::endl;
+        std::thread([retained,generation]() {
+            std::this_thread::sleep_for(std::chrono::seconds(180));
+            if (auto session=retained.lock()) {
+                std::lock_guard<std::recursive_mutex> lock(session->outboundMutex_);
+                if (session->disconnected_ && session->disconnectGeneration_==generation)
+                    session->FinalizeDisconnect();
+            }
+        }).detach();
+        return;
+    }
+    FinalizeDisconnect();
+}
+
+bool Session::TryResume(const std::shared_ptr<Session>& connection)
+{
+    std::lock_guard<std::recursive_mutex> transaction(outboundMutex_);
+    Room room{};
+    if (!connection || !disconnected_ || !IsAuthenticated() ||
+        !RoomManager::Instance().GetRoom(GetCurrentRoomId(),room) || room.state!=RoomState::PLAYING)
+        return false;
+    if (!UserManager::Instance().OnLogin(GetUserId(),this)) return false;
+    connection->logicalSession_=SessionManager::Instance().Find(GetPlayerId());
+    connection->SetPlayerId(GetPlayerId());
+    transport_=connection;
+    disconnected_=false;
+    restoring_=true;
+    restoreStreamReady_=false;
+    restoreStage_=0;
+    const uint64_t generation = ++disconnectGeneration_;
+    std::weak_ptr<Session> retained = connection->logicalSession_;
+    std::thread([retained,generation]() {
+        std::this_thread::sleep_for(std::chrono::seconds(45));
+        std::shared_ptr<Session> stalled;
+        if (auto session=retained.lock()) {
+            std::lock_guard<std::recursive_mutex> lock(session->outboundMutex_);
+            if(session->restoring_ && session->disconnectGeneration_==generation) stalled=session->transport_.lock();
+        }
+        if(stalled) stalled->Disconnect();
+    }).detach();
+    return true;
+}
+
+void Session::FinalizeDisconnect()
+{
 
     std::cout << "[DISCONNECT] playerId=" << GetPlayerId()
         << " userId=" << GetUserId()
@@ -216,6 +299,11 @@ void Session::Disconnect()
     UserManager::Instance().OnLogout(this);
     SessionManager::Instance().Remove(GetPlayerId());
 
+    CloseSocket();
+}
+
+void Session::CloseSocket()
+{
     std::lock_guard<std::mutex> lock(sendMutex_);
     if (socket_ != INVALID_SOCKET)
     {
@@ -240,7 +328,8 @@ void Session::ProcessPackets()
         if (recvSize_ - offset < header->size)
             break;
 
-        PacketDispatcher::Dispatch(this, header);
+        if (header->size < sizeof(PacketHeader) || header->size > sizeof(recvBuffer_)) { Disconnect(); return; }
+        PacketDispatcher::Dispatch(logicalSession_ ? logicalSession_.get() : this, header);
 
         offset += header->size;
     }
@@ -331,6 +420,7 @@ int Session::SelectBestCurrentWeaponId() const
 
 void Session::InitRoundState()
 {
+    currentRoundPosition_ = false;
     combatReport_.Reset(currentRoomId_);
     maxHp_ = 100;
     hp_ = maxHp_;
@@ -366,6 +456,7 @@ void Session::InitRoundState()
 
 void Session::ResetRoundStateKeepInventory()
 {
+    currentRoundPosition_ = false;
     combatReport_.Reset(currentRoomId_);
     maxHp_ = 100;
     hp_ = maxHp_;

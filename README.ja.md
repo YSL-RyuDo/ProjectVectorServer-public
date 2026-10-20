@@ -1,6 +1,8 @@
 # CodeName VAIS / Server
 
-[English](README.md), [Korean](README.ko.md), [Japanese](README.ja.md)
+<!-- portfolio-languages -->
+[![English](https://ysl-ryudo.github.io/assets/diagrams/language-en.svg)](README.md) [![한국어](https://ysl-ryudo.github.io/assets/diagrams/language-ko.svg)](README.ko.md) [![日本語（選択中）](https://ysl-ryudo.github.io/assets/diagrams/language-ja-current.svg)](README.ja.md)
+<!-- /portfolio-languages -->
 
 チームで開発中のマルチプレイヤーFPS。C++サーバーと試合状態をUnityのプレイ体験につなぎます。
 
@@ -17,15 +19,23 @@
 
 [Lobby UI](https://www.youtube.com/watch?v=WqRBn-yWVdo), [Store system](https://www.youtube.com/watch?v=OBFWkZE2rzo), [Profile system](https://www.youtube.com/watch?v=A3CkQvnQEGI), [Earlier Project Vector demo](https://www.youtube.com/watch?v=oga4ai_1Ugg)
 
+## ゲーム内の実装
+
+[![移動標的の訓練で、本編の発射・反動・弾薬処理を使用します。](https://ysl-ryudo.github.io/assets/gameplay/vais-practice.webp)](https://ysl-ryudo.github.io/assets/gameplay/vais-practice.webp)
+
+移動標的の訓練で、本編の発射・反動・弾薬処理を使用します。
+
+[![キャラクター・武器・標的設定が訓練内容と記録条件を決めます。](https://ysl-ryudo.github.io/assets/gameplay/vais-loadout.webp)](https://ysl-ryudo.github.io/assets/gameplay/vais-loadout.webp)
+
+キャラクター・武器・標的設定が訓練内容と記録条件を決めます。
+
+[プレイ動画を見る](https://ysl-ryudo.github.io/ja/work/vector/#gameplay), CodeName VAISの射撃訓練場、YSLブランチ、53秒。2026年10月20日にUnity内の自動入力で収録。
+
 ## ゲーム全体で担当した実装
 
-C++サーバーに加え、Unityのゲーム進行、画面演出、制作ツールを担当しました。サーバー機能とクライアント機能を実装し、共同の戦闘コードを通信状態に連携しました。クライアントはチーム制作であり、以下は私の実装・変更範囲です。全キャラクターやシーンの単独制作を意味しません。
+C++サーバー機能、Unityの試合進行、プロフィールとソーシャル機能、報酬演出、エディターツールを実装しました。キャラクター能力と戦闘状態を通信プロトコルへ接続しました。
 
-**プレイの流れ**
-
-アカウントとロビー → ルームとチーム → キャラクター選択とロード → 戦闘と目標 → 結果と成長 → ソーシャルとカスタマイズ
-
-ソースリンクは確認した版に固定し、担当リンクは自分のマージ以外の変更を示します。共同ファイルは単独著作を意味しません。非公開ソースには閲覧権限が必要です。
+[![担当実装の流れ](https://ysl-ryudo.github.io/assets/diagrams/vector-flow-ja.svg)](https://ysl-ryudo.github.io/assets/diagrams/vector-flow-ja.svg)
 
 ### ルーム、チーム編成と試合開始
 
@@ -35,13 +45,13 @@ C++サーバーに加え、Unityのゲーム進行、画面演出、制作ツー
 
 ### 戦闘と目標の通信処理
 
-発射、リロード、武器変更、ダメージと死亡、スパイク取得・投下・設置・解除のサーバー処理を実装しました。プレイヤー操作をルームとセッション状態に接続する担当です。全操作の独立したサーバーシミュレーションや不正防止の完全性を主張するものではありません。
+発射、リロード、武器変更、ダメージと死亡、スパイク取得・投下・設置・解除のサーバー処理を実装しました。プレイヤー操作をルームとセッション状態に接続する担当です。
 
 [PacketDispatcher.cpp (main)](https://github.com/YSL-RyuDo/ProjectVectorServer/blob/ea18371e3d81c4f83cebbafe7541cf5349089b96/ProjectVectorServer/ProjectVectorServer/PacketDispatcher.cpp), [担当変更 3066fe6](https://github.com/YSL-RyuDo/ProjectVectorServer/commit/3066fe6d90fb4a56a6c440af56c4e119188e73fc), [Session.cpp (main)](https://github.com/YSL-RyuDo/ProjectVectorServer/blob/ea18371e3d81c4f83cebbafe7541cf5349089b96/ProjectVectorServer/ProjectVectorServer/Session.cpp), [担当変更 3066fe6](https://github.com/YSL-RyuDo/ProjectVectorServer/commit/3066fe6d90fb4a56a6c440af56c4e119188e73fc)
 
 ### キャラクター能力の通信連携
 
-装置・領域の状態とCスキル専用ネットワークマネージャーを含め、Sentinel能力を連携しました。既存メンバーのスキル実装を拡張・接続した担当として区別します。サーバーでは他のキャラクター系統の能力要求・イベントも処理しました。
+Sentinelスキルを拡張して装置・領域の状態を同期し、Cスキル専用の通信マネージャーを実装しました。サーバーでは他のキャラクター系統の能力要求とイベントも処理しました。
 
 [SentinelCNetworkManager.cs (YSL)](https://github.com/YSL-RyuDo/projectVector/blob/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350/Assets/Scripts/Skill/SentinelCNetworkManager.cs), [担当変更 756c9a0](https://github.com/YSL-RyuDo/projectVector/commit/756c9a09f32ed4a073d5d3d60008b1aaa44f0f60), [SentinelSkill_E.cs (YSL)](https://github.com/YSL-RyuDo/projectVector/blob/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350/Assets/KSW/Script/Character/Sentinel/SentinelSkill_E.cs), [担当変更 5e5c3c5](https://github.com/YSL-RyuDo/projectVector/commit/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350)
 
@@ -87,13 +97,11 @@ C++サーバーに加え、Unityのゲーム進行、画面演出、制作ツー
 
 [ServerColliderExporter.cs (YSL)](https://github.com/YSL-RyuDo/projectVector/blob/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350/Assets/Editor/ServerColliderExporter.cs), [担当変更 70d856f](https://github.com/YSL-RyuDo/projectVector/commit/70d856fcd5b1502db05f90d25c5dacdb90315d76), [ServerGroundExporter.cs (YSL)](https://github.com/YSL-RyuDo/projectVector/blob/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350/Assets/Editor/ServerGroundExporter.cs), [担当変更 70d856f](https://github.com/YSL-RyuDo/projectVector/commit/70d856fcd5b1502db05f90d25c5dacdb90315d76), [SafePlayerBuild.cs (YSL)](https://github.com/YSL-RyuDo/projectVector/blob/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350/Assets/Editor/SafePlayerBuild.cs), [担当変更 632e516](https://github.com/YSL-RyuDo/projectVector/commit/632e516b428b768b7eabed586afc89bfcd154af3)
 
-## 担当した内容
+### 射撃訓練場と条件別記録
 
-ゲームクライアント向けのIOCP接続処理、セッション、パケットディスパッチを実装しました。
+キャラクター・武器選択、5種類の訓練モード、距離・防具設定、射撃統計を実装しました。発射、反動、弾薬、リロードはゲーム本体の武器処理を共有します。武器・キャラクター・難易度・標的条件で記録を分け、途中で装備を変更したプレイは最高記録の対象から除外します。
 
-ルーム・試合のライフサイクル、プロフィール・キャリア情報、ソーシャル機能、ショップサービスとクライアント契約を担当しました。
-
-再接続時の表示状態復元と、パーティー・チーム音声の権限制御を追加しました。ReconnectJournalはダメージ・報酬・プレイヤー命令の再実行ではなく、持続する状態を保持します。
+[PracticeRangeController.cs (YSL)](https://github.com/YSL-RyuDo/projectVector/blob/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350/Assets/Scripts/WeaponTest/PracticeRangeController.cs), [担当変更 f4457e2](https://github.com/YSL-RyuDo/projectVector/commit/f4457e2d77c251b9e0da5d976927303d04a64b43), [PracticeLoadout.cs (YSL)](https://github.com/YSL-RyuDo/projectVector/blob/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350/Assets/Scripts/WeaponTest/PracticeLoadout.cs), [担当変更 f4457e2](https://github.com/YSL-RyuDo/projectVector/commit/f4457e2d77c251b9e0da5d976927303d04a64b43), [PracticeWeaponInput.cs (YSL)](https://github.com/YSL-RyuDo/projectVector/blob/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350/Assets/Scripts/WeaponTest/PracticeWeaponInput.cs), [担当変更 f4457e2](https://github.com/YSL-RyuDo/projectVector/commit/f4457e2d77c251b9e0da5d976927303d04a64b43)
 
 ## 貢献の根拠
 
@@ -103,7 +111,7 @@ C++サーバーに加え、Unityのゲーム進行、画面演出、制作ツー
 
 [Validation sources](https://github.com/YSL-RyuDo/ProjectVectorServer/tree/3066fe6d90fb4a56a6c440af56c4e119188e73fc/Tests)
 
-コミットは記載した変更の根拠であり、貢献率の点数ではありません。外部素材・チームメンバーの貢献は区別します。
+外部素材・チームメンバーの貢献は区別します。
 
 ## 実装と設計
 
@@ -133,7 +141,9 @@ Snapshotは保存期間からsteady clockの経過時間を引き、0以上に�
 
 ## コードの動作と実装構造の理由
 
-確認した実装が扱う制約と利点・代償を説明します。設計効果の説明はコード分析であり、比較する全代案を当時試作したという意味ではありません。担当リンクは共同制作内の変更を示し、ソースの閲覧権限は維持します。
+[![購入確定と報酬演出](https://ysl-ryudo.github.io/assets/diagrams/vector-design-ja.svg)](https://ysl-ryudo.github.io/assets/diagrams/vector-design-ja.svg)
+
+同じ要求は保存済み結果を再利用し、保存失敗時は取引を戻します。スキップと閉じる操作は報酬確定後の演出を制御します。
 
 ### 購入応答が失われても二重に決済しない
 
@@ -151,7 +161,7 @@ Snapshotは保存期間からsteady clockの経過時間を引き、0以上に�
 
 **利点・代償と検証範囲**
 
-同じロックを使う処理は直列化されるため、保存が遅いと他の処理も待ちます。画面は直近20件のみですが、重複決済防止の台帳は保持するため保存容量の上限ではありません。SharedShopWalletTestsには再起動後の再送、同時の重複要求、保存失敗時の復元を検査するコードがあります。これはテストソースの範囲であり、新しい負荷試験結果ではありません。
+同じロックを使う処理は保存完了を待つため、保存遅延が他の要求にも影響します。UIは最新20件を表示しますが、重複防止台帳は過去の記録も保持し増加します。SharedShopWalletTestsには再起動後の再要求、同時重複要求、保存失敗時の復元を検査するコードがあります。
 
 [ProjectVectorServer/ShopService.h](https://github.com/YSL-RyuDo/ProjectVectorServer/blob/d2d2e6261b93ca93beceec715f49015af8e2759c/ProjectVectorServer/ProjectVectorServer/ShopService.h), [ProjectVectorServer/CareerManager.cpp](https://github.com/YSL-RyuDo/ProjectVectorServer/blob/d2d2e6261b93ca93beceec715f49015af8e2759c/ProjectVectorServer/ProjectVectorServer/CareerManager.cpp), [ProjectVectorServer/SharedShopWalletTests.cpp](https://github.com/YSL-RyuDo/ProjectVectorServer/blob/d2d2e6261b93ca93beceec715f49015af8e2759c/Tests/SharedShopWalletTests.cpp), [projectVector/ShopGachaImplementation.md](https://github.com/YSL-RyuDo/projectVector/blob/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350/Docs/ShopGachaImplementation.md)
 
@@ -191,7 +201,7 @@ Unityクライアントはサーバー結果を受けてからGachaManagerの演
 
 **利点・代償と検証範囲**
 
-セッション保持には期限までリソースが必要で、段階的復元にはタイムアウトとプロトコル版の管理が加わります。新しい持続効果も復元規則に追加する必要があります。以下のクライアントはYSL、サーバーはmainの確認版であり、すべての組合せで実試合の検証が完了したという意味ではありません。
+セッション保持は期限まで資源を消費します。段階的復元にはタイムアウトとプロトコル版の処理が加わり、新しい持続効果ごとに復元規則が必要です。
 
 [ProjectVectorServer/Session.cpp](https://github.com/YSL-RyuDo/ProjectVectorServer/blob/d2d2e6261b93ca93beceec715f49015af8e2759c/ProjectVectorServer/ProjectVectorServer/Session.cpp), [ProjectVectorServer/ReconnectJournal.h](https://github.com/YSL-RyuDo/ProjectVectorServer/blob/d2d2e6261b93ca93beceec715f49015af8e2759c/ProjectVectorServer/ProjectVectorServer/ReconnectJournal.h), [projectVector/NetworkReconnect.cs](https://github.com/YSL-RyuDo/projectVector/blob/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350/Assets/Scripts/Network/NetworkReconnect.cs)
 
@@ -211,7 +221,7 @@ CombatReportServiceは適用されたダメージをバリアと体力に分け�
 
 **利点・代償と検証範囲**
 
-戦闘コードの変更後もダメージ記録と死亡通知の順序を維持する必要があります。スキルが使用者より長く残る場合があるため、元のオブジェクトがなくても代替識別情報で記録を残します。ここで説明する範囲は戦闘レポートの閲覧境界です。
+ダメージ記録は死亡通知より先に処理する必要があります。スキルが発動者より長く残る場合に備え、元のオブジェクトがなくても代替識別情報で記録を保持します。
 
 [ProjectVectorServer/CombatReportService.h](https://github.com/YSL-RyuDo/ProjectVectorServer/blob/d2d2e6261b93ca93beceec715f49015af8e2759c/ProjectVectorServer/ProjectVectorServer/CombatReportService.h), [ProjectVectorServer/CombatReportTests.cpp](https://github.com/YSL-RyuDo/ProjectVectorServer/blob/d2d2e6261b93ca93beceec715f49015af8e2759c/Tests/CombatReportTests.cpp)
 
@@ -231,19 +241,35 @@ ServerColliderExporterはServerCollisionレイヤーのBoxColliderを選び、�
 
 **利点・代償と検証範囲**
 
-確認した出力器は回転した全頂点を変換しません。一般化には回転対応境界、ロケール非依存の数値形式、マップ版の確認が必要です。完全なサーバー物理シミュレーションの根拠ではありません。
+出力器は回転した箱の全頂点を変換しません。回転形状には変換後の境界計算が必要で、地域設定に依存しない数値形式とマップ版の確認も必要です。
 
 [projectVector/ServerColliderExporter.cs (YSL)](https://github.com/YSL-RyuDo/projectVector/blob/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350/Assets/Editor/ServerColliderExporter.cs)
+
+### 訓練場でも実際の武器処理を使う理由
+
+**実装の流れ**
+
+PracticeWeaponInputは発射をWeapon.OnUseに委ね、発射・命中イベントを統計に反映します。PracticeRangeControllerは訓練条件とセッション進行を別に管理します。最高記録キーには課題の難易度を変える条件を含め、武器変更や弾薬補充で記録資格を無効にします。
+
+**この構造が必要な理由**
+
+武器処理の共有により、反動・弾薬・リロードを訓練場用に再実装せずに済みます。訓練進行を分離すると武器ルールを複製せずモードを変更できます。条件別記録は、無限弾薬や異なる防具・武器の結果を同一課題として比較することを防ぎます。
+
+**代案と現在の実装の折合い**
+
+訓練専用の武器は独立調整しやすい一方、ルールが重複し本編とのずれが生じます。本編の武器を再利用する場合は、ローカル統計と訓練設定を区別する練習用コンテキストが必要になります。
+
+**利点・代償と検証範囲**
+
+記録は端末内のPlayerPrefsに保存します。端末上の練習フィードバックには使えますが、サーバー検証や端末間同期はありません。武器処理の共有によりゲーム側の変更が訓練場にも影響するため、両方を確認する必要があります。
+
+[projectVector/PracticeWeaponInput.cs (YSL)](https://github.com/YSL-RyuDo/projectVector/blob/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350/Assets/Scripts/WeaponTest/PracticeWeaponInput.cs), [projectVector/PracticeRangeController.cs (YSL)](https://github.com/YSL-RyuDo/projectVector/blob/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350/Assets/Scripts/WeaponTest/PracticeRangeController.cs), [projectVector f4457e2d](https://github.com/YSL-RyuDo/projectVector/commit/f4457e2d77c251b9e0da5d976927303d04a64b43)
 
 ## 実行・コードの確認
 
 Windows C++ワークロードを備えたVisual Studioで[ProjectVectorServer/ProjectVectorServer.sln](ProjectVectorServer/ProjectVectorServer.sln)を開いてください。構成・データパス・依存関係・接続設定を確認し、対応するクライアントを起動します。既存アカウントデータは維持してください。
 
 [projectVector](https://github.com/YSL-RyuDo/projectVector)
-
-## 開発・検証範囲
-
-開発中です。再接続・試合・ショップ・ソーシャル・音声契約のテストソースはありますが、存在だけでは現行版の成功を意味しません。音声の検証記録と残る2台PC検証はDocs/VoiceChatSetup.mdを参照してください。現行TCPにはTLSがなく、文書上の開発環境は信頼できるLAN/VPNです。IOCP採用を実測の拡張性と同一視しません。
 
 ## 詳細資料
 

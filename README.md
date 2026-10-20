@@ -1,6 +1,8 @@
 # CodeName VAIS / Server
 
-[English](README.md), [Korean](README.ko.md), [Japanese](README.ja.md)
+<!-- portfolio-languages -->
+[![English (current)](https://ysl-ryudo.github.io/assets/diagrams/language-en-current.svg)](README.md) [![한국어](https://ysl-ryudo.github.io/assets/diagrams/language-ko.svg)](README.ko.md) [![日本語](https://ysl-ryudo.github.io/assets/diagrams/language-ja.svg)](README.ja.md)
+<!-- /portfolio-languages -->
 
 A team-built multiplayer FPS. I connect the C++ server, match state and Unity player experience.
 
@@ -17,15 +19,23 @@ A team-built multiplayer FPS. I connect the C++ server, match state and Unity pl
 
 [Lobby UI](https://www.youtube.com/watch?v=WqRBn-yWVdo), [Store system](https://www.youtube.com/watch?v=OBFWkZE2rzo), [Profile system](https://www.youtube.com/watch?v=A3CkQvnQEGI), [Earlier Project Vector demo](https://www.youtube.com/watch?v=oga4ai_1Ugg)
 
+## Inside the game
+
+[![Moving-target practice uses the gameplay weapon, recoil and ammunition paths.](https://ysl-ryudo.github.io/assets/gameplay/vais-practice.webp)](https://ysl-ryudo.github.io/assets/gameplay/vais-practice.webp)
+
+Moving-target practice uses the gameplay weapon, recoil and ammunition paths.
+
+[![Character, weapon and target settings determine the training session and its record conditions.](https://ysl-ryudo.github.io/assets/gameplay/vais-loadout.webp)](https://ysl-ryudo.github.io/assets/gameplay/vais-loadout.webp)
+
+Character, weapon and target settings determine the training session and its record conditions.
+
+[Watch gameplay](https://ysl-ryudo.github.io/en/work/vector/#gameplay), CodeName VAIS practice range, YSL branch, 0:53. Recorded in Unity with scripted inputs on 20 October 2026.
+
 ## What I built across the game
 
-My work spans the C++ server and Unity gameplay, presentation and production tools. I built server services and client features, and integrated shared combat code with network state. The client remains a team project: the sections below describe my implementations and changes, not sole authorship of every character or scene.
+I built C++ server services, Unity match flow, profile and social features, reward presentation and editor tools. I also connected character abilities and combat state to the network protocol.
 
-**Player flow**
-
-Account and lobby → room and team → character selection and loading → combat and objectives → result and progression → social and customization
-
-Source links pin the inspected revision; contribution links identify my non-merge changes. Shared-file links do not imply sole authorship. Private source requires repository access.
+[![My implementation flow](https://ysl-ryudo.github.io/assets/diagrams/vector-flow-en.svg)](https://ysl-ryudo.github.io/assets/diagrams/vector-flow-en.svg)
 
 ### Rooms, teams and match entry
 
@@ -35,13 +45,13 @@ Implemented room creation, entry, exit, slot changes, slot-swap responses, leade
 
 ### Combat and objective protocol
 
-Implemented server handlers for firing, reloading, weapon switching, damage and death, plus spike pickup, drop, planting and defusing. These handlers connect player actions to room and session state. The scope is the implemented protocol and state processing, not a claim that every client action is independently simulated or cheat-proof.
+Implemented server handlers for firing, reloading, weapon switching, damage and death, plus spike pickup, drop, planting and defusing. These handlers connect player actions to room and session state.
 
 [PacketDispatcher.cpp (main)](https://github.com/YSL-RyuDo/ProjectVectorServer/blob/ea18371e3d81c4f83cebbafe7541cf5349089b96/ProjectVectorServer/ProjectVectorServer/PacketDispatcher.cpp), [My change 3066fe6](https://github.com/YSL-RyuDo/ProjectVectorServer/commit/3066fe6d90fb4a56a6c440af56c4e119188e73fc), [Session.cpp (main)](https://github.com/YSL-RyuDo/ProjectVectorServer/blob/ea18371e3d81c4f83cebbafe7541cf5349089b96/ProjectVectorServer/ProjectVectorServer/Session.cpp), [My change 3066fe6](https://github.com/YSL-RyuDo/ProjectVectorServer/commit/3066fe6d90fb4a56a6c440af56c4e119188e73fc)
 
 ### Character ability integration
 
-Worked on Sentinel ability integration, including device and area states and the dedicated C-skill network manager. I extended shared skill implementations rather than treating the original character code as my sole work. The server also routes the other character families' ability requests and events.
+Extended Sentinel abilities with device and area state synchronization and a dedicated C-skill network manager. The server also routes ability requests and events for other character families.
 
 [SentinelCNetworkManager.cs (YSL)](https://github.com/YSL-RyuDo/projectVector/blob/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350/Assets/Scripts/Skill/SentinelCNetworkManager.cs), [My change 756c9a0](https://github.com/YSL-RyuDo/projectVector/commit/756c9a09f32ed4a073d5d3d60008b1aaa44f0f60), [SentinelSkill_E.cs (YSL)](https://github.com/YSL-RyuDo/projectVector/blob/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350/Assets/KSW/Script/Character/Sentinel/SentinelSkill_E.cs), [My change 5e5c3c5](https://github.com/YSL-RyuDo/projectVector/commit/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350)
 
@@ -87,13 +97,11 @@ Built Unity editor exporters for server collision, ground and height-volume data
 
 [ServerColliderExporter.cs (YSL)](https://github.com/YSL-RyuDo/projectVector/blob/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350/Assets/Editor/ServerColliderExporter.cs), [My change 70d856f](https://github.com/YSL-RyuDo/projectVector/commit/70d856fcd5b1502db05f90d25c5dacdb90315d76), [ServerGroundExporter.cs (YSL)](https://github.com/YSL-RyuDo/projectVector/blob/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350/Assets/Editor/ServerGroundExporter.cs), [My change 70d856f](https://github.com/YSL-RyuDo/projectVector/commit/70d856fcd5b1502db05f90d25c5dacdb90315d76), [SafePlayerBuild.cs (YSL)](https://github.com/YSL-RyuDo/projectVector/blob/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350/Assets/Editor/SafePlayerBuild.cs), [My change 632e516](https://github.com/YSL-RyuDo/projectVector/commit/632e516b428b768b7eabed586afc89bfcd154af3)
 
-## My contribution
+### Practice range and comparable records
 
-Implemented IOCP connection handling, sessions and packet dispatch for the game client.
+Built character and weapon selection, five training modes, distance and armor settings, and practice statistics. The range uses the gameplay weapon path for firing, recoil, ammunition and reloading. Records separate weapon, character, difficulty and target conditions; changing equipment during a run makes that run ineligible for a best record.
 
-Worked on room/match lifecycle, profile and career data, social features, shop services, and their client contracts.
-
-Added reconnect presentation-state recovery and party/team voice authorization. ReconnectJournal stores persistent state instead of replaying damage, rewards or player commands.
+[PracticeRangeController.cs (YSL)](https://github.com/YSL-RyuDo/projectVector/blob/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350/Assets/Scripts/WeaponTest/PracticeRangeController.cs), [My change f4457e2](https://github.com/YSL-RyuDo/projectVector/commit/f4457e2d77c251b9e0da5d976927303d04a64b43), [PracticeLoadout.cs (YSL)](https://github.com/YSL-RyuDo/projectVector/blob/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350/Assets/Scripts/WeaponTest/PracticeLoadout.cs), [My change f4457e2](https://github.com/YSL-RyuDo/projectVector/commit/f4457e2d77c251b9e0da5d976927303d04a64b43), [PracticeWeaponInput.cs (YSL)](https://github.com/YSL-RyuDo/projectVector/blob/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350/Assets/Scripts/WeaponTest/PracticeWeaponInput.cs), [My change f4457e2](https://github.com/YSL-RyuDo/projectVector/commit/f4457e2d77c251b9e0da5d976927303d04a64b43)
 
 ## Contribution evidence
 
@@ -102,8 +110,6 @@ Added reconnect presentation-state recovery and party/team voice authorization. 
 [ReconnectJournal](https://github.com/YSL-RyuDo/ProjectVectorServer/blob/3066fe6d90fb4a56a6c440af56c4e119188e73fc/ProjectVectorServer/ProjectVectorServer/ReconnectJournal.h)
 
 [Validation sources](https://github.com/YSL-RyuDo/ProjectVectorServer/tree/3066fe6d90fb4a56a6c440af56c4e119188e73fc/Tests)
-
-Commits are evidence of the stated changes, not a percentage-of-authorship score. Third-party assets and teammates' work remain separately credited.
 
 ## Implementation and design
 
@@ -133,7 +139,9 @@ CodeName VAIS is the official name; Project Vector is the former working title. 
 
 ## How the code works and why it is structured this way
 
-These notes connect the inspected implementation to the constraints it addresses and its tradeoffs. Explanations of design consequences are code analysis, not a claim that every alternative was prototyped. Contribution links identify my changes within team projects; source links retain their original access permissions.
+[![Purchase and reward presentation](https://ysl-ryudo.github.io/assets/diagrams/vector-design-en.svg)](https://ysl-ryudo.github.io/assets/diagrams/vector-design-en.svg)
+
+A repeated request reuses its saved result. A failed save rolls the transaction back. Skip and close operate on presentation after reward confirmation.
 
 ### A purchase must survive a lost response
 
@@ -151,7 +159,7 @@ Button locking is simple but only local. Deduplicating in memory also handles re
 
 **Tradeoffs and verification**
 
-The mutex serializes these operations, so persistence time can delay other work using the same lock. The UI exposes only 20 recent transactions, but the deduplication ledger is retained; that display limit is not a storage bound. SharedShopWalletTests covers restart retries, concurrent duplicate requests and save-failure rollback. Those are checked-in test cases, not a new load-test result.
+Operations sharing the lock wait for persistence, so slow saves can stall other requests. The UI shows the latest 20 transactions, while the deduplication ledger keeps older entries and continues to grow. SharedShopWalletTests covers retries after restart, concurrent duplicates and save-failure rollback.
 
 [ProjectVectorServer/ShopService.h](https://github.com/YSL-RyuDo/ProjectVectorServer/blob/d2d2e6261b93ca93beceec715f49015af8e2759c/ProjectVectorServer/ProjectVectorServer/ShopService.h), [ProjectVectorServer/CareerManager.cpp](https://github.com/YSL-RyuDo/ProjectVectorServer/blob/d2d2e6261b93ca93beceec715f49015af8e2759c/ProjectVectorServer/ProjectVectorServer/CareerManager.cpp), [ProjectVectorServer/SharedShopWalletTests.cpp](https://github.com/YSL-RyuDo/ProjectVectorServer/blob/d2d2e6261b93ca93beceec715f49015af8e2759c/Tests/SharedShopWalletTests.cpp), [projectVector/ShopGachaImplementation.md](https://github.com/YSL-RyuDo/projectVector/blob/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350/Docs/ShopGachaImplementation.md)
 
@@ -191,7 +199,7 @@ Starting a new session is simpler but does not preserve the ongoing match. Full 
 
 **Tradeoffs and verification**
 
-Retaining sessions consumes resources until expiry, while staged recovery adds timeout and protocol-version handling. New persistent effects must be added to the restoration contract. The cited client is the YSL branch and the server is main; the links identify separate inspected revisions, not proof that every combination has passed an end-to-end match.
+Retaining a session consumes resources until expiry. Staged restoration adds timeout and protocol-version handling, and each new persistent effect needs a restoration rule.
 
 [ProjectVectorServer/Session.cpp](https://github.com/YSL-RyuDo/ProjectVectorServer/blob/d2d2e6261b93ca93beceec715f49015af8e2759c/ProjectVectorServer/ProjectVectorServer/Session.cpp), [ProjectVectorServer/ReconnectJournal.h](https://github.com/YSL-RyuDo/ProjectVectorServer/blob/d2d2e6261b93ca93beceec715f49015af8e2759c/ProjectVectorServer/ProjectVectorServer/ReconnectJournal.h), [projectVector/NetworkReconnect.cs](https://github.com/YSL-RyuDo/projectVector/blob/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350/Assets/Scripts/Network/NetworkReconnect.cs)
 
@@ -211,7 +219,7 @@ Reading a live damage accumulator is convenient but its contents can change whil
 
 **Tradeoffs and verification**
 
-Damage recording and death notification must keep the same order as combat code evolves. Skills can outlive their owners, so fallback identity handling preserves a damage entry even when the original actor is no longer available. This is a report-access boundary, not a claim that every form of information leakage is solved.
+Damage records must precede death notifications. Skills may outlive their caster, so fallback identity data preserves attribution when the original object is unavailable.
 
 [ProjectVectorServer/CombatReportService.h](https://github.com/YSL-RyuDo/ProjectVectorServer/blob/d2d2e6261b93ca93beceec715f49015af8e2759c/ProjectVectorServer/ProjectVectorServer/CombatReportService.h), [ProjectVectorServer/CombatReportTests.cpp](https://github.com/YSL-RyuDo/ProjectVectorServer/blob/d2d2e6261b93ca93beceec715f49015af8e2759c/Tests/CombatReportTests.cpp)
 
@@ -231,19 +239,35 @@ Hand-authored server bounds are simple initially but can drift from the scene. A
 
 **Tradeoffs and verification**
 
-The inspected exporter does not transform all rotated box corners. Rotation-aware bounds, locale-independent numeric formatting and exported-map version checks are necessary considerations before generalizing it. This tool is not evidence of a complete authoritative physics simulation.
+The exporter does not transform every corner of a rotated box. Supporting rotated geometry requires transformed bounds; locale-independent number formatting and map-version checks are further integration points.
 
 [projectVector/ServerColliderExporter.cs (YSL)](https://github.com/YSL-RyuDo/projectVector/blob/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350/Assets/Editor/ServerColliderExporter.cs)
+
+### A practice range should exercise the real weapon
+
+**Implementation**
+
+PracticeWeaponInput delegates firing to Weapon.OnUse and receives shot and hit events for statistics. PracticeRangeController manages training conditions and session progress separately. Its best-record key includes the conditions that change the task; a weapon change or refill invalidates record eligibility.
+
+**Design rationale**
+
+Sharing the weapon path keeps practice tied to the same recoil, ammo and reload rules as gameplay. Separating training progress lets modes change without duplicating those rules. Condition-specific records prevent results from unlimited ammo, different armor or different weapons from competing as if they were the same task.
+
+**Alternatives and the current tradeoff**
+
+A separate practice-only weapon is easy to tune in isolation, but duplicates rules and can drift from the game. Reusing the gameplay weapon preserves behavior while requiring an explicit practice context for local statistics and training options.
+
+**Tradeoffs and verification**
+
+Records are local PlayerPrefs values. They provide feedback on that device but have no server-side integrity check or cross-device synchronization. Sharing weapon code also means a gameplay change can affect the range, so weapon and training behavior need to be checked together.
+
+[projectVector/PracticeWeaponInput.cs (YSL)](https://github.com/YSL-RyuDo/projectVector/blob/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350/Assets/Scripts/WeaponTest/PracticeWeaponInput.cs), [projectVector/PracticeRangeController.cs (YSL)](https://github.com/YSL-RyuDo/projectVector/blob/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350/Assets/Scripts/WeaponTest/PracticeRangeController.cs), [projectVector f4457e2d](https://github.com/YSL-RyuDo/projectVector/commit/f4457e2d77c251b9e0da5d976927303d04a64b43)
 
 ## Open and inspect
 
 Open [ProjectVectorServer/ProjectVectorServer.sln](ProjectVectorServer/ProjectVectorServer.sln) in Visual Studio with the Windows C++ workload. Inspect the selected configuration, data paths, dependencies and endpoint settings before starting the matching client. Preserve existing account data.
 
 [projectVector](https://github.com/YSL-RyuDo/projectVector)
-
-## Development and verification scope
-
-Active development. Test sources cover reconnect, match lifecycle, shop and social/voice contracts; their presence alone is not a current passing test report. Consult Docs/VoiceChatSetup.md for the recorded voice checks and remaining two-PC tests. Current TCP transport is not TLS-protected; the documented development setup uses a trusted LAN/VPN. Do not interpret IOCP usage as a measured scalability result.
 
 ## Further documentation
 

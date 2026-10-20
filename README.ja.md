@@ -1,48 +1,45 @@
-# CodeName VAIS — Game Server
+# CodeName VAIS — Server
 
 [English](README.md) · [Korean](README.ko.md) · [Japanese](README.ja.md)
 
+チームで開発中のマルチプレイヤーFPS。C++サーバーと試合状態をUnityのプレイ体験につなぎます。
+
 **C++ · Windows IOCP · C# · Unity** · 開発中
-
-[開発事例を見る](https://ysl-ryudo.github.io/ja/work/vector/) · [Portfolio](https://ysl-ryudo.github.io/ja/)
-
-正式名称は**CodeName VAIS**、旧仮称は**Project Vector**です。リポジトリ名は維持しています。
 
 **2026.03 - 現在 · 10名：ソフトウェア5名、グラフィック5名**
 
 サーバー開発・Unityマルチプレイヤー連携
 
+[開発事例を見る](https://ysl-ryudo.github.io/ja/work/vector/) · [Portfolio](https://ysl-ryudo.github.io/ja/)
 
-CodeName VAISに接続するC++ Windowsサーバーです。チームのUnityクライアントと分けて、担当したサーバー実装を説明します。
+[ProjectVectorServer](https://github.com/YSL-RyuDo/ProjectVectorServer) (非公開・アクセス権が必要) · [projectVector](https://github.com/YSL-RyuDo/projectVector) (非公開・アクセス権が必要)
 
-## 取り組んだ課題
+## システム別の担当内容
 
-マルチプレイヤーFPSでは通信、試合のライフサイクル、プレイヤーに見える状態をつなぐ必要があります。再接続では復元する状態と再実行しない操作を区別します。
+| 領域 | 実装 |
+|---|---|
+| 接続・通信 | IOCP・セッション・パケットディスパッチ |
+| ゲームサービス | ルーム・試合のライフサイクル、キャリア・プロフィール・ショップ・ソーシャルデータ |
+| Unity連携 | ゲームパケット、ロビー・結果、Sentinel能力、音声権限 |
+| 復元の境界 | 最新の持続表示状態を保持し、ゲーム操作の再実行を除外 |
 
-## 担当した実装と設計
+## ReconnectJournal
 
-IOCPサーバーのセッション・パケット処理から、Unityの試合・プロフィール・ショップ連携、再接続時の表示状態復元まで担当しました。ReconnectJournalは持続状態を保持し、ダメージ・報酬・プレイヤー命令の再実行を除外します。
+再接続したプレイヤーに何を再表示し、どのゲーム操作を繰り返してはいけないか。
 
-### 実装概要 · 概念フロー
+1. **復元する状態を選ぶ** — Observeは明示された持続表示パケットを収集します。ダメージ・報酬・プレイヤー命令は復元記録に含めません。
+2. **最新状態に置き換える** — パケット種別とエンティティIDをキーに保存します。更新は同じ項目を置き換え、操作履歴の順次再生とは分離します。
+3. **ライフサイクルの変更を反映** — 新しい試合・ラウンドのパケットで記録を初期化します。削除パケットは対応状態を消し、相互排他的な状態は以前の項目を整理します。
+4. **残り時間で復元** — Snapshotは保存期間からsteady clockの経過時間を引き、0以上に制限します。0秒の状態パケットも残し、クライアントの古い状態を解除します。
 
-```mermaid
-flowchart LR
-    N0["Unity client"] --> N1
-    N1["IOCP / sessions"] --> N2
-    N2["Match & player services"] --> N3
-    N3["Reconnect state"]
-```
+正式名称はCodeName VAIS、Project Vectorは旧仮称です。リポジトリ名は維持しています。
 
-### 開発デモ動画
-
-[![CodeName VAIS — Lobby UI](https://i.ytimg.com/vi/WqRBn-yWVdo/hqdefault.jpg)](https://www.youtube.com/watch?v=WqRBn-yWVdo)
+## 開発デモ動画
 
 - [Lobby UI](https://www.youtube.com/watch?v=WqRBn-yWVdo)
 - [Store system](https://www.youtube.com/watch?v=OBFWkZE2rzo)
 - [Profile system](https://www.youtube.com/watch?v=A3CkQvnQEGI)
 - [Earlier Project Vector demo](https://www.youtube.com/watch?v=oga4ai_1Ugg)
-
-撮影時点のプロジェクトデモです。ゲーム内での担当作業は以下の担当範囲で示します。
 
 ## 担当した内容
 
@@ -72,7 +69,3 @@ Windows C++ワークロードを備えたVisual Studioで[ProjectVectorServer/Pr
 
 - [Docs/VoiceChatSetup.md](Docs/VoiceChatSetup.md)
 - [Docs/CombatReportProtocol.md](Docs/CombatReportProtocol.md)
-
-## 実装の確認方法
-
-IOCPコア、ReconnectJournal、契約テストを併せて読むと設計意図を確認できます。テストソースの範囲と、実際の2クライアント試合・2台PC音声検証は区別します。

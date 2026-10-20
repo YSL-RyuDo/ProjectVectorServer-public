@@ -8,8 +8,12 @@
 
 **CodeName VAIS** is the official project name; **Project Vector** was the working title. Repository names are retained.
 
+**Mar 2026 - Present · 10 members: 5 software, 5 graphics**
 
-The C++ Windows server paired with Project Vector. This repository documents my server implementation separately from the team's Unity client.
+Server development & Unity multiplayer integration
+
+
+The C++ Windows server paired with CodeName VAIS. This repository documents my server implementation separately from the team's Unity client.
 
 ## The engineering problem
 

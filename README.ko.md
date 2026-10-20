@@ -8,8 +8,12 @@
 
 정식 명칭은 **CodeName VAIS**이며 **Project Vector**는 이전 임시 이름입니다. 저장소명은 유지합니다.
 
+**2026.03 - 현재 · 10명 · 소프트웨어 5명, 그래픽 5명**
 
-Project Vector와 연결되는 C++ Windows 서버입니다. 팀 Unity 클라이언트와 구분해 제가 작업한 서버 구현을 정리합니다.
+서버 개발·Unity 멀티플레이 연동
+
+
+CodeName VAIS와 연결되는 C++ Windows 서버입니다. 팀 Unity 클라이언트와 구분해 제가 작업한 서버 구현을 정리합니다.
 
 ## 해결하려던 문제
 

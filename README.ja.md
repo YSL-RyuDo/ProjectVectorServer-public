@@ -281,4 +281,4 @@ Windows C++ワークロードを備えたVisual Studioで[ProjectVectorServer/Pr
 
 [ProjectVectorServer](https://github.com/YSL-RyuDo/ProjectVectorServer-public), 公開ソース
 
-[projectVector](https://github.com/YSL-RyuDo/projectVector), 公開ソース
+[projectVector](https://github.com/YSL-RyuDo/projectVector), 公開リポジトリ

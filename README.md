@@ -279,4 +279,4 @@ Open [ProjectVectorServer/ProjectVectorServer.sln](ProjectVectorServer/ProjectVe
 
 [ProjectVectorServer](https://github.com/YSL-RyuDo/ProjectVectorServer-public), Public source
 
-[projectVector](https://github.com/YSL-RyuDo/projectVector), Public source
+[projectVector](https://github.com/YSL-RyuDo/projectVector), Public repository

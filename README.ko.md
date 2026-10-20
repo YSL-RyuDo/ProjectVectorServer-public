@@ -279,4 +279,4 @@ Windows C++ 워크로드가 설치된 Visual Studio에서 [ProjectVectorServer/P
 
 [ProjectVectorServer](https://github.com/YSL-RyuDo/ProjectVectorServer-public), 공개 소스
 
-[projectVector](https://github.com/YSL-RyuDo/projectVector), 공개 소스
+[projectVector](https://github.com/YSL-RyuDo/projectVector), 공개 저장소

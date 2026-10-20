@@ -41,13 +41,13 @@ C++ 서버 서비스와 Unity 경기 진행, 프로필과 소셜 기능, 보상 
 
 서버에서 방 생성과 입퇴장, 슬롯 변경과 교환 응답, 방장 이전, 강퇴를 구현했습니다. 캐릭터 확정과 로딩 완료를 경기 시작 전의 별도 단계로 다루고, PickManager로 선택 입력과 수신 상태를 Unity 화면에 연결했습니다.
 
-[RoomManager.cpp (main)](https://github.com/YSL-RyuDo/ProjectVectorServer/blob/ea18371e3d81c4f83cebbafe7541cf5349089b96/ProjectVectorServer/ProjectVectorServer/RoomManager.cpp), [내 변경 20f7bde](https://github.com/YSL-RyuDo/ProjectVectorServer/commit/20f7bdeeed49a91d2ca28af93c8695c722f8f048), [PickManager.cs (YSL)](https://github.com/YSL-RyuDo/projectVector/blob/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350/Assets/Scripts/Pick/PickManager.cs), [내 변경 8fcd6f1](https://github.com/YSL-RyuDo/projectVector/commit/8fcd6f1e91fbcd627a852de66db88b444884ccea)
+[RoomManager.cpp (main)](https://github.com/YSL-RyuDo/ProjectVectorServer-public/blob/8b52b5f17e25d329f9e624e0543e0bfac4c07c5e/ProjectVectorServer/ProjectVectorServer/RoomManager.cpp), [내 변경 20f7bde](https://github.com/YSL-RyuDo/ProjectVectorServer-public/commit/a2ab47ba2f3eff317df5ce0e2a056e7dd0926f17), [PickManager.cs (YSL)](https://github.com/YSL-RyuDo/projectVector/blob/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350/Assets/Scripts/Pick/PickManager.cs), [내 변경 8fcd6f1](https://github.com/YSL-RyuDo/projectVector/commit/8fcd6f1e91fbcd627a852de66db88b444884ccea)
 
 ### 전투와 목표 수행 프로토콜
 
 발사, 재장전, 무기 교체, 피해와 사망, 스파이크 획득과 투하, 설치와 해체의 서버 처리를 구현했습니다. 플레이어 행동을 방과 세션 상태에 연결하는 작업입니다.
 
-[PacketDispatcher.cpp (main)](https://github.com/YSL-RyuDo/ProjectVectorServer/blob/ea18371e3d81c4f83cebbafe7541cf5349089b96/ProjectVectorServer/ProjectVectorServer/PacketDispatcher.cpp), [내 변경 3066fe6](https://github.com/YSL-RyuDo/ProjectVectorServer/commit/3066fe6d90fb4a56a6c440af56c4e119188e73fc), [Session.cpp (main)](https://github.com/YSL-RyuDo/ProjectVectorServer/blob/ea18371e3d81c4f83cebbafe7541cf5349089b96/ProjectVectorServer/ProjectVectorServer/Session.cpp), [내 변경 3066fe6](https://github.com/YSL-RyuDo/ProjectVectorServer/commit/3066fe6d90fb4a56a6c440af56c4e119188e73fc)
+[PacketDispatcher.cpp (main)](https://github.com/YSL-RyuDo/ProjectVectorServer-public/blob/8b52b5f17e25d329f9e624e0543e0bfac4c07c5e/ProjectVectorServer/ProjectVectorServer/PacketDispatcher.cpp), [내 변경 3066fe6](https://github.com/YSL-RyuDo/ProjectVectorServer-public/commit/f3c4884a4270746434464630226e662fbe5fd1e6), [Session.cpp (main)](https://github.com/YSL-RyuDo/ProjectVectorServer-public/blob/8b52b5f17e25d329f9e624e0543e0bfac4c07c5e/ProjectVectorServer/ProjectVectorServer/Session.cpp), [내 변경 3066fe6](https://github.com/YSL-RyuDo/ProjectVectorServer-public/commit/f3c4884a4270746434464630226e662fbe5fd1e6)
 
 ### 캐릭터 능력의 네트워크 연동
 
@@ -65,31 +65,31 @@ Sentinel 스킬을 확장해 장치와 영역 상태를 동기화하고 C 스킬
 
 커리어 표시와 프로필의 전적 데이터를 구현하고 서버의 경기 기록, 순위와 성장 상태에 연결했습니다. 레벨 보상은 화면에서 해금만 표시하는 데 그치지 않고 수령 조건과 저장 상태를 클라이언트 보상 화면에 연결했습니다.
 
-[CareerPanelController.cs (YSL)](https://github.com/YSL-RyuDo/projectVector/blob/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350/Assets/KSW/Script/CareerPanelController.cs), [내 변경 76d985b](https://github.com/YSL-RyuDo/projectVector/commit/76d985b6bd9dff1fb7b4f08002e64f98d9bb8bc3), [MyPageLevelRewardController.cs (YSL)](https://github.com/YSL-RyuDo/projectVector/blob/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350/Assets/KSW/Script/MyPageLevelRewardController.cs), [내 변경 955101d](https://github.com/YSL-RyuDo/projectVector/commit/955101d782e975c1812ed94de893e4b263a266e3), [CareerManager.cpp (main)](https://github.com/YSL-RyuDo/ProjectVectorServer/blob/ea18371e3d81c4f83cebbafe7541cf5349089b96/ProjectVectorServer/ProjectVectorServer/CareerManager.cpp), [내 변경 39de6fd](https://github.com/YSL-RyuDo/ProjectVectorServer/commit/39de6fd916555231e4bb9880856ea82ebd1d95a3)
+[CareerPanelController.cs (YSL)](https://github.com/YSL-RyuDo/projectVector/blob/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350/Assets/KSW/Script/CareerPanelController.cs), [내 변경 76d985b](https://github.com/YSL-RyuDo/projectVector/commit/76d985b6bd9dff1fb7b4f08002e64f98d9bb8bc3), [MyPageLevelRewardController.cs (YSL)](https://github.com/YSL-RyuDo/projectVector/blob/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350/Assets/KSW/Script/MyPageLevelRewardController.cs), [내 변경 955101d](https://github.com/YSL-RyuDo/projectVector/commit/955101d782e975c1812ed94de893e4b263a266e3), [CareerManager.cpp (main)](https://github.com/YSL-RyuDo/ProjectVectorServer-public/blob/8b52b5f17e25d329f9e624e0543e0bfac4c07c5e/ProjectVectorServer/ProjectVectorServer/CareerManager.cpp), [내 변경 39de6fd](https://github.com/YSL-RyuDo/ProjectVectorServer-public/commit/b6d1fe1f5c794f027e93025a8d03e748365d5f59)
 
 ### 프로필 편집과 ChipCraft
 
 표시할 전적의 드래그 슬롯과 ChipCraft 메달 배치를 포함한 프로필 편집을 구현했습니다. 서버에서는 위치, 회전, 크기와 소유 여부를 다루는 데이터로 배치를 관리하고, Unity에서는 직접 옮기고 확인하는 편집 화면을 구현했습니다.
 
-[MyPageChipCraftController.cs (YSL)](https://github.com/YSL-RyuDo/projectVector/blob/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350/Assets/KSW/Script/MyPageChipCraftController.cs), [내 변경 06f82cc](https://github.com/YSL-RyuDo/projectVector/commit/06f82cc44d00c33af781710f0f2ace3d10353969), [MyPageStatDropSlot.cs (YSL)](https://github.com/YSL-RyuDo/projectVector/blob/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350/Assets/KSW/Script/MyPageStatDropSlot.cs), [내 변경 632e516](https://github.com/YSL-RyuDo/projectVector/commit/632e516b428b768b7eabed586afc89bfcd154af3), [ProfileManager.cpp (main)](https://github.com/YSL-RyuDo/ProjectVectorServer/blob/ea18371e3d81c4f83cebbafe7541cf5349089b96/ProjectVectorServer/ProjectVectorServer/ProfileManager.cpp), [내 변경 f65f26d](https://github.com/YSL-RyuDo/ProjectVectorServer/commit/f65f26d92832c947f1d955e972e1ce9c3a1fe385)
+[MyPageChipCraftController.cs (YSL)](https://github.com/YSL-RyuDo/projectVector/blob/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350/Assets/KSW/Script/MyPageChipCraftController.cs), [내 변경 06f82cc](https://github.com/YSL-RyuDo/projectVector/commit/06f82cc44d00c33af781710f0f2ace3d10353969), [MyPageStatDropSlot.cs (YSL)](https://github.com/YSL-RyuDo/projectVector/blob/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350/Assets/KSW/Script/MyPageStatDropSlot.cs), [내 변경 632e516](https://github.com/YSL-RyuDo/projectVector/commit/632e516b428b768b7eabed586afc89bfcd154af3), [ProfileManager.cpp (main)](https://github.com/YSL-RyuDo/ProjectVectorServer-public/blob/8b52b5f17e25d329f9e624e0543e0bfac4c07c5e/ProjectVectorServer/ProjectVectorServer/ProfileManager.cpp), [내 변경 f65f26d](https://github.com/YSL-RyuDo/ProjectVectorServer-public/commit/edc2517f7c4cfdfee0594a869e5bdacdd544cccb)
 
 ### 친구와 플레이어 관계
 
 친구 패널과 목록 모델, 서버의 요청과 수락, 취소, 차단, 메모와 접속 상태 처리를 구현했습니다. 양쪽이 공유하는 친구 관계와 한쪽에서 시작하는 요청이나 차단을 다른 데이터 관계로 다뤘습니다.
 
-[FriendPanelController.cs (YSL)](https://github.com/YSL-RyuDo/projectVector/blob/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350/Assets/KSW/Script/FriendPanelController.cs), [내 변경 06f82cc](https://github.com/YSL-RyuDo/projectVector/commit/06f82cc44d00c33af781710f0f2ace3d10353969), [FriendManager.cpp (main)](https://github.com/YSL-RyuDo/ProjectVectorServer/blob/ea18371e3d81c4f83cebbafe7541cf5349089b96/ProjectVectorServer/ProjectVectorServer/FriendManager.cpp), [내 변경 675d37f](https://github.com/YSL-RyuDo/ProjectVectorServer/commit/675d37fbb825c2e259f45e5130abe44a2ccb39ad)
+[FriendPanelController.cs (YSL)](https://github.com/YSL-RyuDo/projectVector/blob/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350/Assets/KSW/Script/FriendPanelController.cs), [내 변경 06f82cc](https://github.com/YSL-RyuDo/projectVector/commit/06f82cc44d00c33af781710f0f2ace3d10353969), [FriendManager.cpp (main)](https://github.com/YSL-RyuDo/ProjectVectorServer-public/blob/8b52b5f17e25d329f9e624e0543e0bfac4c07c5e/ProjectVectorServer/ProjectVectorServer/FriendManager.cpp), [내 변경 675d37f](https://github.com/YSL-RyuDo/ProjectVectorServer-public/commit/07860d73d4ee93b800e32de05300832d8c0a6cc8)
 
 ### 명예와 호감도
 
 명예 화면과 보상 수령에 필요한 활동 기록, 호감도 상태와 대화 완료 처리를 구현했습니다. 보상 표시를 서버의 조건과 저장된 성장 상태에 연결해 화면만으로 소유 여부를 결정하지 않도록 했습니다.
 
-[MyPageHonorController.cs (YSL)](https://github.com/YSL-RyuDo/projectVector/blob/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350/Assets/KSW/Script/MyPageHonorController.cs), [내 변경 f4457e2](https://github.com/YSL-RyuDo/projectVector/commit/f4457e2d77c251b9e0da5d976927303d04a64b43), [HonorActivity.h (main)](https://github.com/YSL-RyuDo/ProjectVectorServer/blob/ea18371e3d81c4f83cebbafe7541cf5349089b96/ProjectVectorServer/ProjectVectorServer/HonorActivity.h), [내 변경 39de6fd](https://github.com/YSL-RyuDo/ProjectVectorServer/commit/39de6fd916555231e4bb9880856ea82ebd1d95a3), [AffinityService.h (main)](https://github.com/YSL-RyuDo/ProjectVectorServer/blob/ea18371e3d81c4f83cebbafe7541cf5349089b96/ProjectVectorServer/ProjectVectorServer/AffinityService.h), [내 변경 39de6fd](https://github.com/YSL-RyuDo/ProjectVectorServer/commit/39de6fd916555231e4bb9880856ea82ebd1d95a3)
+[MyPageHonorController.cs (YSL)](https://github.com/YSL-RyuDo/projectVector/blob/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350/Assets/KSW/Script/MyPageHonorController.cs), [내 변경 f4457e2](https://github.com/YSL-RyuDo/projectVector/commit/f4457e2d77c251b9e0da5d976927303d04a64b43), [HonorActivity.h (main)](https://github.com/YSL-RyuDo/ProjectVectorServer-public/blob/8b52b5f17e25d329f9e624e0543e0bfac4c07c5e/ProjectVectorServer/ProjectVectorServer/HonorActivity.h), [내 변경 39de6fd](https://github.com/YSL-RyuDo/ProjectVectorServer-public/commit/b6d1fe1f5c794f027e93025a8d03e748365d5f59), [AffinityService.h (main)](https://github.com/YSL-RyuDo/ProjectVectorServer-public/blob/8b52b5f17e25d329f9e624e0543e0bfac4c07c5e/ProjectVectorServer/ProjectVectorServer/AffinityService.h), [내 변경 39de6fd](https://github.com/YSL-RyuDo/ProjectVectorServer-public/commit/b6d1fe1f5c794f027e93025a8d03e748365d5f59)
 
 ### 구매 처리와 보상 연출
 
 거래 재요청 처리와 Unity 뽑기 연출, 건너뛰기와 자원 정리를 구현했습니다. 아래 설계 설명에서는 확정된 보상과 중단 가능한 연출의 경계를 실패와 중복 요청까지 포함해 설명합니다.
 
-[ShopService.h (main)](https://github.com/YSL-RyuDo/ProjectVectorServer/blob/ea18371e3d81c4f83cebbafe7541cf5349089b96/ProjectVectorServer/ProjectVectorServer/ShopService.h), [내 변경 39de6fd](https://github.com/YSL-RyuDo/ProjectVectorServer/commit/39de6fd916555231e4bb9880856ea82ebd1d95a3), [GachaManager.cs (YSL)](https://github.com/YSL-RyuDo/projectVector/blob/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350/Assets/KSW/Script/Shop/GachaManager.cs), [내 변경 8563836](https://github.com/YSL-RyuDo/projectVector/commit/856383681df4b817b62db98cbf8c4f01b98ba270)
+[ShopService.h (main)](https://github.com/YSL-RyuDo/ProjectVectorServer-public/blob/8b52b5f17e25d329f9e624e0543e0bfac4c07c5e/ProjectVectorServer/ProjectVectorServer/ShopService.h), [내 변경 39de6fd](https://github.com/YSL-RyuDo/ProjectVectorServer-public/commit/b6d1fe1f5c794f027e93025a8d03e748365d5f59), [GachaManager.cs (YSL)](https://github.com/YSL-RyuDo/projectVector/blob/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350/Assets/KSW/Script/Shop/GachaManager.cs), [내 변경 8563836](https://github.com/YSL-RyuDo/projectVector/commit/856383681df4b817b62db98cbf8c4f01b98ba270)
 
 ### 월드 데이터 추출과 빌드 도구
 
@@ -105,11 +105,11 @@ Sentinel 스킬을 확장해 장치와 영역 상태를 동기화하고 C 스킬
 
 ## 기여 근거
 
-[IOCP](https://github.com/YSL-RyuDo/ProjectVectorServer/blob/3066fe6d90fb4a56a6c440af56c4e119188e73fc/ProjectVectorServer/ProjectVectorServer/IocpCore.cpp)
+[IOCP](https://github.com/YSL-RyuDo/ProjectVectorServer-public/blob/f3c4884a4270746434464630226e662fbe5fd1e6/ProjectVectorServer/ProjectVectorServer/IocpCore.cpp)
 
-[ReconnectJournal](https://github.com/YSL-RyuDo/ProjectVectorServer/blob/3066fe6d90fb4a56a6c440af56c4e119188e73fc/ProjectVectorServer/ProjectVectorServer/ReconnectJournal.h)
+[ReconnectJournal](https://github.com/YSL-RyuDo/ProjectVectorServer-public/blob/f3c4884a4270746434464630226e662fbe5fd1e6/ProjectVectorServer/ProjectVectorServer/ReconnectJournal.h)
 
-[Validation sources](https://github.com/YSL-RyuDo/ProjectVectorServer/tree/3066fe6d90fb4a56a6c440af56c4e119188e73fc/Tests)
+[Validation sources](https://github.com/YSL-RyuDo/ProjectVectorServer-public/tree/f3c4884a4270746434464630226e662fbe5fd1e6/Tests)
 
 ## 구현과 설계
 
@@ -161,7 +161,7 @@ Snapshot은 저장된 지속 시간에서 steady clock 경과 시간을 빼고 0
 
 같은 잠금을 사용하는 작업은 저장이 끝날 때까지 기다리므로 저장 지연이 다른 요청에도 영향을 줍니다. 화면은 최근 20건을 표시하지만 중복 차감 방지용 원장은 이전 기록도 보관해 계속 커집니다. SharedShopWalletTests에는 재시작 후 재요청, 동시 중복 요청과 저장 실패 시 복구를 검사하는 코드가 있습니다.
 
-[ProjectVectorServer/ShopService.h](https://github.com/YSL-RyuDo/ProjectVectorServer/blob/d2d2e6261b93ca93beceec715f49015af8e2759c/ProjectVectorServer/ProjectVectorServer/ShopService.h), [ProjectVectorServer/CareerManager.cpp](https://github.com/YSL-RyuDo/ProjectVectorServer/blob/d2d2e6261b93ca93beceec715f49015af8e2759c/ProjectVectorServer/ProjectVectorServer/CareerManager.cpp), [ProjectVectorServer/SharedShopWalletTests.cpp](https://github.com/YSL-RyuDo/ProjectVectorServer/blob/d2d2e6261b93ca93beceec715f49015af8e2759c/Tests/SharedShopWalletTests.cpp), [projectVector/ShopGachaImplementation.md](https://github.com/YSL-RyuDo/projectVector/blob/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350/Docs/ShopGachaImplementation.md)
+[ProjectVectorServer/ShopService.h](https://github.com/YSL-RyuDo/ProjectVectorServer-public/blob/7224b09befff5905b81e643648e1ffb90caac4d9/ProjectVectorServer/ProjectVectorServer/ShopService.h), [ProjectVectorServer/CareerManager.cpp](https://github.com/YSL-RyuDo/ProjectVectorServer-public/blob/7224b09befff5905b81e643648e1ffb90caac4d9/ProjectVectorServer/ProjectVectorServer/CareerManager.cpp), [ProjectVectorServer/SharedShopWalletTests.cpp](https://github.com/YSL-RyuDo/ProjectVectorServer-public/blob/7224b09befff5905b81e643648e1ffb90caac4d9/Tests/SharedShopWalletTests.cpp), [projectVector/ShopGachaImplementation.md](https://github.com/YSL-RyuDo/projectVector/blob/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350/Docs/ShopGachaImplementation.md)
 
 ### 뽑기 결과와 연출의 수명을 분리한 이유
 
@@ -201,7 +201,7 @@ Unity 클라이언트는 서버 결과를 받은 다음 GachaManager의 연출�
 
 세션을 보관하면 만료까지 자원이 필요합니다. 단계별 복원에는 시간 초과와 프로토콜 버전 처리가 추가되고, 새로운 지속 효과마다 복원 규칙을 정의해야 합니다.
 
-[ProjectVectorServer/Session.cpp](https://github.com/YSL-RyuDo/ProjectVectorServer/blob/d2d2e6261b93ca93beceec715f49015af8e2759c/ProjectVectorServer/ProjectVectorServer/Session.cpp), [ProjectVectorServer/ReconnectJournal.h](https://github.com/YSL-RyuDo/ProjectVectorServer/blob/d2d2e6261b93ca93beceec715f49015af8e2759c/ProjectVectorServer/ProjectVectorServer/ReconnectJournal.h), [projectVector/NetworkReconnect.cs](https://github.com/YSL-RyuDo/projectVector/blob/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350/Assets/Scripts/Network/NetworkReconnect.cs)
+[ProjectVectorServer/Session.cpp](https://github.com/YSL-RyuDo/ProjectVectorServer-public/blob/7224b09befff5905b81e643648e1ffb90caac4d9/ProjectVectorServer/ProjectVectorServer/Session.cpp), [ProjectVectorServer/ReconnectJournal.h](https://github.com/YSL-RyuDo/ProjectVectorServer-public/blob/7224b09befff5905b81e643648e1ffb90caac4d9/ProjectVectorServer/ProjectVectorServer/ReconnectJournal.h), [projectVector/NetworkReconnect.cs](https://github.com/YSL-RyuDo/projectVector/blob/5e5c3c53b010fb2807f6b53c0eb0f5ceec8d1350/Assets/Scripts/Network/NetworkReconnect.cs)
 
 ### 사망 기록을 고정하고 조회 조건을 검사하는 이유
 
@@ -221,7 +221,7 @@ CombatReportService는 실제 적용된 피해를 방어막과 체력으로 나�
 
 피해 기록이 사망 알림보다 먼저 처리되도록 순서를 유지해야 합니다. 스킬이 시전자보다 오래 남을 수 있어 원래 객체를 찾지 못할 때도 대체 식별 정보로 피해 기록을 유지합니다.
 
-[ProjectVectorServer/CombatReportService.h](https://github.com/YSL-RyuDo/ProjectVectorServer/blob/d2d2e6261b93ca93beceec715f49015af8e2759c/ProjectVectorServer/ProjectVectorServer/CombatReportService.h), [ProjectVectorServer/CombatReportTests.cpp](https://github.com/YSL-RyuDo/ProjectVectorServer/blob/d2d2e6261b93ca93beceec715f49015af8e2759c/Tests/CombatReportTests.cpp)
+[ProjectVectorServer/CombatReportService.h](https://github.com/YSL-RyuDo/ProjectVectorServer-public/blob/7224b09befff5905b81e643648e1ffb90caac4d9/ProjectVectorServer/ProjectVectorServer/CombatReportService.h), [ProjectVectorServer/CombatReportTests.cpp](https://github.com/YSL-RyuDo/ProjectVectorServer-public/blob/7224b09befff5905b81e643648e1ffb90caac4d9/Tests/CombatReportTests.cpp)
 
 ### 씬의 형상을 서버 데이터로 옮기는 방법
 
@@ -277,6 +277,6 @@ Windows C++ 워크로드가 설치된 Visual Studio에서 [ProjectVectorServer/P
 
 ## 관련 저장소
 
-[ProjectVectorServer](https://github.com/YSL-RyuDo/ProjectVectorServer), 비공개, 접근 권한 필요
+[ProjectVectorServer](https://github.com/YSL-RyuDo/ProjectVectorServer-public), 공개 소스
 
-[projectVector](https://github.com/YSL-RyuDo/projectVector), 비공개, 접근 권한 필요
+[projectVector](https://github.com/YSL-RyuDo/projectVector), 공개 소스

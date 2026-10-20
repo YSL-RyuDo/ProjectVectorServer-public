@@ -1,8 +1,44 @@
-# Project Vector — Game Server
+# CodeName VAIS — Game Server
 
 [English](README.md) · [Korean](README.ko.md) · [Japanese](README.ja.md)
 
+**C++ · Windows IOCP · C# · Unity** · 開発中
+
+[開発事例を見る](https://ysl-ryudo.github.io/ja/work/vector/) · [Portfolio](https://ysl-ryudo.github.io/ja/)
+
+正式名称は**CodeName VAIS**、旧仮称は**Project Vector**です。リポジトリ名は維持しています。
+
+
 Project Vectorに接続するC++ Windowsサーバーです。チームのUnityクライアントと分けて、担当したサーバー実装を説明します。
+
+## 取り組んだ課題
+
+マルチプレイヤーFPSでは通信、試合のライフサイクル、プレイヤーに見える状態をつなぐ必要があります。再接続では復元する状態と再実行しない操作を区別します。
+
+## 担当した実装と設計
+
+IOCPサーバーのセッション・パケット処理から、Unityの試合・プロフィール・ショップ連携、再接続時の表示状態復元まで担当しました。ReconnectJournalは持続状態を保持し、ダメージ・報酬・プレイヤー命令の再実行を除外します。
+
+### 実装概要 · 概念フロー
+
+```mermaid
+flowchart LR
+    N0["Unity client"] --> N1
+    N1["IOCP / sessions"] --> N2
+    N2["Match & player services"] --> N3
+    N3["Reconnect state"]
+```
+
+### 開発デモ動画
+
+[![CodeName VAIS — Lobby UI](https://i.ytimg.com/vi/WqRBn-yWVdo/hqdefault.jpg)](https://www.youtube.com/watch?v=WqRBn-yWVdo)
+
+- [Lobby UI](https://www.youtube.com/watch?v=WqRBn-yWVdo)
+- [Store system](https://www.youtube.com/watch?v=OBFWkZE2rzo)
+- [Profile system](https://www.youtube.com/watch?v=A3CkQvnQEGI)
+- [Earlier Project Vector demo](https://www.youtube.com/watch?v=oga4ai_1Ugg)
+
+撮影時点のプロジェクトデモです。ゲーム内での担当作業は以下の担当範囲で示します。
 
 ## 担当した内容
 
@@ -32,3 +68,7 @@ Windows C++ワークロードを備えたVisual Studioで[ProjectVectorServer/Pr
 
 - [Docs/VoiceChatSetup.md](Docs/VoiceChatSetup.md)
 - [Docs/CombatReportProtocol.md](Docs/CombatReportProtocol.md)
+
+## 実装の確認方法
+
+IOCPコア、ReconnectJournal、契約テストを併せて読むと設計意図を確認できます。テストソースの範囲と、実際の2クライアント試合・2台PC音声検証は区別します。
